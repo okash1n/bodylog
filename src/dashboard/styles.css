@@ -171,7 +171,14 @@ body {
   padding: 3px;
   gap: 2px;
 }
-/* スマホ: 期間セグメントを1行目全幅にし、2行目をモード切替（左）+表で見る（右）で揃える */
+/* 「表で見る」はグラフ/表の直上に右寄せで置く */
+.view-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+/* スマホ: 期間セグメントを1行目全幅にし、2行目にモード切替を置く */
 @media (max-width: 559px) {
   .controls-row .segment[aria-label='表示期間'] {
     width: 100%;

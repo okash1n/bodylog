@@ -65,6 +65,9 @@
   </div>
 
   <div id="content" class="hidden">
+    <div class="view-row">
+      <button id="view-toggle" class="ghost-btn" type="button" aria-pressed="false">表で見る</button>
+    </div>
     <section id="chart-section">
       <div id="chart-wrap" class="chart-wrap">
         <canvas id="chart" role="img" aria-label="体重・体脂肪率・除脂肪体重の推移グラフ"></canvas>
@@ -102,7 +105,6 @@
         <button type="button" class="segment-btn active" data-mode="raw" aria-pressed="true">実測</button>
         <button type="button" class="segment-btn" data-mode="avg" aria-pressed="false">7日平均</button>
       </div>
-      <button id="view-toggle" class="ghost-btn" type="button" aria-pressed="false">表で見る</button>
     </div>
 
     <div id="custom-range" class="custom-range hidden">

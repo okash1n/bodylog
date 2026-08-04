@@ -20,7 +20,7 @@ import manifestTpl from './dashboard/manifest.webmanifest';
 import chartVendorJs from './dashboard/vendor/chart.umd.js';
 
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
-export const ASSET_VERSION = '2026-08-04-9';
+export const ASSET_VERSION = '2026-08-04-10';
 
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';
 const JS_CONTENT_TYPE = 'text/javascript; charset=utf-8';
