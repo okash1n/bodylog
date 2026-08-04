@@ -31,28 +31,24 @@
   <header class="app-header">
     <div class="title-row">
       <h1>体重ダッシュボード</h1>
+      <p class="header-meta">
+        <span id="hero-diff">7日平均比 —</span>
+        <span id="hero-measured">最終計測 —</span>
+      </p>
       <div class="title-actions">
         <span id="offline-badge" class="offline-badge" hidden>オフライン</span>
         <button id="theme-toggle" class="ghost-btn" type="button" aria-label="テーマ切替">テーマ</button>
       </div>
     </div>
-    <div class="hero">
-      <p class="hero-weight"><span id="hero-weight">—</span><span class="hero-unit">kg</span></p>
-      <div class="hero-meta">
-        <span id="hero-diff">7日平均比 —</span>
-        <span id="hero-measured">最終計測 —</span>
-      </div>
-      <button id="view-toggle" class="ghost-btn view-toggle" type="button" aria-pressed="false">表で見る</button>
-    </div>
   </header>
 
   <div id="state-skeleton" class="skeleton-group" aria-hidden="true">
-    <div class="skeleton skeleton-chart"></div>
     <div class="skeleton-cards">
       <div class="skeleton skeleton-card"></div>
       <div class="skeleton skeleton-card"></div>
       <div class="skeleton skeleton-card"></div>
     </div>
+    <div class="skeleton skeleton-chart"></div>
   </div>
 
   <div id="state-empty" class="state-box hidden" role="status">
@@ -66,6 +62,26 @@
   </div>
 
   <div id="content" class="hidden">
+    <section class="cards">
+      <article class="card">
+        <h3>体重</h3>
+        <p class="card-value"><span id="card-weight-value">—</span><span class="unit">kg</span></p>
+        <p class="card-sub">7日平均 <span id="card-weight-avg">—</span><span class="unit">kg</span></p>
+        <p class="card-sub">期間比 <span id="card-weight-diff">—</span><span class="unit">kg</span></p>
+      </article>
+      <article class="card">
+        <h3>体脂肪率</h3>
+        <p class="card-value"><span id="card-fat-value">—</span><span class="unit">%</span></p>
+        <p class="card-sub">7日平均 <span id="card-fat-avg">—</span><span class="unit">%</span></p>
+        <p class="card-sub">期間比 <span id="card-fat-diff">—</span><span class="unit">%</span></p>
+      </article>
+      <article class="card">
+        <h3>除脂肪体重</h3>
+        <p class="card-value"><span id="card-ffm-value">—</span><span class="unit">kg</span></p>
+        <p class="card-sub">7日平均 <span id="card-ffm-avg">—</span><span class="unit">kg</span></p>
+        <p class="card-sub">期間比 <span id="card-ffm-diff">—</span><span class="unit">kg</span></p>
+      </article>
+    </section>
     <section id="chart-section">
       <div id="chart-wrap" class="chart-wrap">
         <canvas id="chart" role="img" aria-label="体重・体脂肪率・除脂肪体重の推移グラフ"></canvas>
@@ -99,9 +115,12 @@
         <button type="button" class="segment-btn" data-period="1y" aria-pressed="false">1Y</button>
         <button type="button" class="segment-btn" data-period="custom" aria-pressed="false">カスタム</button>
       </div>
-      <div class="segment" role="group" aria-label="表示系列">
-        <button type="button" class="segment-btn active" data-mode="raw" aria-pressed="true">実測</button>
-        <button type="button" class="segment-btn" data-mode="avg" aria-pressed="false">7日平均</button>
+      <div class="controls-right">
+        <div class="segment" role="group" aria-label="表示系列">
+          <button type="button" class="segment-btn active" data-mode="raw" aria-pressed="true">実測</button>
+          <button type="button" class="segment-btn" data-mode="avg" aria-pressed="false">7日平均</button>
+        </div>
+        <button id="view-toggle" class="ghost-btn view-toggle" type="button" aria-pressed="false">表で見る</button>
       </div>
     </div>
 
@@ -112,26 +131,6 @@
       <span id="custom-error" class="custom-error" role="alert"></span>
     </div>
 
-    <section class="cards">
-      <article class="card">
-        <h3>体重</h3>
-        <p class="card-value"><span id="card-weight-value">—</span><span class="unit">kg</span></p>
-        <p class="card-sub">7日平均 <span id="card-weight-avg">—</span><span class="unit">kg</span></p>
-        <p class="card-sub">期間比 <span id="card-weight-diff">—</span><span class="unit">kg</span></p>
-      </article>
-      <article class="card">
-        <h3>体脂肪率</h3>
-        <p class="card-value"><span id="card-fat-value">—</span><span class="unit">%</span></p>
-        <p class="card-sub">7日平均 <span id="card-fat-avg">—</span><span class="unit">%</span></p>
-        <p class="card-sub">期間比 <span id="card-fat-diff">—</span><span class="unit">%</span></p>
-      </article>
-      <article class="card">
-        <h3>除脂肪体重</h3>
-        <p class="card-value"><span id="card-ffm-value">—</span><span class="unit">kg</span></p>
-        <p class="card-sub">7日平均 <span id="card-ffm-avg">—</span><span class="unit">kg</span></p>
-        <p class="card-sub">期間比 <span id="card-ffm-diff">—</span><span class="unit">kg</span></p>
-      </article>
-    </section>
   </div>
 
   <noscript><p class="state-box">このダッシュボードの表示にはJavaScriptが必要です。</p></noscript>

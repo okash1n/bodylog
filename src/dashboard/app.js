@@ -151,7 +151,6 @@
     error: $('state-error'),
     retry: $('retry-btn'),
     content: $('content'),
-    heroWeight: $('hero-weight'),
     heroDiff: $('hero-diff'),
     heroMeasured: $('hero-measured'),
     offlineBadge: $('offline-badge'),
@@ -307,7 +306,6 @@
         break;
       }
     }
-    els.heroWeight.textContent = fmt(latestWeight);
     var diff = latestWeight != null && latestAvg != null ? latestWeight - latestAvg : null;
     els.heroDiff.textContent = '7日平均比 ' + (diff == null ? '—' : fmtSigned(diff) + ' kg');
 

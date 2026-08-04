@@ -76,9 +76,10 @@ body {
 .title-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 8px 16px;
+  flex-wrap: wrap;
 }
+.title-row .title-actions { margin-left: auto; }
 .title-row h1 {
   font-size: 1rem;
   font-weight: 600;
@@ -96,42 +97,25 @@ body {
   white-space: nowrap;
 }
 
-/* 体重（左）+ メタ情報縦2段（中）+ 表で見る（右端）の1行構成 */
-.hero {
-  margin: 4px 0 16px;
+/* メタ情報はタイトル行に同居させる（大きな体重表示はカードと重複するため置かない） */
+.header-meta {
+  margin: 0;
   display: flex;
-  align-items: center;
-  gap: 16px;
   flex-wrap: wrap;
-}
-.hero-weight {
-  margin: 0;
-  font-size: clamp(2.6rem, 11vw, 4rem);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
-}
-.hero-unit {
-  font-size: 0.4em;
-  font-weight: 500;
-  color: var(--text-muted);
-  margin-left: 6px;
-}
-.hero-meta {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  gap: 2px 16px;
   color: var(--text-muted);
   font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
 }
-.hero-meta .warn { color: var(--warn); font-weight: 600; }
+.header-meta .warn { color: var(--warn); font-weight: 600; }
 .view-toggle {
-  margin-left: auto;
   padding: 6px 12px;
   font-size: 0.85rem;
-  align-self: center;
+}
+.controls-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* ---- ボタン ---- */
@@ -189,8 +173,7 @@ body {
   .controls-row { gap: 6px; }
   .segment { padding: 2px; }
   .segment-btn { padding: 5px 8px; font-size: 0.8rem; }
-  .hero { gap: 12px; }
-  .hero-meta { font-size: 0.78rem; }
+  .header-meta { font-size: 0.78rem; }
   .view-toggle { padding: 5px 10px; }
 }
 .segment-btn {
@@ -231,11 +214,12 @@ body {
 .custom-error { color: var(--warn); }
 
 /* ---- サマリーカード ---- */
-/* 3指標は常に横1行（狭い画面では文字を縮小して収める） */
+/* 3指標は常に横1行（狭い画面では文字を縮小して収める）。グラフの上に置く */
 .cards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
+  margin-bottom: 12px;
 }
 @media (max-width: 479px) {
   .cards { gap: 8px; }
