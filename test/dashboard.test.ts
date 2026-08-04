@@ -78,6 +78,9 @@ describe('dashboard HTML', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('X-Robots-Tag')).toContain('noindex');
     expect(res.headers.get('Content-Type') ?? '').toContain('text/html');
-    expect((await res.text()).length).toBeGreaterThan(0);
+    const html = await res.text();
+    expect(html.length).toBeGreaterThan(0);
+    // og:imageは画像プロキシのキャッシュ対策でバージョン付きURLにする
+    expect(html).toContain('og.png?v=');
   });
 });

@@ -46,12 +46,23 @@ function inclusiveDays(from: string, to: string): number {
 
 // ---- 共有ハンドラ（/d/{slug}/ 配下とドメイン直下の両モードから使う） ----
 
-const serveIndex: Handler = (c) => {
+const serveIndex: Handler = async (c) => {
   const base = dashboardBase(c.env);
   const origin = new URL(c.req.url).origin;
+  // og:imageは最新計測日のキャッシュバスター付きにする。固定URLだとSlack等の
+  // 画像プロキシが一度キャッシュした古いグラフを返し続けるため
+  let ogVersion = localToday(c.env);
+  try {
+    const status = await getImportStatus(c.env);
+    if (status.latest_measured_at) {
+      ogVersion = ymdWithOffset(status.latest_measured_at, offsetHours(c.env));
+    }
+  } catch (err) {
+    console.error('[dashboard] failed to resolve og version (falling back to today)', err);
+  }
   const html = indexHtmlTpl
     .replaceAll('{{BASE}}', base)
-    .replaceAll('{{OG_IMAGE_URL}}', `${origin}${base}og.png`)
+    .replaceAll('{{OG_IMAGE_URL}}', `${origin}${base}og.png?v=${ogVersion}`)
     .replaceAll('{{ASSET_VERSION}}', ASSET_VERSION);
   return c.html(html, 200, noindexHeaders({ 'Cache-Control': 'no-cache' }));
 };
