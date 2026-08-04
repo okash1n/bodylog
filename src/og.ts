@@ -2,17 +2,17 @@ import type { DayPoint } from './types';
 
 type Rgb = readonly [number, number, number];
 
-const BG: Rgb = [15, 23, 42]; // #0f172a
-const WEIGHT: Rgb = [56, 189, 248]; // #38bdf8
-const AVG: Rgb = [148, 163, 184]; // #94a3b8
-const GUIDE: Rgb = [51, 65, 85]; // #334155
+// ダッシュボードのライトテーマ配色に合わせる
+const BG: Rgb = [255, 255, 255]; // --surface
+const FRAME: Rgb = [226, 232, 240]; // --border #e2e8f0
+const GRID: Rgb = [237, 241, 246]; // 枠より薄いグリッド線
+const WEIGHT: Rgb = [2, 132, 199]; // --accent #0284c7
+const FAT: Rgb = [217, 119, 6]; // --accent-2 #d97706
+const FFM: Rgb = [5, 150, 105]; // --accent-3 #059669
 
 const PADDING = 80;
-const WEIGHT_THICKNESS = 4;
-const AVG_THICKNESS = 2;
-// 破線様: Bresenhamステップ数で on/off を刻む
-const DASH_ON = 6;
-const DASH_OFF = 4;
+const LINE_THICKNESS = 3;
+const DOT_THICKNESS = 9;
 
 const PNG_SIGNATURE = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
 
@@ -83,20 +83,7 @@ function stamp(c: Canvas, x: number, y: number, rgb: Rgb, thickness: number): vo
   }
 }
 
-interface DashState {
-  step: number;
-}
-
-function drawLine(
-  c: Canvas,
-  x0: number,
-  y0: number,
-  x1: number,
-  y1: number,
-  rgb: Rgb,
-  thickness: number,
-  dash?: DashState,
-): void {
+function drawLine(c: Canvas, x0: number, y0: number, x1: number, y1: number, rgb: Rgb, thickness: number): void {
   const dx = Math.abs(x1 - x0);
   const sx = x0 < x1 ? 1 : -1;
   const dy = -Math.abs(y1 - y0);
@@ -105,9 +92,7 @@ function drawLine(
   let x = x0;
   let y = y0;
   for (;;) {
-    const on = !dash || dash.step % (DASH_ON + DASH_OFF) < DASH_ON;
-    if (on) stamp(c, x, y, rgb, thickness);
-    if (dash) dash.step++;
+    stamp(c, x, y, rgb, thickness);
     if (x === x1 && y === y1) break;
     const e2 = 2 * err;
     if (e2 >= dy) {
@@ -150,20 +135,33 @@ function collectSeries(days: DayPoint[], pick: (d: DayPoint) => number | null): 
   return points;
 }
 
-function drawPolyline(
+/** min/max±10%マージンの値→Y座標変換を作る（値が無ければnull） */
+function makeYScale(values: number[], top: number, bottom: number): ((v: number) => number) | null {
+  if (values.length === 0) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const lo = min - span * 0.1;
+  const hi = max + span * 0.1;
+  return (v: number): number => Math.round(bottom - ((bottom - top) * (v - lo)) / (hi - lo));
+}
+
+/** 実測系列: 線（2点以上）+ 全点にドット */
+function drawSeries(
   c: Canvas,
   points: SeriesPoint[],
   xOf: (index: number) => number,
-  yOf: (value: number) => number,
+  yOf: ((v: number) => number) | null,
   rgb: Rgb,
-  thickness: number,
-  dashed: boolean,
 ): void {
-  const dash: DashState | undefined = dashed ? { step: 0 } : undefined;
+  if (!yOf || points.length === 0) return;
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1];
     const b = points[i];
-    drawLine(c, xOf(a.index), yOf(a.value), xOf(b.index), yOf(b.value), rgb, thickness, dash);
+    drawLine(c, xOf(a.index), yOf(a.value), xOf(b.index), yOf(b.value), rgb, LINE_THICKNESS);
+  }
+  for (const p of points) {
+    stamp(c, xOf(p.index), yOf(p.value), rgb, DOT_THICKNESS);
   }
 }
 
@@ -194,6 +192,10 @@ async function encodePng(c: Canvas): Promise<Uint8Array> {
   return out;
 }
 
+/**
+ * ダッシュボードの1M実測表示に相当するグラフをライトテーマで描く。
+ * 体重・除脂肪体重はkgスケールを共有し、体脂肪率は独自スケール（2軸相当）。
+ */
 export async function renderOgPng(days: DayPoint[], opts: { width: number; height: number }): Promise<Uint8Array> {
   const { width, height } = opts;
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
@@ -215,21 +217,19 @@ export async function renderOgPng(days: DayPoint[], opts: { width: number; heigh
   const top = pad;
   const bottom = height - 1 - pad;
 
-  drawFrame(c, left, top, right, bottom, GUIDE);
+  drawFrame(c, left, top, right, bottom, FRAME);
 
   const weightPoints = collectSeries(days, (d) => d.weight);
-  if (weightPoints.length === 0) {
+  const fatPoints = collectSeries(days, (d) => d.fat_ratio);
+  const ffmPoints = collectSeries(days, (d) => d.fat_free_mass);
+  if (weightPoints.length + fatPoints.length + ffmPoints.length === 0) {
     return encodePng(c);
   }
 
-  const avgPoints = collectSeries(days, (d) => d.weight_7d_avg);
-  const values = [...weightPoints, ...avgPoints].map((p) => p.value);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  // 表示レンジは±10%マージン（min/maxガイドを枠から離す）
-  const lo = min - span * 0.1;
-  const hi = max + span * 0.1;
+  // 内側の水平グリッド線（4分割）
+  for (let i = 1; i <= 3; i++) {
+    drawHorizontal(c, left + 1, right - 1, Math.round(top + ((bottom - top) * i) / 4), GRID);
+  }
 
   // X座標は配列インデックスではなく日付に比例させる（欠測日があると等間隔では日付位置がずれる）。
   // データが1日分だけの場合は「直近」を示す右端に置く
@@ -238,17 +238,22 @@ export async function renderOgPng(days: DayPoint[], opts: { width: number; heigh
   const t1 = Math.max(...times);
   const xOf = (index: number): number =>
     t1 === t0 ? right : Math.round(left + ((right - left) * (times[index] - t0)) / (t1 - t0));
-  const yOf = (value: number): number => Math.round(bottom - ((bottom - top) * (value - lo)) / (hi - lo));
 
-  drawHorizontal(c, left, right, yOf(max), GUIDE);
-  drawHorizontal(c, left, right, yOf(min), GUIDE);
+  const kgScale = makeYScale(
+    [...weightPoints, ...ffmPoints].map((p) => p.value),
+    top,
+    bottom,
+  );
+  const pctScale = makeYScale(
+    fatPoints.map((p) => p.value),
+    top,
+    bottom,
+  );
 
-  drawPolyline(c, avgPoints, xOf, yOf, AVG, AVG_THICKNESS, true);
-  drawPolyline(c, weightPoints, xOf, yOf, WEIGHT, WEIGHT_THICKNESS, false);
-  // 疎データ（計測日が少ない期間）でも空に見えないよう、点マーカーは常に打つ
-  for (const p of weightPoints) {
-    stamp(c, xOf(p.index), yOf(p.value), WEIGHT, 10);
-  }
+  drawSeries(c, ffmPoints, xOf, kgScale, FFM);
+  drawSeries(c, fatPoints, xOf, pctScale, FAT);
+  // 体重を最前面に描く
+  drawSeries(c, weightPoints, xOf, kgScale, WEIGHT);
 
   return encodePng(c);
 }
