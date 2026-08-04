@@ -1,4 +1,5 @@
 import type { DayPoint } from './types';
+import { OG_FONT } from './og-font';
 
 type Rgb = readonly [number, number, number];
 
@@ -6,6 +7,8 @@ type Rgb = readonly [number, number, number];
 const BG: Rgb = [255, 255, 255]; // --surface
 const FRAME: Rgb = [226, 232, 240]; // --border #e2e8f0
 const GRID: Rgb = [237, 241, 246]; // 枠より薄いグリッド線
+const TEXT: Rgb = [30, 41, 59]; // --text #1e293b
+const MUTED: Rgb = [100, 116, 139]; // --text-muted #64748b
 const WEIGHT: Rgb = [2, 132, 199]; // --accent #0284c7
 const FAT: Rgb = [217, 119, 6]; // --accent-2 #d97706
 const FFM: Rgb = [5, 150, 105]; // --accent-3 #059669
@@ -13,6 +16,7 @@ const FFM: Rgb = [5, 150, 105]; // --accent-3 #059669
 const PADDING = 80;
 const LINE_THICKNESS = 3;
 const DOT_THICKNESS = 9;
+const FONT_HEIGHT = OG_FONT.meta.size; // 描画時の行送りの目安
 
 const PNG_SIGNATURE = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
 
@@ -106,6 +110,42 @@ function drawLine(c: Canvas, x0: number, y0: number, x1: number, y1: number, rgb
   }
 }
 
+/** 4bitアルファでの合成（アンチエイリアスされた文字用） */
+function blendPixel(c: Canvas, x: number, y: number, rgb: Rgb, alpha: number): void {
+  if (alpha <= 0 || x < 0 || y < 0 || x >= c.width || y >= c.height) return;
+  const i = (y * c.width + x) * 4;
+  c.px[i] = Math.round(c.px[i] + (rgb[0] - c.px[i]) * alpha);
+  c.px[i + 1] = Math.round(c.px[i + 1] + (rgb[1] - c.px[i + 1]) * alpha);
+  c.px[i + 2] = Math.round(c.px[i + 2] + (rgb[2] - c.px[i + 2]) * alpha);
+  c.px[i + 3] = 255;
+}
+
+function measureText(text: string): number {
+  let w = 0;
+  for (const ch of text) {
+    const g = OG_FONT.glyphs[ch];
+    if (g) w += g.adv;
+  }
+  return w;
+}
+
+/** (x, y) をテキスト行の左上として描画する */
+function drawText(c: Canvas, x: number, y: number, text: string, rgb: Rgb): void {
+  let cursor = x;
+  for (const ch of text) {
+    const g = OG_FONT.glyphs[ch];
+    if (!g) continue;
+    for (let gy = 0; gy < g.h; gy++) {
+      const row = g.rows[gy];
+      for (let gx = 0; gx < g.w; gx++) {
+        const a = parseInt(row[gx], 16) / 15;
+        blendPixel(c, cursor + g.ox + gx, y + g.oy + gy, rgb, a);
+      }
+    }
+    cursor += g.adv;
+  }
+}
+
 function drawHorizontal(c: Canvas, x0: number, x1: number, y: number, rgb: Rgb): void {
   for (let x = x0; x <= x1; x++) setPixel(c, x, y, rgb);
 }
@@ -135,26 +175,37 @@ function collectSeries(days: DayPoint[], pick: (d: DayPoint) => number | null): 
   return points;
 }
 
+interface YScale {
+  yOf: (v: number) => number;
+  lo: number;
+  hi: number;
+}
+
 /** min/max±10%マージンの値→Y座標変換を作る（値が無ければnull） */
-function makeYScale(values: number[], top: number, bottom: number): ((v: number) => number) | null {
+function makeYScale(values: number[], top: number, bottom: number): YScale | null {
   if (values.length === 0) return null;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min || 1;
   const lo = min - span * 0.1;
   const hi = max + span * 0.1;
-  return (v: number): number => Math.round(bottom - ((bottom - top) * (v - lo)) / (hi - lo));
+  return {
+    yOf: (v: number): number => Math.round(bottom - ((bottom - top) * (v - lo)) / (hi - lo)),
+    lo,
+    hi,
+  };
 }
 
-/** 実測系列: 線（2点以上）+ 全点にドット */
+/** 実測系列: 線（2点以上）+ 全点にドット + 最新点の値ラベル */
 function drawSeries(
   c: Canvas,
   points: SeriesPoint[],
   xOf: (index: number) => number,
-  yOf: ((v: number) => number) | null,
+  scale: YScale | null,
   rgb: Rgb,
 ): void {
-  if (!yOf || points.length === 0) return;
+  if (!scale || points.length === 0) return;
+  const yOf = scale.yOf;
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1];
     const b = points[i];
@@ -163,6 +214,13 @@ function drawSeries(
   for (const p of points) {
     stamp(c, xOf(p.index), yOf(p.value), rgb, DOT_THICKNESS);
   }
+  // 最新点にだけ値ラベル（全点に付けるとデータが増えたとき潰れる）
+  const last = points[points.length - 1];
+  const label = last.value.toFixed(1);
+  const w = measureText(label);
+  const lx = xOf(last.index) - w - 12;
+  const ly = yOf(last.value) - FONT_HEIGHT - 6;
+  drawText(c, lx, ly, label, rgb);
 }
 
 async function encodePng(c: Canvas): Promise<Uint8Array> {
@@ -219,6 +277,20 @@ export async function renderOgPng(days: DayPoint[], opts: { width: number; heigh
 
   drawFrame(c, left, top, right, bottom, FRAME);
 
+  // 凡例（プロット枠の上）
+  const legendItems: { label: string; rgb: Rgb }[] = [
+    { label: '体重', rgb: WEIGHT },
+    { label: '体脂肪率', rgb: FAT },
+    { label: '除脂肪体重', rgb: FFM },
+  ];
+  let legendX = left;
+  const legendY = Math.max(6, top - FONT_HEIGHT - 18);
+  for (const item of legendItems) {
+    stamp(c, legendX + 6, legendY + Math.round(FONT_HEIGHT / 2) + 2, item.rgb, 11);
+    drawText(c, legendX + 20, legendY, item.label, TEXT);
+    legendX += 20 + measureText(item.label) + 36;
+  }
+
   const weightPoints = collectSeries(days, (d) => d.weight);
   const fatPoints = collectSeries(days, (d) => d.fat_ratio);
   const ffmPoints = collectSeries(days, (d) => d.fat_free_mass);
@@ -249,6 +321,31 @@ export async function renderOgPng(days: DayPoint[], opts: { width: number; heigh
     top,
     bottom,
   );
+
+  // 軸の数値: 左=kg（上限/下限）、右=%（上限/下限）
+  if (kgScale) {
+    const hiText = kgScale.hi.toFixed(1);
+    const loText = kgScale.lo.toFixed(1);
+    drawText(c, left - measureText(hiText) - 10, top - Math.round(FONT_HEIGHT / 2), hiText, MUTED);
+    drawText(c, left - measureText(loText) - 10, bottom - Math.round(FONT_HEIGHT / 2), loText, MUTED);
+  }
+  if (pctScale) {
+    const hiText = `${pctScale.hi.toFixed(1)}%`;
+    const loText = `${pctScale.lo.toFixed(1)}%`;
+    // 画像右端からはみ出さないようにclamp
+    const hiX = Math.min(right + 10, width - measureText(hiText) - 4);
+    const loX = Math.min(right + 10, width - measureText(loText) - 4);
+    drawText(c, hiX, top - Math.round(FONT_HEIGHT / 2), hiText, MUTED);
+    drawText(c, loX, bottom - Math.round(FONT_HEIGHT / 2), loText, MUTED);
+  }
+
+  // X軸の日付（最初と最後の計測日）
+  const fmtDate = (ymd: string): string => `${Number(ymd.slice(5, 7))}/${Number(ymd.slice(8, 10))}`;
+  if (days.length > 0) {
+    drawText(c, left, bottom + 10, fmtDate(days[0].d), MUTED);
+    const lastText = fmtDate(days[days.length - 1].d);
+    drawText(c, right - measureText(lastText), bottom + 10, lastText, MUTED);
+  }
 
   drawSeries(c, ffmPoints, xOf, kgScale, FFM);
   drawSeries(c, fatPoints, xOf, pctScale, FAT);
