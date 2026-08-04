@@ -126,6 +126,25 @@ SELECT
   return { recent7, diff7: diffTriple(recent7, prev7), baselineDate, baselineDiff };
 }
 
+/** 計測1回ごとの明細（新しい順）。表の「計測明細」モード用 */
+export async function getRawMeasurements(
+  env: Env,
+  from: string,
+  to: string,
+): Promise<LatestMeasurement[]> {
+  const tz = tzModifier(env);
+  const res = await env.DB.prepare(
+    `SELECT measured_at, weight, fat_ratio, fat_free_mass
+FROM measurements
+WHERE date(measured_at, '${tz}') BETWEEN ?1 AND ?2
+ORDER BY measured_at DESC
+LIMIT 2000`,
+  )
+    .bind(from, to)
+    .all<LatestMeasurement>();
+  return res.results;
+}
+
 export async function getLatestForBatch(
   env: Env,
   batchId: string,

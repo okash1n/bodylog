@@ -254,6 +254,11 @@ body {
   border: 1px solid var(--border);
   border-radius: 12px;
 }
+.table-controls {
+  display: flex;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
 .data-table {
   width: 100%;
   border-collapse: collapse;

@@ -10,7 +10,7 @@ import {
   offsetHours,
   ymdWithOffset,
 } from './util';
-import { getDailySeries, getImportStatus } from './queries';
+import { getDailySeries, getImportStatus, getRawMeasurements } from './queries';
 import { renderOgPng } from './og';
 import indexHtmlTpl from './dashboard/index.html';
 import stylesCss from './dashboard/styles.css';
@@ -20,7 +20,7 @@ import manifestTpl from './dashboard/manifest.webmanifest';
 import chartVendorJs from './dashboard/vendor/chart.umd.js';
 
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
-export const ASSET_VERSION = '2026-08-04-3';
+export const ASSET_VERSION = '2026-08-04-4';
 
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';
 const JS_CONTENT_TYPE = 'text/javascript; charset=utf-8';
@@ -91,8 +91,10 @@ const serveSw: Handler = (c) =>
     noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': 'no-cache' }),
   );
 
-const serveMeasurements: Handler = async (c) => {
-  const headers = noindexHeaders({ 'Cache-Control': 'no-store' });
+function validatedRange(
+  c: DashboardContext,
+  headers: Record<string, string>,
+): { from: string; to: string } | Response {
   const from = c.req.query('from') ?? '';
   const to = c.req.query('to') ?? '';
   if (!isValidYmd(from) || !isValidYmd(to)) {
@@ -107,11 +109,31 @@ const serveMeasurements: Handler = async (c) => {
   if (inclusiveDays(from, to) > LIMITS.API_MAX_RANGE_DAYS) {
     return c.json({ error: `range must be within ${LIMITS.API_MAX_RANGE_DAYS} days` }, 400, headers);
   }
+  return { from, to };
+}
+
+const serveMeasurements: Handler = async (c) => {
+  const headers = noindexHeaders({ 'Cache-Control': 'no-store' });
+  const range = validatedRange(c, headers);
+  if (range instanceof Response) return range;
   try {
-    const days = await getDailySeries(c.env, from, to);
+    const days = await getDailySeries(c.env, range.from, range.to);
     return c.json({ days }, 200, headers);
   } catch (err) {
     console.error('[dashboard] getDailySeries failed', err);
+    return c.json({ error: 'internal error' }, 500, headers);
+  }
+};
+
+const serveRaw: Handler = async (c) => {
+  const headers = noindexHeaders({ 'Cache-Control': 'no-store' });
+  const range = validatedRange(c, headers);
+  if (range instanceof Response) return range;
+  try {
+    const measurements = await getRawMeasurements(c.env, range.from, range.to);
+    return c.json({ measurements }, 200, headers);
+  } catch (err) {
+    console.error('[dashboard] getRawMeasurements failed', err);
     return c.json({ error: 'internal error' }, 500, headers);
   }
 };
@@ -165,6 +187,7 @@ export function createDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/:slug/manifest.webmanifest', guarded(serveManifest));
   app.get('/:slug/sw.js', guarded(serveSw));
   app.get('/:slug/api/measurements', guarded(serveMeasurements));
+  app.get('/:slug/api/raw', guarded(serveRaw));
   app.get('/:slug/api/status', guarded(serveStatus));
   app.get('/:slug/og.png', guarded(serveOg));
   return app;
@@ -184,6 +207,7 @@ export function createRootDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/manifest.webmanifest', guarded(serveManifest));
   app.get('/sw.js', guarded(serveSw));
   app.get('/api/measurements', guarded(serveMeasurements));
+  app.get('/api/raw', guarded(serveRaw));
   app.get('/api/status', guarded(serveStatus));
   app.get('/og.png', guarded(serveOg));
   return app;

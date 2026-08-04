@@ -161,6 +161,7 @@
     canvas: $('chart'),
     tableWrap: $('table-wrap'),
     tableBody: $('table-body'),
+    tableColDate: $('table-col-date'),
     viewToggle: $('view-toggle'),
     customRange: $('custom-range'),
     customFrom: $('custom-from'),
@@ -170,6 +171,7 @@
   };
   var segButtons = Array.prototype.slice.call(document.querySelectorAll('.segment-btn[data-period]'));
   var modeButtons = Array.prototype.slice.call(document.querySelectorAll('.segment-btn[data-mode]'));
+  var tableModeButtons = Array.prototype.slice.call(document.querySelectorAll('.segment-btn[data-table-mode]'));
 
   /* ---- 状態 ---- */
 
@@ -182,6 +184,9 @@
   var customToValue = null;
   var tableVisible = false;
   var seriesMode = readSeriesMode(); // 'raw'（実測） | 'avg'（7日平均）
+  var tableMode = 'daily'; // 'daily'（日次集計） | 'raw'（計測明細）
+  var lastDays = [];
+  var rawRows = null; // 明細のキャッシュ（期間が変わったらnullに戻す）
   var importPollTimer = null;
   var themeCache = readTheme();
   var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -262,6 +267,7 @@
       .then(function (results) {
         var days = (results[0] && results[0].days) || [];
         var status = results[1];
+        rawRows = null; // 期間が変わった可能性があるので明細キャッシュを破棄
         renderHeader(days, status);
         if (days.length === 0) {
           renderEmpty(status);
@@ -599,6 +605,7 @@
   }
 
   function renderAll(days, from, to) {
+    lastDays = days;
     var labels = buildDateLabels(from, to);
     var density = densityFor(labels.length);
     var sets = seriesFrom(days, labels);
@@ -626,21 +633,82 @@
     });
   }
 
-  /* ---- テーブル（新しい日付が上） ---- */
+  /* ---- テーブル（新しい日付が上。日次集計と計測明細を切り替え可能） ---- */
 
-  function renderTable(days) {
+  function appendRow(frag, cells) {
+    var tr = document.createElement('tr');
+    cells.forEach(function (text) {
+      var td = document.createElement('td');
+      td.textContent = text;
+      tr.appendChild(td);
+    });
+    frag.appendChild(tr);
+  }
+
+  function renderDailyTable(days) {
+    els.tableColDate.textContent = '日付';
     var frag = document.createDocumentFragment();
     for (var i = days.length - 1; i >= 0; i--) {
       var d = days[i];
-      var tr = document.createElement('tr');
-      [d.d, fmt(d.weight), fmt(d.fat_ratio), fmt(d.fat_free_mass)].forEach(function (text) {
-        var td = document.createElement('td');
-        td.textContent = text;
-        tr.appendChild(td);
-      });
-      frag.appendChild(tr);
+      appendRow(frag, [d.d, fmt(d.weight), fmt(d.fat_ratio), fmt(d.fat_free_mass)]);
     }
     els.tableBody.replaceChildren(frag);
+  }
+
+  function renderRawTable(rows) {
+    els.tableColDate.textContent = '日時';
+    var frag = document.createDocumentFragment();
+    rows.forEach(function (m) {
+      var ms = parseUtcMs(m.measured_at);
+      appendRow(frag, [
+        ms == null ? '—' : formatLocalDateTime(ms),
+        fmt(m.weight),
+        fmt(m.fat_ratio),
+        fmt(m.fat_free_mass),
+      ]);
+    });
+    els.tableBody.replaceChildren(frag);
+  }
+
+  function renderTable(days) {
+    if (tableMode === 'raw') {
+      loadRawRows();
+      return;
+    }
+    renderDailyTable(days);
+  }
+
+  function loadRawRows() {
+    if (rawRows) {
+      renderRawTable(rawRows);
+      return;
+    }
+    var r = rangeForPeriod();
+    var url = BASE + 'api/raw?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
+    fetch(url)
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        rawRows = (data && data.measurements) || [];
+        if (tableMode === 'raw') renderRawTable(rawRows);
+      })
+      .catch(function (err) {
+        console.error('[dashboard] raw fetch failed', err);
+        // 明細が取れなくても日次表示にフォールバックして空表にはしない
+        tableMode = 'daily';
+        setActiveTableMode('daily');
+        renderDailyTable(lastDays);
+      });
+  }
+
+  function setActiveTableMode(mode) {
+    tableModeButtons.forEach(function (btn) {
+      var active = btn.getAttribute('data-table-mode') === mode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', String(active));
+    });
   }
 
   /* ---- テーマ ---- */
@@ -700,6 +768,14 @@
     modeButtons.forEach(function (btn) {
       btn.addEventListener('click', function () {
         applySeriesMode(btn.getAttribute('data-mode'));
+      });
+    });
+
+    tableModeButtons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        tableMode = btn.getAttribute('data-table-mode');
+        setActiveTableMode(tableMode);
+        renderTable(lastDays);
       });
     });
 

@@ -72,10 +72,16 @@
     </section>
 
     <div id="table-wrap" class="table-wrap hidden">
+      <div class="table-controls">
+        <div class="segment" role="group" aria-label="表の粒度">
+          <button type="button" class="segment-btn active" data-table-mode="daily" aria-pressed="true">日次</button>
+          <button type="button" class="segment-btn" data-table-mode="raw" aria-pressed="false">計測明細</button>
+        </div>
+      </div>
       <table class="data-table">
         <thead>
           <tr>
-            <th>日付</th>
+            <th id="table-col-date">日付</th>
             <th>体重 <span class="unit">kg</span></th>
             <th>体脂肪率 <span class="unit">%</span></th>
             <th>除脂肪体重 <span class="unit">kg</span></th>
