@@ -171,6 +171,16 @@ body {
   padding: 3px;
   gap: 2px;
 }
+/* スマホ: 期間セグメントを1行目全幅にし、2行目をモード切替（左）+表で見る（右）で揃える */
+@media (max-width: 559px) {
+  .controls-row .segment[aria-label='表示期間'] {
+    width: 100%;
+    display: flex;
+  }
+  .controls-row .segment[aria-label='表示期間'] .segment-btn {
+    flex: 1;
+  }
+}
 .segment-btn {
   border: none;
   background: transparent;
@@ -209,13 +219,18 @@ body {
 .custom-error { color: var(--warn); }
 
 /* ---- サマリーカード ---- */
+/* 3指標は常に横1行（狭い画面では文字を縮小して収める） */
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
 }
-@media (max-width: 379px) {
-  .cards { grid-template-columns: 1fr; }
+@media (max-width: 479px) {
+  .cards { gap: 8px; }
+  .card { padding: 10px; }
+  .card h3 { font-size: 0.68rem; white-space: nowrap; }
+  .card-value { font-size: 1.1rem; }
+  .card-sub { font-size: 0.66rem; white-space: nowrap; }
 }
 .card {
   background: var(--surface);
