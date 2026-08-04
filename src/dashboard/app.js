@@ -766,6 +766,16 @@
       });
   }
 
+  /* スマホでは短い文言にして行数を抑える */
+  var narrowMq = window.matchMedia('(max-width: 559px)');
+
+  function updateViewToggleLabel() {
+    var short = narrowMq.matches;
+    els.viewToggle.textContent = tableVisible
+      ? (short ? 'グラフ' : 'グラフで見る')
+      : (short ? '表' : '表で見る');
+  }
+
   function setActiveTableMode(mode) {
     tableModeButtons.forEach(function (btn) {
       var active = btn.getAttribute('data-table-mode') === mode;
@@ -861,10 +871,11 @@
       tableVisible = !tableVisible;
       els.tableWrap.classList.toggle('hidden', !tableVisible);
       els.chartSection.classList.toggle('hidden', tableVisible);
-      els.viewToggle.textContent = tableVisible ? 'グラフで見る' : '表で見る';
+      updateViewToggleLabel();
       els.viewToggle.setAttribute('aria-pressed', String(tableVisible));
       if (!tableVisible && chart) chart.resize();
     });
+    if (narrowMq.addEventListener) narrowMq.addEventListener('change', updateViewToggleLabel);
 
     els.themeToggle.addEventListener('click', function () {
       var next = currentThemeName() === 'dark' ? 'light' : 'dark';
@@ -925,6 +936,7 @@
   bindEvents();
   initCustomInputs();
   setActiveMode(seriesMode);
+  updateViewToggleLabel();
   updateOnlineState();
   loadData();
 })();
