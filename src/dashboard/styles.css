@@ -120,6 +120,13 @@ body {
   font-variant-numeric: tabular-nums;
 }
 .hero-meta .warn { color: var(--warn); font-weight: 600; }
+/* 「表で見る」はメタ行の右端に置き、行を増やさない */
+.hero-meta { align-items: center; }
+.view-toggle {
+  margin-left: auto;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+}
 
 /* ---- ボタン ---- */
 .ghost-btn,
@@ -171,22 +178,11 @@ body {
   padding: 3px;
   gap: 2px;
 }
-/* 「表で見る」はグラフ/表の直上に右寄せで置く */
-.view-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 8px;
-}
-
-/* スマホ: 期間セグメントを1行目全幅にし、2行目にモード切替を置く */
-@media (max-width: 559px) {
-  .controls-row .segment[aria-label='表示期間'] {
-    width: 100%;
-    display: flex;
-  }
-  .controls-row .segment[aria-label='表示期間'] .segment-btn {
-    flex: 1;
-  }
+/* スマホ: セグメントを詰めて「期間 + 実測/7日平均」を1行に収める */
+@media (max-width: 419px) {
+  .controls-row { gap: 6px; }
+  .segment { padding: 2px; }
+  .segment-btn { padding: 5px 8px; font-size: 0.8rem; }
 }
 .segment-btn {
   border: none;
