@@ -18,7 +18,7 @@ const FFM: Rgb = [5, 150, 105]; // --accent-3 #059669
  * og.pngのキャッシュバスターに含め、データが同じでも描画変更が
  * Slack等の画像プロキシキャッシュを貫通するようにする。
  */
-export const OG_RENDERER_VERSION = 3;
+export const OG_RENDERER_VERSION = 4;
 
 const PADDING = 104;
 const LINE_THICKNESS = 3;
