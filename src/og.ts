@@ -218,7 +218,7 @@ export async function renderOgPng(days: DayPoint[], opts: { width: number; heigh
   drawFrame(c, left, top, right, bottom, GUIDE);
 
   const weightPoints = collectSeries(days, (d) => d.weight);
-  if (weightPoints.length < 2) {
+  if (weightPoints.length === 0) {
     return encodePng(c);
   }
 
@@ -231,8 +231,13 @@ export async function renderOgPng(days: DayPoint[], opts: { width: number; heigh
   const lo = min - span * 0.1;
   const hi = max + span * 0.1;
 
-  const lastIndex = days.length - 1 || 1;
-  const xOf = (index: number): number => Math.round(left + ((right - left) * index) / lastIndex);
+  // X座標は配列インデックスではなく日付に比例させる（欠測日があると等間隔では日付位置がずれる）。
+  // データが1日分だけの場合は「直近」を示す右端に置く
+  const times = days.map((d) => Date.parse(`${d.d}T00:00:00Z`));
+  const t0 = Math.min(...times);
+  const t1 = Math.max(...times);
+  const xOf = (index: number): number =>
+    t1 === t0 ? right : Math.round(left + ((right - left) * (times[index] - t0)) / (t1 - t0));
   const yOf = (value: number): number => Math.round(bottom - ((bottom - top) * (value - lo)) / (hi - lo));
 
   drawHorizontal(c, left, right, yOf(max), GUIDE);
@@ -240,6 +245,10 @@ export async function renderOgPng(days: DayPoint[], opts: { width: number; heigh
 
   drawPolyline(c, avgPoints, xOf, yOf, AVG, AVG_THICKNESS, true);
   drawPolyline(c, weightPoints, xOf, yOf, WEIGHT, WEIGHT_THICKNESS, false);
+  // 疎データ（計測日が少ない期間）でも空に見えないよう、点マーカーは常に打つ
+  for (const p of weightPoints) {
+    stamp(c, xOf(p.index), yOf(p.value), WEIGHT, 10);
+  }
 
   return encodePng(c);
 }

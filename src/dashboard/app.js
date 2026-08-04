@@ -208,6 +208,7 @@
       text: v('--text'),
       muted: v('--text-muted'),
       grid: v('--grid'),
+      surface: v('--surface'),
       accent: v('--accent'),
       accent2: v('--accent-2'),
       accent3: v('--accent-3'),
@@ -507,6 +508,56 @@
     ch.update();
   }
 
+  /*
+   * 点の近くに値を常時表示する。表示中の点の総数が閾値以下なら全点、
+   * 超える場合は各系列の最新点のみ（1Mを3系列表示すると90点前後になり全表示は潰れるため）
+   */
+  var POINT_LABEL_MAX = 40;
+  var pointLabelsPlugin = {
+    id: 'pointLabels',
+    afterDatasetsDraw: function (ch) {
+      var total = 0;
+      ch.data.datasets.forEach(function (ds, i) {
+        if (!ch.isDatasetVisible(i)) return;
+        ds.data.forEach(function (v) {
+          if (v != null) total++;
+        });
+      });
+      var showAll = total <= POINT_LABEL_MAX;
+      var ctx = ch.ctx;
+      ctx.save();
+      ctx.font = '600 10px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ch.data.datasets.forEach(function (ds, di) {
+        if (!ch.isDatasetVisible(di)) return;
+        var meta = ch.getDatasetMeta(di);
+        var lastIdx = -1;
+        if (!showAll) {
+          for (var j = ds.data.length - 1; j >= 0; j--) {
+            if (ds.data[j] != null) {
+              lastIdx = j;
+              break;
+            }
+          }
+        }
+        ds.data.forEach(function (v, j) {
+          if (v == null || (!showAll && j !== lastIdx)) return;
+          var el = meta.data[j];
+          if (!el || isNaN(el.x) || isNaN(el.y)) return;
+          var label = Number(v).toFixed(1);
+          // 背景色の縁取りで線・グリッドと重なっても読めるようにする
+          ctx.strokeStyle = themeCache.surface || '#ffffff';
+          ctx.lineWidth = 3;
+          ctx.strokeText(label, el.x, el.y - 6);
+          ctx.fillStyle = typeof ds.borderColor === 'string' ? ds.borderColor : themeCache.text;
+          ctx.fillText(label, el.x, el.y - 6);
+        });
+      });
+      ctx.restore();
+    },
+  };
+
   function createChart(labels, sets, density) {
     var t = themeCache;
     var limits = tickLimitsFor(currentBp);
@@ -514,6 +565,7 @@
     chart = new Chart(els.canvas, {
       type: 'line',
       data: { labels: labels, datasets: buildDatasets(sets, density, t) },
+      plugins: [pointLabelsPlugin],
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -526,6 +578,8 @@
             onClick: onLegendClick,
           },
           tooltip: {
+            // mode:index の既定位置は「全系列の平均位置」でカーソルから離れるため最近傍に出す
+            position: 'nearest',
             callbacks: {
               title: function (items) {
                 return items.length ? currentLabels[items[0].dataIndex] : '';

@@ -63,8 +63,9 @@ export function buildMessageBlocks(input: {
   stats: NotificationStats;
   dashboardUrl: string;
   tzOffset: number;
+  ogImageUrl?: string;
 }): unknown[] {
-  const { latest, extraCount, stats, dashboardUrl, tzOffset } = input;
+  const { latest, extraCount, stats, dashboardUrl, tzOffset, ogImageUrl } = input;
 
   const latestLine = [
     `*体重* : ${fmtValue(latest.weight, ' kg')}`,
@@ -99,6 +100,10 @@ export function buildMessageBlocks(input: {
 
   if (extraCount > 0) {
     blocks.push(section(`ほか ${extraCount} 件取り込み`));
+  }
+  // Incoming Webhookのリンクは自動展開（unfurl）されないため、グラフは画像ブロックで直接埋め込む
+  if (ogImageUrl) {
+    blocks.push({ type: 'image', image_url: ogImageUrl, alt_text: '直近30日の体重グラフ' });
   }
   return blocks;
 }
@@ -221,16 +226,18 @@ async function buildBatchMessage(env: Env, origin: string, batchId: string): Pro
     }
     const stats = await getNotificationStats(env, found.latest);
     const tzOffset = offsetHours(env);
-    // ローカル日付をキャッシュバスターに使う
-    const dashboardUrl = `${origin}${dashboardBase(env)}?v=${ymdWithOffset(found.latest.measured_at, tzOffset)}`;
+    // ローカル日付をキャッシュバスターに使う（SlackのURL単位キャッシュ対策）
+    const v = ymdWithOffset(found.latest.measured_at, tzOffset);
+    const base = `${origin}${dashboardBase(env)}`;
     return {
       kind: 'ok',
       blocks: buildMessageBlocks({
         latest: found.latest,
         extraCount: found.count - 1,
         stats,
-        dashboardUrl,
+        dashboardUrl: `${base}?v=${v}`,
         tzOffset,
+        ogImageUrl: `${base}og.png?v=${v}`,
       }),
     };
   } catch (e) {

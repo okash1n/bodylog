@@ -55,6 +55,22 @@ describe('buildMessageBlocks', () => {
     expect(text).toContain('+0.3');
   });
 
+  it('ogImageUrl 指定時は画像ブロックを付け、未指定なら付けない', () => {
+    const withImage = buildMessageBlocks({
+      latest,
+      extraCount: 0,
+      stats,
+      dashboardUrl,
+      tzOffset: 9,
+      ogImageUrl: 'https://origin.example/og.png?v=2026-01-06',
+    });
+    const image = (withImage as { type: string; image_url?: string }[]).find((b) => b.type === 'image');
+    expect(image?.image_url).toBe('https://origin.example/og.png?v=2026-01-06');
+
+    const withoutImage = buildMessageBlocks({ latest, extraCount: 0, stats, dashboardUrl, tzOffset: 9 });
+    expect(JSON.stringify(withoutImage)).not.toContain('"image"');
+  });
+
   it('基準日未設定なら基準日ブロックを省略する', () => {
     const blocks = buildMessageBlocks({
       latest,
