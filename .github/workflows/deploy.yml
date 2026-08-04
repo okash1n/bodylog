@@ -1,0 +1,65 @@
+# main への push で テスト → D1マイグレーション → wrangler deploy を実行する。
+#
+# 必要な GitHub Secrets:
+#   WRANGLER_TOML        — 実値入り wrangler.toml の中身（リポジトリにはコミットしない）
+#   CLOUDFLARE_API_TOKEN — Cloudflare APIトークン（Workers Scripts:Edit / D1:Edit / 対象ゾーン）
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # フォークからのPRなど Secrets が無い環境では example で代用する
+      # （vitest は wrangler.toml の存在を前提にするため）
+      - name: Restore wrangler.toml
+        env:
+          WRANGLER_TOML: ${{ secrets.WRANGLER_TOML }}
+        run: |
+          if [ -n "$WRANGLER_TOML" ]; then
+            printf '%s' "$WRANGLER_TOML" > wrangler.toml
+          else
+            cp wrangler.toml.example wrangler.toml
+          fi
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npx vitest run
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    concurrency: deploy-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Restore wrangler.toml
+        env:
+          WRANGLER_TOML: ${{ secrets.WRANGLER_TOML }}
+        run: |
+          if [ -z "$WRANGLER_TOML" ]; then
+            echo "WRANGLER_TOML secret is not set" >&2
+            exit 1
+          fi
+          printf '%s' "$WRANGLER_TOML" > wrangler.toml
+      - run: npm ci
+      - name: Apply D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler d1 migrations apply DB --remote
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run deploy
