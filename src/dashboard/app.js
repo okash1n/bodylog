@@ -409,6 +409,7 @@
       return ds;
     }
     function avg(label, data, color, axis, unit, hidden) {
+      // 7日平均モードでは主役の系列になるため、点は実測と同じ密度ルールで描く
       return {
         label: label,
         data: data,
@@ -416,11 +417,12 @@
         unit: unit,
         borderColor: color,
         backgroundColor: color,
+        pointBackgroundColor: color,
         borderWidth: 1.5,
         borderDash: [6, 4],
         tension: 0.3,
-        pointRadius: 0,
-        pointHoverRadius: 0,
+        pointRadius: pr,
+        pointHoverRadius: phr,
         spanGaps: true,
         fill: false,
         hidden: hidden,
@@ -653,9 +655,9 @@
     d[5].data = sets.ffm7;
     var pr = pointRadiusFor(density);
     var phr = pointHoverRadiusFor(density);
-    [0, 2, 4].forEach(function (i) {
-      d[i].pointRadius = pr;
-      d[i].pointHoverRadius = phr;
+    d.forEach(function (ds) {
+      ds.pointRadius = pr;
+      ds.pointHoverRadius = phr;
     });
     d[0].fill = density === 'sparse' ? false : 'origin';
     var limits = tickLimitsFor(currentBp);
