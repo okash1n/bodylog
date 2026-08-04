@@ -73,6 +73,7 @@ body {
 .hidden { display: none !important; }
 
 /* ---- ヘッダー ---- */
+.app-header { margin-bottom: 20px; }
 .title-row {
   display: flex;
   align-items: center;
@@ -151,14 +152,14 @@ body {
   .chart-wrap { height: 400px; padding: 16px; }
 }
 
-/* ---- 期間セグメント + 表トグル ---- */
+/* ---- 期間セグメント + 表トグル（カードとグラフ/表の間・常に1行） ---- */
 .controls-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin: 16px 0;
-  flex-wrap: wrap;
+  margin: 0 0 12px;
+  flex-wrap: nowrap;
 }
 .segment {
   display: inline-flex;
@@ -167,16 +168,28 @@ body {
   background: var(--surface);
   padding: 3px;
   gap: 2px;
+  flex-shrink: 0;
 }
-/* スマホ: セグメントを詰めて「期間 + 実測/7日平均」を1行に収める */
+/* 狭幅では短いラベル（カスタム→C、7日平均→平均）に切り替える */
+.label-short { display: none; }
+@media (max-width: 559px) {
+  .label-long { display: none; }
+  .label-short { display: inline; }
+}
+/* スマホ: セグメントを詰めて1行に収める */
 @media (max-width: 419px) {
   .controls-row { gap: 6px; }
   .segment { padding: 2px; }
-  .segment-btn { padding: 5px 8px; font-size: 0.8rem; }
+  .segment-btn { padding: 5px 7px; font-size: 0.8rem; }
   .header-meta { font-size: 0.78rem; }
-  .view-toggle { padding: 5px 10px; }
+  .view-toggle { padding: 5px 9px; font-size: 0.8rem; }
+}
+@media (max-width: 359px) {
+  .segment-btn { padding: 4px 5px; font-size: 0.72rem; }
+  .view-toggle { padding: 4px 7px; font-size: 0.72rem; }
 }
 .segment-btn {
+  white-space: nowrap;
   border: none;
   background: transparent;
   color: var(--text-muted);
