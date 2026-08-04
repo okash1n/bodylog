@@ -1,0 +1,50 @@
+# コピーして wrangler.toml を作成し、自分の値を記入する:
+#   cp wrangler.toml.example wrangler.toml
+#
+# 実値入りの wrangler.toml は .gitignore 済み（誤コミット防止）。
+#
+# Secrets は wrangler secret put で別途登録する:
+#   wrangler secret put WITHINGS_CLIENT_ID      # Withings開発者ポータルのClient ID
+#   wrangler secret put WITHINGS_CLIENT_SECRET  # 同 Client Secret
+#   wrangler secret put SLACK_WEBHOOKS          # 例: [{"id":"main","url":"https://hooks.slack.com/services/..."}]
+#   wrangler secret put SETUP_SECRET            # /auth/start の保護キー（ランダム文字列）
+#   wrangler secret put ADMIN_SLACK_WEBHOOK     # 任意: 管理者アラート送信先（未設定時はSLACK_WEBHOOKSの先頭）
+
+name = "withings-weight-tracker"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+
+# 任意: 独自ドメインで公開する場合（ゾーンが同じCloudflareアカウントにあること）
+# routes = [
+#   { pattern = "weight.example.com", custom_domain = true }
+# ]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "withings-weight"
+database_id = "YOUR_D1_DATABASE_ID" # wrangler d1 create withings-weight で表示されるID
+
+[vars]
+# Webhook受信パスのランダム部分: /webhook/withings-{WEBHOOK_PATH_SECRET}
+# 例: openssl rand -hex 16
+WEBHOOK_PATH_SECRET = "CHANGE_ME_RANDOM_HEX"
+# ダッシュボードURLのランダムslug: /d/{DASHBOARD_SLUG}/
+# 例: openssl rand -hex 8
+# 空文字("")にするとドメイン直下（/）で配信する（専用ドメイン運用向け。
+# ホスト名は証明書の透明性ログ等で公開されるため、アクセス制限が必要なら
+# Cloudflare Access などをドメインに後付けすること）
+DASHBOARD_SLUG = "CHANGE_ME_RANDOM_SLUG"
+# 集計・表示のタイムゾーンオフセット（時間）。固定オフセットでDST非対応。既定 9 = JST
+TZ_OFFSET_HOURS = "9"
+
+[triggers]
+# 5分毎: inbox回収・通知再送・初期インポート再開 / 日次(20:15 UTC = 05:15 JST): バックフィル・掃除・購読確認
+crons = ["*/5 * * * *", "15 20 * * *"]
+
+[observability]
+enabled = true
+
+[[rules]]
+type = "Text"
+globs = ["**/*.html", "**/*.css", "**/*.webmanifest", "dashboard/*.js", "dashboard/**/*.js", "**/dashboard/*.js", "**/dashboard/**/*.js"]
+fallthrough = false

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>体重ダッシュボード</title>
+<meta property="og:title" content="体重ダッシュボード">
+<meta property="og:type" content="website">
+<meta property="og:description" content="体重・体脂肪率・除脂肪体重の推移">
+<meta property="og:image" content="{{OG_IMAGE_URL}}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{{OG_IMAGE_URL}}">
+<meta name="theme-color" content="#f6f8fa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="{{BASE}}manifest.webmanifest">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20rx='22'%20fill='%230284c7'/%3E%3Cpolyline%20points='18,66%2034,50%2048,58%2066,36%2082,44'%20fill='none'%20stroke='%23ffffff'%20stroke-width='7'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="{{BASE}}styles.css?v={{ASSET_VERSION}}">
+<script>
+/* FOUC回避: 保存済みテーマをCSS適用前に反映する */
+(function () {
+  try {
+    var t = localStorage.getItem('dash-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  } catch (e) { /* localStorage不可でもデフォルトテーマで動作 */ }
+})();
+</script>
+</head>
+<body>
+<main class="container">
+  <header class="app-header">
+    <div class="title-row">
+      <h1>体重ダッシュボード</h1>
+      <div class="title-actions">
+        <span id="offline-badge" class="offline-badge" hidden>オフライン</span>
+        <button id="theme-toggle" class="ghost-btn" type="button" aria-label="テーマ切替">テーマ</button>
+      </div>
+    </div>
+    <div class="hero">
+      <p class="hero-weight"><span id="hero-weight">—</span><span class="hero-unit">kg</span></p>
+      <p class="hero-meta">
+        <span id="hero-diff">7日平均比 —</span>
+        <span id="hero-measured">最終計測 —</span>
+      </p>
+    </div>
+  </header>
+
+  <div id="state-skeleton" class="skeleton-group" aria-hidden="true">
+    <div class="skeleton skeleton-chart"></div>
+    <div class="skeleton-cards">
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+    </div>
+  </div>
+
+  <div id="state-empty" class="state-box hidden" role="status">
+    <p id="empty-message">まだ表示できるデータがありません。</p>
+    <button id="empty-reload" class="primary-btn" type="button">再読み込み</button>
+  </div>
+
+  <div id="state-error" class="state-box hidden" role="alert">
+    <p>データの取得に失敗しました。</p>
+    <button id="retry-btn" class="primary-btn" type="button">再試行</button>
+  </div>
+
+  <div id="content" class="hidden">
+    <section id="chart-section">
+      <div id="chart-wrap" class="chart-wrap">
+        <canvas id="chart" role="img" aria-label="体重・体脂肪率・除脂肪体重の推移グラフ"></canvas>
+      </div>
+    </section>
+
+    <div id="table-wrap" class="table-wrap hidden">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>日付</th>
+            <th>体重 <span class="unit">kg</span></th>
+            <th>体脂肪率 <span class="unit">%</span></th>
+            <th>除脂肪体重 <span class="unit">kg</span></th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+
+    <div class="controls-row">
+      <div class="segment" role="group" aria-label="表示期間">
+        <button type="button" class="segment-btn active" data-period="1m" aria-pressed="true">1M</button>
+        <button type="button" class="segment-btn" data-period="3m" aria-pressed="false">3M</button>
+        <button type="button" class="segment-btn" data-period="1y" aria-pressed="false">1Y</button>
+        <button type="button" class="segment-btn" data-period="custom" aria-pressed="false">カスタム</button>
+      </div>
+      <div class="segment" role="group" aria-label="表示系列">
+        <button type="button" class="segment-btn active" data-mode="raw" aria-pressed="true">実測</button>
+        <button type="button" class="segment-btn" data-mode="avg" aria-pressed="false">7日平均</button>
+      </div>
+      <button id="view-toggle" class="ghost-btn" type="button" aria-pressed="false">表で見る</button>
+    </div>
+
+    <div id="custom-range" class="custom-range hidden">
+      <label>開始日 <input type="date" id="custom-from"></label>
+      <label>終了日 <input type="date" id="custom-to"></label>
+      <button id="custom-apply" class="primary-btn" type="button">適用</button>
+      <span id="custom-error" class="custom-error" role="alert"></span>
+    </div>
+
+    <section class="cards">
+      <article class="card">
+        <h3>体重</h3>
+        <p class="card-value"><span id="card-weight-value">—</span><span class="unit">kg</span></p>
+        <p class="card-sub">7日平均 <span id="card-weight-avg">—</span><span class="unit">kg</span></p>
+        <p class="card-sub">期間比 <span id="card-weight-diff">—</span><span class="unit">kg</span></p>
+      </article>
+      <article class="card">
+        <h3>体脂肪率</h3>
+        <p class="card-value"><span id="card-fat-value">—</span><span class="unit">%</span></p>
+        <p class="card-sub">7日平均 <span id="card-fat-avg">—</span><span class="unit">%</span></p>
+        <p class="card-sub">期間比 <span id="card-fat-diff">—</span><span class="unit">%</span></p>
+      </article>
+      <article class="card">
+        <h3>除脂肪体重</h3>
+        <p class="card-value"><span id="card-ffm-value">—</span><span class="unit">kg</span></p>
+        <p class="card-sub">7日平均 <span id="card-ffm-avg">—</span><span class="unit">kg</span></p>
+        <p class="card-sub">期間比 <span id="card-ffm-diff">—</span><span class="unit">kg</span></p>
+      </article>
+    </section>
+  </div>
+
+  <noscript><p class="state-box">このダッシュボードの表示にはJavaScriptが必要です。</p></noscript>
+</main>
+<script src="{{BASE}}vendor/chart.umd.js?v={{ASSET_VERSION}}"></script>
+<script src="{{BASE}}app.js?v={{ASSET_VERSION}}"></script>
+</body>
+</html>
