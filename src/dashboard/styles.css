@@ -259,6 +259,25 @@ body {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
+
+/* ---- フッター ---- */
+.app-footer {
+  margin: 24px 0 8px;
+  padding-bottom: env(safe-area-inset-bottom);
+  text-align: center;
+}
+.app-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 12px;
+}
+.app-footer a:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
 .data-table {
   width: 100%;
   border-collapse: collapse;

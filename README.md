@@ -2,16 +2,19 @@
 
 Withings 体重計の計測データを Cloudflare Workers で受け取り、D1 に保存して Slack に通知し、公開ダッシュボードで可視化するシングルユーザー向けアプリケーション。
 
+Fork/clone して設定値を差し替えるだけで動く（コード変更不要）。Cloudflare 無料枠内で動作する。
+
 - 対象データ: 体重・体脂肪率・除脂肪体重
-- 通知: Slack Incoming Webhook（複数送信先対応）。最新計測値・7日間平均（前ターム比）・基準日からの変化を Block Kit で送信
-- ダッシュボード: ランダム slug 付き URL（`/d/{slug}/`）で公開。noindex、PWA 対応、OGP 画像を Worker 内で生成
+- 通知: Slack Incoming Webhook（複数送信先対応）。最新計測値・7日間平均（前ターム比）・基準日からの変化に加え、**直近30日のグラフ画像を通知に直接埋め込む**
+- ダッシュボード: PWA 対応・noindex。実測⇔7日平均のワンクリック切替、期間プリセット（1M/3M/1Y/カスタム）、日次集計⇔計測明細の表、ライト/ダークテーマ、OGP 画像を Worker 内で生成
 - インフラ: Cloudflare Workers + D1 のみ（KV / Queues / Durable Objects 不使用）。外部依存は Hono と Chart.js のみ
+- 動作確認済みバージョン: Node.js 22+ / wrangler 4.118（大きく異なるバージョンでは手順が変わることがある）
 
 ## アーキテクチャ
 
 ```
 Withings 体重計
-      │ 計測
+      │ 計測（Wi-Fi 同期）
       ▼
 Withings Cloud ──(notify webhook: POST /webhook/withings-{secret})──┐
       ▲                                                             ▼
@@ -21,7 +24,7 @@ Withings Cloud ──(notify webhook: POST /webhook/withings-{secret})──┐
                                                         ├─ 通知バッチ → Slack Webhook(複数)
                                                         ├─ cron: 5分毎（inbox 回収・通知再送・初期インポート再開）
                                                         ├─ cron: 日次（バックフィル・掃除・購読確認）
-                                                        └─ /d/{slug}/ ダッシュボード（PWA + OGP 画像）
+                                                        └─ ダッシュボード（PWA + OGP 画像）
                                                                 │
                                                                 ▼
                                                           Cloudflare D1
@@ -33,29 +36,24 @@ Webhook は受信内容を即座に D1 の inbox テーブルへ永続化して 
 
 ## 必要なもの
 
-- Cloudflare アカウント（Workers / D1 が使えるプラン。無料枠で動作する想定）
-- Withings アカウントと体重計（Body シリーズ等）
-- Slack Incoming Webhook URL（通知先の数だけ）
-- Node.js / npm / wrangler CLI
+- Withings アカウント（体重計セットアップ済み）
+- Cloudflare アカウント（無料プランで OK）
+- 通知先 Slack ワークスペースで App 作成・Webhook 発行ができる権限
+- Node.js（npm）とターミナル
 
 ## セットアップ
 
-### 1. Withings 開発者登録
-
-1. [Withings Developer Portal](https://developer.withings.com/) でアプリケーションを作成する
-2. Callback URL に Worker の URL + `/auth/callback` を登録する（例: `https://withings-weight-tracker.<your-subdomain>.workers.dev/auth/callback`）
-3. 発行された **Client ID** と **Client Secret** を控える（後で Secrets に登録）
-
-### 2. 設定ファイルの作成
+### 1. リポジトリの準備
 
 ```sh
-git clone <this-repo>
+git clone https://github.com/okash1n/withings.git   # または Fork
 cd withings
 npm install
+npx wrangler login
 cp wrangler.toml.example wrangler.toml
 ```
 
-`wrangler.toml` は実値を含むため `.gitignore` 済み。以下の `[vars]` をランダム値で埋める。
+`wrangler.toml` は実値を含むため `.gitignore` 済み（誤コミット防止）。以下の `[vars]` をランダム値で埋める。`database_id` は手順4で記入するため、この時点では空欄のままでよい。
 
 ```sh
 openssl rand -hex 16   # → WEBHOOK_PATH_SECRET（Webhook 受信パスの秘匿部分）
@@ -65,29 +63,56 @@ openssl rand -hex 8    # → DASHBOARD_SLUG（ダッシュボード URL の slug
 | 変数 | 内容 |
 |---|---|
 | `WEBHOOK_PATH_SECRET` | Webhook パス `/webhook/withings-{WEBHOOK_PATH_SECRET}` のランダム部分。推測防止用 |
-| `DASHBOARD_SLUG` | ダッシュボード URL `/d/{DASHBOARD_SLUG}/` の slug。URL を知っている人だけが見られる。**空文字（`""`）にするとドメイン直下（`/`）で配信**（専用ドメイン運用向け。ホスト名は証明書の透明性ログ等で公開されるため、アクセス制限が必要なら Cloudflare Access などをドメインに後付けする） |
+| `DASHBOARD_SLUG` | ダッシュボード URL `/d/{DASHBOARD_SLUG}/` の slug。URL を知っている人だけが見られる。**空文字（`""`）にするとドメイン直下（`/`）で配信**（カスタムドメイン運用向け。ホスト名は証明書の透明性ログ等で公開されるため、アクセス制限が必要なら Cloudflare Access などをドメインに後付けする） |
 | `TZ_OFFSET_HOURS` | 集計・表示のタイムゾーンオフセット（時間）。既定 `9`（JST）。変更不要ならそのまま |
 
-### 3. D1 データベースの作成とマイグレーション
+D1 のバインディング名（`DB`）と `database_name` はコード側の型・CI と一致しているため変更しないこと。
+
+### 2. Withings アプリ登録
+
+1. [developer.withings.com](https://developer.withings.com/) で開発者アカウントを作成する
+2. 初回に環境選択（Welcome 画面)が出たら **Europe Cloud** を選ぶ。US Cloud は契約パートナー専用（`Only under contract`）で選択不可。日本からの利用でも Europe Cloud で OK
+3. アプリケーション作成に進み、SERVICES では **Public API integration** のみにチェックする（SDK / Cellular / Logistics は契約パートナー専用）
+4. 利用規約に同意して **Next**
+5. **Information** 画面を入力して **Done**:
+   - **TARGET ENVIRONMENT**: `Development` のままでよい（個人利用の範囲なら十分）
+   - **APPLICATION NAME / DESCRIPTION**: 任意
+   - **REGISTERED URLS**: `https://<Worker URL>/auth/callback` と `https://<Worker URL>/webhook/withings-{WEBHOOK_PATH_SECRET}` を登録する。Worker URL はデプロイ後に確定するため、この時点では仮 URL でも通る（手順6で実 URL に更新する）
+   - **YOUR PROJECT LOGO**: 任意（スキップ可）
+6. 発行された **Client ID** と **Client Secret** を控える
+
+補足: 登録フローにスコープ選択が表示される場合は `user.info` と `user.metrics` を選択する（不足すると後の認可でエラーになり気づきにくい）。スコープ選択が無い UI の場合は認可 URL 側でリクエストされるため設定不要。
+
+### 3. Slack Webhook 発行（通知先チャンネルごとに繰り返し）
+
+1. [api.slack.com/apps](https://api.slack.com/apps) → Create New App → From scratch
+2. App の表示名とアイコンを設定（この見た目で通知される）
+3. Incoming Webhooks を ON にし、Add New Webhook to Workspace → 通知先チャンネルを選択
+4. 発行された **Webhook URL** を控える
+5. 別のワークスペースにも通知したい場合は、そのワークスペースごとに繰り返す
+
+### 4. D1 データベースの作成とマイグレーション
 
 ```sh
-wrangler d1 create withings-weight
+npx wrangler d1 create withings-weight
 # 表示された database_id を wrangler.toml の [[d1_databases]] に記入
 
-wrangler d1 migrations apply withings-weight --remote
+npx wrangler d1 migrations apply withings-weight --remote
 ```
 
-### 4. Secrets の登録
+KV は使わない（Withings トークンも D1 に保存される）。
+
+### 5. Secrets の登録
 
 ```sh
-wrangler secret put WITHINGS_CLIENT_ID      # 手順1の Client ID
-wrangler secret put WITHINGS_CLIENT_SECRET  # 手順1の Client Secret
-wrangler secret put SLACK_WEBHOOKS          # 通知先のJSON配列（下記）
-wrangler secret put SETUP_SECRET            # /auth/start の保護キー。openssl rand -hex 32 などで生成
-wrangler secret put ADMIN_SLACK_WEBHOOK     # 任意: 管理者アラート送信先。未設定時は SLACK_WEBHOOKS の先頭を使用
+npx wrangler secret put WITHINGS_CLIENT_ID      # 手順2の Client ID
+npx wrangler secret put WITHINGS_CLIENT_SECRET  # 手順2の Client Secret
+npx wrangler secret put SLACK_WEBHOOKS          # 通知先の JSON 配列（下記）
+npx wrangler secret put SETUP_SECRET            # /auth/start の保護キー。openssl rand -hex 32 などで生成
+npx wrangler secret put ADMIN_SLACK_WEBHOOK     # 任意: 管理者アラート送信先。未設定時は SLACK_WEBHOOKS の先頭を使用
 ```
 
-`SLACK_WEBHOOKS` の形式（`id` は再送管理に使う安定した識別子。後から変えない）:
+`SLACK_WEBHOOKS` の形式（`id` は再送管理に使う安定した識別子。後から変えない。並べ替え・URL 差し替えをしても送達記録が壊れないようにするためのもの）:
 
 ```json
 [
@@ -96,45 +121,128 @@ wrangler secret put ADMIN_SLACK_WEBHOOK     # 任意: 管理者アラート送�
 ]
 ```
 
-### 5. デプロイ
+注意: JSON 配列はプロンプトが表示されてから 1 行でそのまま貼り付ける（シェルの引数として渡すと引用符が壊れやすい）。
+
+### 6. デプロイと Registered URLs の更新
 
 ```sh
 npm run deploy
 ```
 
-### 6. Withings 認可（初回のみ）
+表示された Worker URL（既定は `*.workers.dev`）を控え、Withings アプリの **REGISTERED URLS** を実 URL に更新する。カスタムドメインを使う場合（後述）は、そのドメインで統一する。
 
-ブラウザで以下を開く（`{SETUP_SECRET}` は手順4で登録した値）:
+### 7. Withings 認可（初回のみ）
+
+**手順6の URL 更新を確認してから**、ブラウザで以下を開く:
 
 ```
-https://<your-worker-domain>/auth/start?key={SETUP_SECRET}
+https://<Worker URL>/auth/start?key={SETUP_SECRET}
 ```
 
-Withings の認可画面で許可すると `/auth/callback` に戻り、以下が自動で行われる。
+仮 URL のまま認可すると callback が失敗し、認可コードの 30 秒制限でやり直しになる。Withings にログインして許可すると、以下が自動で行われる。
 
 1. トークン交換と D1 への保存
 2. Withings notify の購読登録（計測のたびに Webhook が飛ぶようになる）
-3. 全履歴の初期インポート開始（レート制限を守るため cron の 5 分毎実行で数回に分けて進む）
+3. 全履歴の初期インポート開始（レート制限を守るため cron の 5 分毎実行で数回に分けて進む。進捗は完了画面とダッシュボードに表示される）
 
-完了ページからダッシュボード `/d/{DASHBOARD_SLUG}/` へ移動できる。初期インポートの進捗はダッシュボードおよび `/d/{slug}/api/status` で確認できる。
+認可が完了したら `npx wrangler secret put SETUP_SECRET` で新しい値に差し替える（`key` はブラウザ履歴やアクセスログに残るため、使った値は使い捨てにするのが安全）。
+
+### 8. 基準日の設定（任意）
+
+通知の「基準日からの変化」の起点日を登録する。未設定の間はそのブロック自体が通知から省略される（エラーではない）:
+
+```sh
+npx wrangler d1 execute withings-weight --remote \
+  --command "INSERT OR REPLACE INTO settings (key, value) VALUES ('baseline_date', '2026-07-01')"
+```
+
+日付は `YYYY-MM-DD`。変更したいときも同じコマンドでよい（再デプロイ不要）。
+
+## カスタムドメイン運用（任意）
+
+`*.workers.dev` の長い URL を避けたい場合、Cloudflare に登録済みのゾーンがあればカスタムドメインで配信できる。
+
+1. `wrangler.toml` に以下を追加してデプロイ（DNS・証明書は自動設定される）:
+
+   ```toml
+   routes = [
+     { pattern = "weight.example.com", custom_domain = true }
+   ]
+   workers_dev = false   # 任意: workers.dev URL を無効化してドメインを一本化
+   ```
+
+2. `DASHBOARD_SLUG = ""` にするとダッシュボードがドメイン直下（`https://weight.example.com/`）で配信される
+3. Withings アプリの REGISTERED URLS を新ドメインに更新する
+4. notify 購読の付け替えは日次 cron が自動で行う（`settings.public_origin` は認可時・通知時のリクエスト origin から更新される。即時に切り替えたい場合は再認可する）
 
 ## エンドポイント一覧
+
+ダッシュボード配下のパスは、`DASHBOARD_SLUG` 設定時は `/d/{DASHBOARD_SLUG}/` 配下、空文字時はドメイン直下（`/`）になる。
 
 | ルート | 役割 |
 |---|---|
 | `GET /auth/start?key={SETUP_SECRET}` | Withings 認可の開始。key 不一致・未設定は 404 |
 | `GET /auth/callback` | 認可コールバック。トークン保存・購読登録・初期インポート投入 |
 | `GET/HEAD/POST /webhook/withings-{WEBHOOK_PATH_SECRET}` | Withings notify 受信。GET/HEAD は疎通確認用に即 200 |
-| `GET /d/{DASHBOARD_SLUG}/` | ダッシュボード本体（PWA） |
-| `GET /d/{slug}/api/measurements?from=&to=` | 日次系列 JSON（日平均 + 7日移動平均） |
-| `GET /d/{slug}/api/status` | 初期インポート状況・最終同期時刻 |
-| `GET /d/{slug}/og.png` | OGP 画像（直近30日の体重グラフを PNG 生成） |
+| `GET {base}/` | ダッシュボード本体（PWA） |
+| `GET {base}/api/measurements?from=&to=` | 日次系列 JSON（日平均 + 7日移動平均） |
+| `GET {base}/api/raw?from=&to=` | 計測明細 JSON（1計測=1行、新しい順） |
+| `GET {base}/api/status` | 初期インポート状況・最終同期時刻 |
+| `GET {base}/og.png` | OGP 画像（直近30日の体重グラフを PNG 生成。依存ライブラリなしの自前エンコーダ） |
 | 上記以外 | 404（全レスポンスに `X-Robots-Tag: noindex` 付与） |
 
 cron トリガー:
 
 - `*/5 * * * *` — webhook inbox の処理、通知の再送、初期インポートの再開
 - `15 20 * * *`（05:15 JST） — 日次バックフィル、古い行の掃除、notify 購読の確認・復旧
+
+## ダッシュボード
+
+- **実測⇔7日平均のワンクリック切替**: 3指標（体重・体脂肪率・除脂肪体重）を一括で切り替える。凡例タップで系列ごとの表示切替も可能。選択は localStorage に保存される
+- **期間プリセット**: 1M / 3M / 1Y / カスタム。点の値は近くに常時表示（点が多い期間は各系列の最新点のみ）
+- **表で見る**: 日次集計（1日1行=日平均）と計測明細（1計測=1行、時刻付き）を切替できる
+- **PWA**: スマホで「ホーム画面に追加」するとスタンドアロンで起動する
+- **テーマ**: OS 設定に追従 + 手動トグル
+
+グラフ・表・通知の集計はすべて「日単位（`TZ_OFFSET_HOURS` のローカル日付境界）」で行う。1日に複数回計測した場合、日次系列はその日の平均になる。
+
+## Slack 通知
+
+計測を取り込むと Block Kit で通知する。数値はインラインコード、見出しは太字、データ欠如は `—`。
+
+- 最新計測値（体重・体脂肪率・除脂肪体重）
+- 7日間平均と前ターム比（直近7暦日 vs その前の7暦日）
+- 基準日からの変化（`baseline_date` 設定時のみ）
+- ダッシュボードリンク + **直近30日のグラフ画像**
+
+グラフは画像ブロックとして通知に直接埋め込まれる（Incoming Webhook のメッセージ内リンクは Slack 仕様で自動展開されないため）。URL を人が手貼りした場合は OGP でも展開される。同一 URL の展開はキャッシュされるため、リンクには計測日のキャッシュバスター（`?v=`）が付く。
+
+## 動作確認チェックリスト
+
+- [ ] ダッシュボードを開くと、初期インポートされた過去データの推移グラフが表示される
+- [ ] `{base}/api/measurements?from=<開始日>&to=<終了日>` が JSON を返す
+- [ ] 体重計に載る → 数分以内に全チャンネルへ Slack 通知（グラフ画像付き）が届き、D1 にも行が増えている:
+
+  ```sh
+  npx wrangler d1 execute withings-weight --remote --command "SELECT COUNT(*) FROM measurements"
+  ```
+
+- [ ] スマホでダッシュボードを「ホーム画面に追加」→ スタンドアロン起動でグラフが見える
+- [ ] `key` なし（または誤った key）で `/auth/start` にアクセスすると 404 になる
+- [ ] 翌日以降、日次バックフィル（cron）がエラーなく動いていることを `npx wrangler tail` で確認
+
+## 自動デプロイ（GitHub Actions）
+
+`main` への push で「typecheck + テスト → D1 マイグレーション → デプロイ」が自動実行される（`.github/workflows/deploy.yml`）。PR ではテストのみ実行。
+
+利用するには GitHub リポジトリに以下の Secrets を登録する:
+
+| Secret | 内容 |
+|---|---|
+| `WRANGLER_TOML` | 実値入り `wrangler.toml` の中身。`gh secret set WRANGLER_TOML < wrangler.toml` で登録 |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API トークン。テンプレート「Edit Cloudflare Workers」に **Account → D1 → Edit** 権限を追加して作成 |
+
+ローカルの `wrangler.toml` を変更したら（ドメイン変更・slug 変更など）、`gh secret set WRANGLER_TOML < wrangler.toml` で CI 側の Secret も更新すること。忘れると CI が古い設定でデプロイして手元の変更が巻き戻る。
 
 ## 運用
 
@@ -149,60 +257,71 @@ Withings のトークンは以下の性質を持つ。
 - access_token の寿命は 3 時間。失効時は refresh_token で自動更新される
 - refresh_token は**ローテーション制**: 使用すると失効し、新しい refresh_token が発行される。また**新しい refresh_token の発行から 8 時間経つと旧 refresh_token は無効になる**
 
-つまり Worker が保存している refresh_token が何らかの理由で無効化される（例: D1 を古いバックアップから復元して旧トークンに巻き戻った、別の場所で同じアプリの refresh を実行した）と、自動更新のチェーンが切れて同期が止まる。この場合、管理者アラート（refresh 失敗）が届くので、以下で再認可する。
+Worker が保存している refresh_token が無効化される（例: D1 を古いバックアップから復元して旧トークンに巻き戻った、別の場所で同じアプリの refresh を実行した）と、自動更新のチェーンが切れて同期が止まる。この場合、管理者アラート（refresh 失敗）が届くので、以下で再認可する。
 
 ```
-https://<your-worker-domain>/auth/start?key={SETUP_SECRET}
+https://<Worker URL>/auth/start?key={SETUP_SECRET}
 ```
 
-再認可してもデータは `grpid` キーの UPSERT なので重複しない。userid が既存トークンと異なる Withings アカウントで認可しようとした場合は 403 で拒否される（上書き防止）。
+再認可してもデータは `grpid` キーの UPSERT なので重複しない。既存トークンと userid が異なる Withings アカウントで認可しようとした場合は 403 で拒否される（上書き防止）。
 
 ### ダッシュボード slug の再発行
 
 URL が漏れた場合などは slug を変更する。
 
 1. `openssl rand -hex 8` で新しい slug を生成
-2. `wrangler.toml` の `DASHBOARD_SLUG` を書き換えて `npm run deploy`
-3. 旧 URL は即 404 になる。ブックマーク・PWA のインストール・Slack 通知内リンクはすべて新 URL に切り替わる（通知は次回送信分から新 slug を使用）
+2. `wrangler.toml` の `DASHBOARD_SLUG` を書き換えてデプロイ（CI 利用時は `WRANGLER_TOML` Secret も更新）
+3. 旧 URL は即 404 になる。ブックマーク・PWA・Slack 通知内リンクはすべて新 URL に切り替わる（通知は次回送信分から）
 
-`WEBHOOK_PATH_SECRET` を変更した場合は、日次 cron の購読確認（`ensureSubscription`)が旧 callback を revoke して新 URL で再購読するが、即時反映したい場合は再認可（`/auth/start`）を行うとその場で購読し直される。
+`WEBHOOK_PATH_SECRET` を変更した場合は、日次 cron の購読確認が旧 callback を revoke して新 URL で再購読する。即時反映したい場合は再認可（`/auth/start`）を行う。Withings アプリの REGISTERED URLS の更新も忘れないこと。
 
 ### D1 バックアップ
 
-二段構えを推奨する。
+長期の健康データなので二段構えを推奨する。
 
-1. **定期エクスポート**: cron やローカルの定期ジョブで以下を実行し、SQL ダンプを保管する
-
-   ```sh
-   wrangler d1 export withings-weight --remote --output backup-$(date +%Y%m%d).sql
-   ```
-
-2. **Time Travel**: D1 は過去 **30 日**の任意時点へ復元できる（有料プランは30日、無料プランは短い場合があるため [公式ドキュメント](https://developers.cloudflare.com/d1/reference/time-travel/) を確認）
+1. **定期エクスポート**: 定期ジョブで以下を実行し、SQL ダンプを保管する（`backup*.sql` は git にコミットしない）
 
    ```sh
-   wrangler d1 time-travel restore withings-weight --timestamp=<unix-timestamp>
+   npx wrangler d1 export withings-weight --remote --output backup-$(date +%Y%m%d).sql
    ```
 
-注意: バックアップから復元すると `tokens` テーブルの refresh_token が古い値に巻き戻り、上記の 8 時間ルールにより無効になっている可能性が高い。復元後は `/auth/start` での再認可を前提とすること。
+2. **Time Travel**: D1 は過去 **30 日**の任意時点へ復元できる（[公式ドキュメント](https://developers.cloudflare.com/d1/reference/time-travel/)）
+
+   ```sh
+   npx wrangler d1 time-travel restore withings-weight --timestamp=<unix-timestamp>
+   ```
+
+注意: バックアップから復元すると `tokens` テーブルの refresh_token が古い値に巻き戻り、8 時間ルールにより無効になっている可能性が高い。復元後は `/auth/start` での再認可を前提とすること。
 
 ### TZ_OFFSET_HOURS の変更
 
-`wrangler.toml` の `TZ_OFFSET_HOURS` を書き換えて `npm run deploy` する（例: `"8"` = 中国標準時、`"-5"` = 米東部標準時）。
+`wrangler.toml` の `TZ_OFFSET_HOURS` を書き換えてデプロイする（例: `"8"` = 中国標準時、`"-5"` = 米東部標準時）。
 
-- 計測データは UTC で保存されており、オフセットは集計・表示時にのみ適用される。変更しても過去データはそのまま新しいオフセットで再集計される
+- 計測データは UTC で保存されており、オフセットは集計・表示時にのみ適用される。変更すると過去データも新しいオフセットで再集計される
 - **固定オフセットであり DST（夏時間）には対応しない**。DST のある地域では季節により日付境界が 1 時間ずれる
 - 範囲は -14〜+14。不正値・未設定時は 9（JST）にフォールバックする
 
 ### SETUP_SECRET のローテーション
 
-`/auth/start` の保護キーが漏れた疑いがある場合:
-
 ```sh
-openssl rand -hex 32          # 新しい値を生成
-wrangler secret put SETUP_SECRET   # 新しい値を入力
+openssl rand -hex 32               # 新しい値を生成
+npx wrangler secret put SETUP_SECRET   # 新しい値を入力
 ```
 
 即時反映され、旧キーでのアクセスは 404 になる。既存のトークン・購読・データには影響しない（`SETUP_SECRET` は認可開始の入り口を守るだけで、認可済みの動作には使われない）。
+
+## うまくいかないとき
+
+- **通知が来ない**: `npx wrangler tail` でログを確認。Webhook 購読は `/auth/start?key={SETUP_SECRET}` をやり直すと再登録される（既存購読との重複はコード側で防止）
+- **体重計で「x」（不明ユーザー）になる**: 前回計測から体重が約 5kg 以上変わっていると体重計がユーザーを認識できない。Withings アプリに出る「未割り当ての計測」を自分に割り当てると取り込まれ、以降は自動認識に戻る。なお未割り当てのまま同期された計測は帰属が曖昧（`attrib`）なため本システムは意図的に除外する
+- **再認可を求めるエラー**: refresh_token が失効した状態。手順7を再実行する。失効時は管理者向け Slack アラートも届く
+- **初期インポートが途中で止まった**: 放置してよい（5分毎の cron が未完了分を自動で再開する）。急ぐ場合は `npx wrangler tail` でエラーを確認
+- **別の Withings アカウントで認可してしまった**: 保存済み userid と異なる認可は拒否される。正しいアカウントでログインし直して手順7を再実行
+- **認可後にエラー画面になる**: Withings アプリの REGISTERED URLS が実際の Worker URL に更新されているか確認。仮 URL のままだと認可コードの交換に失敗する
+- **ダッシュボードが 404**: URL の slug が `wrangler.toml` の `DASHBOARD_SLUG` と一致しているか確認（空文字ならドメイン直下）
+- **Slack 通知は来るがグラフが空**: 初期インポートが未完了（ダッシュボードの取り込み状態を確認）、または表示期間にデータがないのが典型。期間プリセットを変えて確認する。データが 1 日分しかない間は点のみの表示になる
+- **通知が一部のチャンネルだけ届かない**: Slack 側の 429/5xx は自動で再試行されるので少し待つ。再試行上限を超えると管理者向けアラートが届くので、Webhook URL の失効を確認して `SLACK_WEBHOOKS` を更新する
+- **CI のデプロイで手元の変更が巻き戻った**: `WRANGLER_TOML` Secret が古い。`gh secret set WRANGLER_TOML < wrangler.toml` で更新して再実行する
 
 ## 開発
 
@@ -211,6 +330,8 @@ npm run dev        # ローカル起動（wrangler dev）
 npm test           # vitest（@cloudflare/vitest-pool-workers 上で実行）
 npm run typecheck  # tsc --noEmit
 ```
+
+`npm run deploy` で手元からもデプロイできるが、通常は main への push で CI に任せる。
 
 ## ライセンス
 
