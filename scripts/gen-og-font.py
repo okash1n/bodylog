@@ -9,7 +9,7 @@ import sys
 from PIL import Image, ImageDraw, ImageFont
 
 FONT_PATH = "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc"
-SIZE = 28  # ベースの字面サイズ（描画時はそのまま使う）
+SIZE = 22  # ベースの字面サイズ（描画時はそのまま使う）
 CHARSET = "0123456789./%-+:kg 体重脂肪率除日平均"
 
 
