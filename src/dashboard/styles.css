@@ -96,7 +96,14 @@ body {
   white-space: nowrap;
 }
 
-.hero { margin: 4px 0 16px; }
+/* 体重（左）+ メタ情報縦2段（中）+ 表で見る（右端）の1行構成 */
+.hero {
+  margin: 4px 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
 .hero-weight {
   margin: 0;
   font-size: clamp(2.6rem, 11vw, 4rem);
@@ -113,19 +120,18 @@ body {
 .hero-meta {
   margin: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 16px;
+  flex-direction: column;
+  gap: 2px;
   color: var(--text-muted);
   font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
 }
 .hero-meta .warn { color: var(--warn); font-weight: 600; }
-/* 「表で見る」はメタ行の右端に置き、行を増やさない */
-.hero-meta { align-items: center; }
 .view-toggle {
   margin-left: auto;
-  padding: 4px 10px;
-  font-size: 0.8rem;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  align-self: center;
 }
 
 /* ---- ボタン ---- */
@@ -183,6 +189,9 @@ body {
   .controls-row { gap: 6px; }
   .segment { padding: 2px; }
   .segment-btn { padding: 5px 8px; font-size: 0.8rem; }
+  .hero { gap: 12px; }
+  .hero-meta { font-size: 0.78rem; }
+  .view-toggle { padding: 5px 10px; }
 }
 .segment-btn {
   border: none;
