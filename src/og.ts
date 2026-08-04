@@ -13,6 +13,13 @@ const WEIGHT: Rgb = [2, 132, 199]; // --accent #0284c7
 const FAT: Rgb = [217, 119, 6]; // --accent-2 #d97706
 const FFM: Rgb = [5, 150, 105]; // --accent-3 #059669
 
+/**
+ * 描画エンジンのバージョン。見た目に影響する変更をしたら上げる。
+ * og.pngのキャッシュバスターに含め、データが同じでも描画変更が
+ * Slack等の画像プロキシキャッシュを貫通するようにする。
+ */
+export const OG_RENDERER_VERSION = 2;
+
 const PADDING = 80;
 const LINE_THICKNESS = 3;
 const DOT_THICKNESS = 9;

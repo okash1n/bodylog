@@ -11,7 +11,7 @@ import {
   ymdWithOffset,
 } from './util';
 import { getDailySeries, getImportStatus, getRawMeasurements } from './queries';
-import { renderOgPng } from './og';
+import { OG_RENDERER_VERSION, renderOgPng } from './og';
 import indexHtmlTpl from './dashboard/index.html';
 import stylesCss from './dashboard/styles.css';
 import appJs from './dashboard/app.js';
@@ -62,7 +62,7 @@ const serveIndex: Handler = async (c) => {
   }
   const html = indexHtmlTpl
     .replaceAll('{{BASE}}', base)
-    .replaceAll('{{OG_IMAGE_URL}}', `${origin}${base}og.png?v=${ogVersion}`)
+    .replaceAll('{{OG_IMAGE_URL}}', `${origin}${base}og.png?v=${ogVersion}-r${OG_RENDERER_VERSION}`)
     .replaceAll('{{ASSET_VERSION}}', ASSET_VERSION);
   return c.html(html, 200, noindexHeaders({ 'Cache-Control': 'no-cache' }));
 };

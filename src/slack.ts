@@ -1,6 +1,7 @@
 import type { Env, LatestMeasurement, NotificationStats, SlackDestination } from './types';
 import { LIMITS, assertSecret, dashboardBase, offsetHours, ymdWithOffset } from './util';
 import { getLatestForBatch, getNotificationStats } from './queries';
+import { OG_RENDERER_VERSION } from './og';
 
 export function parseDestinations(env: Env): SlackDestination[] {
   const raw = assertSecret(env.SLACK_WEBHOOKS, 'SLACK_WEBHOOKS');
@@ -237,7 +238,7 @@ async function buildBatchMessage(env: Env, origin: string, batchId: string): Pro
         stats,
         dashboardUrl: `${base}?v=${v}`,
         tzOffset,
-        ogImageUrl: `${base}og.png?v=${v}`,
+        ogImageUrl: `${base}og.png?v=${v}-r${OG_RENDERER_VERSION}`,
       }),
     };
   } catch (e) {
