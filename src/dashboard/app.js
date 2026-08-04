@@ -561,7 +561,12 @@
   function createChart(labels, sets, density) {
     var t = themeCache;
     var limits = tickLimitsFor(currentBp);
-    var kgRange = axisRange(sets.weight.concat(sets.weight7));
+    // 初期レンジは「表示モードで見えている系列」全部から計算する
+    // （kg軸は体重+除脂肪体重。体重だけだと除脂肪体重が軸外に出て描画が壊れる）
+    var kgRange = axisRange(
+      seriesMode === 'avg' ? sets.weight7.concat(sets.ffm7) : sets.weight.concat(sets.ffm),
+    );
+    var pctRange = axisRange(seriesMode === 'avg' ? sets.fat7 : sets.fat);
     chart = new Chart(els.canvas, {
       type: 'line',
       data: { labels: labels, datasets: buildDatasets(sets, density, t) },
@@ -616,6 +621,8 @@
             type: 'linear',
             position: 'right',
             display: 'auto',
+            min: pctRange ? pctRange.min : undefined,
+            max: pctRange ? pctRange.max : undefined,
             ticks: { color: t.muted, maxTicksLimit: limits.y, callback: yTickCallback },
             grid: { drawOnChartArea: false, color: t.grid },
             border: { display: false },
