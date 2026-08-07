@@ -87,6 +87,7 @@ export interface LatestMeasurement {
   weight: number | null;
   fat_mass: number | null; // weight - fat_free_mass（SQL側で導出）
   fat_free_mass: number | null;
+  fat_ratio: number | null; // 計測時点の参考値（通知の計測結果行にのみ表示）
 }
 
 export interface ImportStatus {

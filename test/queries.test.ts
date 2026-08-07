@@ -73,6 +73,7 @@ describe('getNotificationStats', () => {
     weight: 64,
     fat_mass: null,
     fat_free_mass: null,
+    fat_ratio: null,
   };
 
   it('recent7 / diff7 / 基準日比を計算する', async () => {

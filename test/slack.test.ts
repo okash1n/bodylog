@@ -14,6 +14,7 @@ describe('buildMessageBlocks', () => {
     weight: 65.2,
     fat_mass: null,
     fat_free_mass: 53.1,
+    fat_ratio: 18.5,
   };
   const stats: NotificationStats = {
     recent7: { weight: 65.5, fat_mass: null, fat_free_mass: 53.0 },
@@ -34,6 +35,7 @@ describe('buildMessageBlocks', () => {
     expect(text).toContain('*体重*');
     expect(text).toContain('`65.2 kg`');
     expect(text).toContain('`53.1 kg`');
+    expect(text).toContain('`18.5%`'); // 体脂肪率は計測結果行のみ
     expect(text).toContain('—'); // fat_mass null
     expect(text).toContain('-0.4 kg'); // 符号付き差分
     expect(text).toContain('基準日（2025-12-01）');

@@ -68,10 +68,12 @@ export function buildMessageBlocks(input: {
 }): unknown[] {
   const { latest, extraCount, stats, dashboardUrl, tzOffset, ogImageUrl } = input;
 
+  // 体脂肪率は計測時点の参考値としてこの行にだけ載せる（平均・差分は3値kgベース）
   const latestLine = [
     `*体重* : ${fmtValue(latest.weight, ' kg')}`,
     `*脂肪量* : ${fmtValue(latest.fat_mass, ' kg')}`,
     `*除脂肪体重* : ${fmtValue(latest.fat_free_mass, ' kg')}`,
+    `*体脂肪率* : ${fmtValue(latest.fat_ratio, '%')}`,
   ].join(' | ');
 
   // 注意: Slack mrkdwnは全角括弧「（」直後のバッククォートをコード開始と認識できず
