@@ -166,8 +166,46 @@ export function buildDigestBlocks(input: {
   return blocks;
 }
 
+/** 既定の送信時刻 23:55（5分毎cronで確実に踏める最も遅い時刻） */
+const DEFAULT_DIGEST_MINUTES = 23 * 60 + 55;
+const MAX_DIGEST_MINUTES = DEFAULT_DIGEST_MINUTES;
+
 /**
- * 日次ダイジェストの送信バッチを投入する（23:59ローカルのcronから呼ぶ）。
+ * settings.digest_time（ローカル "HH:MM"）を分に変換する。
+ * 不正値は既定23:55にフォールバック。23:55超は「その日のうちにtickが来ない」ため23:55へclamp。
+ */
+export function parseDigestTime(raw: string | null): number {
+  if (raw === null) return DEFAULT_DIGEST_MINUTES;
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(raw.trim());
+  if (!m) {
+    console.warn('[slack] invalid settings.digest_time, using default 23:55:', raw);
+    return DEFAULT_DIGEST_MINUTES;
+  }
+  const minutes = Number(m[1]) * 60 + Number(m[2]);
+  if (minutes > MAX_DIGEST_MINUTES) {
+    console.warn('[slack] digest_time later than 23:55 cannot fire same-day; clamping to 23:55');
+    return MAX_DIGEST_MINUTES;
+  }
+  return minutes;
+}
+
+/**
+ * 5分毎cronから呼ぶ。ローカル時刻が digest_time を過ぎていれば当日分のダイジェストを送る。
+ * 送信済みかはUNIQUE制約が担保するため、同日の後続tickでは何も起きない。
+ */
+export async function runDailyDigestIfDue(env: Env, origin: string): Promise<{ queued: number }> {
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'digest_time'")
+    .first<{ value: string | null }>();
+  const dueMinutes = parseDigestTime(row?.value ?? null);
+  const localMs = Date.now() + offsetHours(env) * 3_600_000;
+  const local = new Date(localMs);
+  const nowMinutes = local.getUTCHours() * 60 + local.getUTCMinutes();
+  if (nowMinutes < dueMinutes) return { queued: 0 };
+  return runDailyDigest(env, origin);
+}
+
+/**
+ * 日次ダイジェストの送信バッチを投入する。
  * その日に計測がなければ何もしない。UNIQUE(batch_id, destination_id)により再実行しても二重送信しない。
  */
 export async function runDailyDigest(env: Env, origin: string): Promise<{ queued: number }> {

@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/types';
-import { immediateDestinations, parseDestinations, runDailyDigest } from '../src/slack';
-import { insertMeasurement, resetTables, stubFetch, testEnv } from './helpers';
+import {
+  immediateDestinations,
+  parseDestinations,
+  parseDigestTime,
+  runDailyDigest,
+  runDailyDigestIfDue,
+} from '../src/slack';
+import { insertMeasurement, resetTables, setSetting, stubFetch, testEnv } from './helpers';
 
 const SLACK_HOST = 'hooks.slack.com';
 const SLACK_PATH = '/services/T0/B0/X';
@@ -80,5 +86,39 @@ describe('runDailyDigest', () => {
     stubFetch();
     const result = await runDailyDigest(testEnv, ORIGIN); // mode省略=immediateのみ
     expect(result.queued).toBe(0);
+  });
+});
+
+describe('digest_time（送信時刻設定）', () => {
+  beforeEach(async () => {
+    await resetTables();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('parseDigestTime: 既定23:55・不正値フォールバック・23:55超はclamp', () => {
+    expect(parseDigestTime(null)).toBe(23 * 60 + 55);
+    expect(parseDigestTime('21:00')).toBe(21 * 60);
+    expect(parseDigestTime('00:00')).toBe(0);
+    expect(parseDigestTime('24:00')).toBe(23 * 60 + 55);
+    expect(parseDigestTime('abc')).toBe(23 * 60 + 55);
+    expect(parseDigestTime('23:59')).toBe(23 * 60 + 55); // その日のうちにtickが来ないためclamp
+  });
+
+  it('runDailyDigestIfDue: digest_time=00:00 なら常に送信対象', async () => {
+    await setSetting('digest_time', '00:00');
+    await insertMeasurement({ grpid: 9101, measured_at: new Date().toISOString(), weight: 81 });
+    const stub = stubFetch().on({
+      host: SLACK_HOST,
+      path: SLACK_PATH,
+      method: 'POST',
+      times: 1,
+      reply: () => new Response('ok'),
+    });
+    const result = await runDailyDigestIfDue(DAILY_ENV, ORIGIN);
+    expect(result.queued).toBe(1);
+    expect(stub.requests({ host: SLACK_HOST })).toHaveLength(1);
   });
 });
