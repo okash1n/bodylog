@@ -90,7 +90,7 @@ describe('parseDestinations', () => {
 
   it('正しいJSONをパースする', () => {
     expect(parseDestinations(testEnv)).toEqual([
-      { id: 'main', url: 'https://hooks.slack.com/services/T0/B0/X' },
+      { id: 'main', url: 'https://hooks.slack.com/services/T0/B0/X', mode: 'immediate' },
     ]);
   });
 

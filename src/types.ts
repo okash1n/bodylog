@@ -16,9 +16,13 @@ export interface Env {
   ADMIN_SLACK_WEBHOOK?: string;
 }
 
+/** immediate=計測ごとに通知（既定） / daily=23:59の日次ダイジェストのみ / both=両方 */
+export type NotifyMode = 'immediate' | 'daily' | 'both';
+
 export interface SlackDestination {
   id: string;
   url: string;
+  mode: NotifyMode;
 }
 
 export interface TokenRow {

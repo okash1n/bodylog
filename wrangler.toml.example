@@ -38,8 +38,11 @@ DASHBOARD_SLUG = "CHANGE_ME_RANDOM_SLUG"
 TZ_OFFSET_HOURS = "9"
 
 [triggers]
-# 5分毎: inbox回収・通知再送・初期インポート再開 / 日次(20:15 UTC = 05:15 JST): バックフィル・掃除・購読確認
-crons = ["*/5 * * * *", "15 20 * * *"]
+# 5分毎: inbox回収・通知再送・初期インポート再開
+# 20:15 UTC (05:15 JST): 日次バックフィル・掃除・購読確認
+# 14:59 UTC (23:59 JST): 日次ダイジェスト通知（mode=daily/bothの通知先向け。
+#   TZ_OFFSET_HOURSを変える場合はこのcronの時刻も合わせて変更する）
+crons = ["*/5 * * * *", "15 20 * * *", "59 14 * * *"]
 
 [observability]
 enabled = true

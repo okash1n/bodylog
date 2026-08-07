@@ -18,7 +18,7 @@ import {
   runDailyBackfill,
   startInitialImport,
 } from './ingest';
-import { processNotificationBatches } from './slack';
+import { processNotificationBatches, runDailyDigest } from './slack';
 import { createDashboardRouter, createRootDashboardRouter } from './dashboard';
 
 interface OauthStateEntry {
@@ -31,6 +31,8 @@ const OAUTH_STATE_TTL_MS = 10 * 60_000;
 const WEBHOOK_MAX_CHUNKS = 12;
 const CRON_FREQUENT = '*/5 * * * *';
 const CRON_DAILY = '15 20 * * *';
+// 23:59 JST の日次ダイジェスト（TZ_OFFSET_HOURS変更時はwrangler.tomlのcronも合わせて変更する）
+const CRON_DIGEST = '59 14 * * *';
 
 function authHeaders(): Record<string, string> {
   return noindexHeaders({ 'Referrer-Policy': 'no-referrer' });
@@ -300,6 +302,15 @@ async function scheduled(
     }
     // import未完了かの判定はresumeInitialImport自身が行う（done/errorなら即return）
     await runStep('resumeInitialImport', () => resumeInitialImport(env));
+    return;
+  }
+  if (controller.cron === CRON_DIGEST) {
+    const origin = await getSetting(env, 'public_origin');
+    if (origin) {
+      await runStep('runDailyDigest', () => runDailyDigest(env, origin));
+    } else {
+      console.warn('[index] settings.public_origin is not set; skipping daily digest');
+    }
     return;
   }
   if (controller.cron === CRON_DAILY) {

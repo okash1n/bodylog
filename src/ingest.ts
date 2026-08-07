@@ -8,7 +8,7 @@ import {
   revokeNotify,
   subscribeNotify,
 } from './withings';
-import { parseDestinations, sendAdminAlert } from './slack';
+import { immediateDestinations, sendAdminAlert } from './slack';
 
 // 1文あたりバインド変数90個以下の制約: 1行6バインドなので15行ずつ分割する
 const UPSERT_BINDS_PER_ROW = 6;
@@ -219,7 +219,8 @@ export async function ingestRange(
   const statements: D1PreparedStatement[] = [];
   const claimGrpids: number[] = [];
   if (context === 'webhook') {
-    const destinations = parseDestinations(env);
+    // 即時通知の対象はmodeがimmediate/bothの通知先のみ（dailyはダイジェストで送る）
+    const destinations = immediateDestinations(env);
     const batchId = newId();
     for (const u of upserts) {
       claimGrpids.push(u.grpid);

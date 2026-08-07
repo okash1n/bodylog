@@ -1,7 +1,10 @@
-import type { Env, LatestMeasurement, NotificationStats, SlackDestination } from './types';
-import { LIMITS, assertSecret, dashboardBase, offsetHours, ymdWithOffset } from './util';
-import { getLatestForBatch, getNotificationStats } from './queries';
+import type { DayPoint, Env, LatestMeasurement, NotificationStats, NotifyMode, SlackDestination } from './types';
+import { LIMITS, assertSecret, dashboardBase, isoNow, offsetHours, ymdWithOffset } from './util';
+import { getDailySeries, getDayMeasurementCount, getLatestForBatch, getNotificationStats } from './queries';
 import { OG_RENDERER_VERSION } from './og';
+
+/** 日次ダイジェストのバッチID（notification_batchesのUNIQUE制約で同日二重送信を防ぐ） */
+const DAILY_BATCH_PREFIX = 'daily-';
 
 export function parseDestinations(env: Env): SlackDestination[] {
   const raw = assertSecret(env.SLACK_WEBHOOKS, 'SLACK_WEBHOOKS');
@@ -18,23 +21,31 @@ export function parseDestinations(env: Env): SlackDestination[] {
   const seen = new Set<string>();
   for (const item of parsed) {
     if (typeof item !== 'object' || item === null) {
-      throw new Error('SLACK_WEBHOOKS entries must be objects of {id, url}');
+      throw new Error('SLACK_WEBHOOKS entries must be objects of {id, url, mode?}');
     }
-    const { id, url } = item as Record<string, unknown>;
+    const { id, url, mode } = item as Record<string, unknown>;
     if (typeof id !== 'string' || id.length === 0) {
       throw new Error('SLACK_WEBHOOKS entries must have a non-empty string "id"');
     }
     if (typeof url !== 'string' || !url.startsWith('https://hooks.slack.com/')) {
       throw new Error(`SLACK_WEBHOOKS entry "${id}" must have a https://hooks.slack.com/ url`);
     }
+    if (mode !== undefined && mode !== 'immediate' && mode !== 'daily' && mode !== 'both') {
+      throw new Error(`SLACK_WEBHOOKS entry "${id}" has invalid mode (immediate | daily | both)`);
+    }
     // destination_id はD1に保存される安定IDのため重複を拒否
     if (seen.has(id)) {
       throw new Error(`SLACK_WEBHOOKS has duplicate id "${id}"`);
     }
     seen.add(id);
-    out.push({ id, url });
+    out.push({ id, url, mode: (mode as NotifyMode | undefined) ?? 'immediate' });
   }
   return out;
+}
+
+/** 計測ごとの即時通知を受け取る通知先 */
+export function immediateDestinations(env: Env): SlackDestination[] {
+  return parseDestinations(env).filter((d) => d.mode !== 'daily');
 }
 
 const DASH = '`—`';
@@ -109,6 +120,115 @@ export function buildMessageBlocks(input: {
     blocks.push({ type: 'image', image_url: ogImageUrl, alt_text: '直近30日の体重グラフ' });
   }
   return blocks;
+}
+
+/** 日次ダイジェスト（その日の平均3値 + 7日平均比 + 基準日比） */
+export function buildDigestBlocks(input: {
+  date: string;
+  count: number;
+  day: DayPoint;
+  stats: NotificationStats;
+  dashboardUrl: string;
+  ogImageUrl?: string;
+}): unknown[] {
+  const { date, count, day, stats, dashboardUrl, ogImageUrl } = input;
+
+  const avgLine = [
+    `*体重* : ${fmtValue(day.weight, ' kg')}`,
+    `*脂肪量* : ${fmtValue(day.fat_mass, ' kg')}`,
+    `*除脂肪体重* : ${fmtValue(day.fat_free_mass, ' kg')}`,
+  ].join(' | ');
+
+  const termLine = [
+    `*体重* : ${fmtValue(stats.recent7.weight, ' kg')} (${fmtDiff(stats.diff7.weight, ' kg')})`,
+    `*脂肪量* : ${fmtValue(stats.recent7.fat_mass, ' kg')} (${fmtDiff(stats.diff7.fat_mass, ' kg')})`,
+    `*除脂肪体重* : ${fmtValue(stats.recent7.fat_free_mass, ' kg')} (${fmtDiff(stats.diff7.fat_free_mass, ' kg')})`,
+  ].join(' | ');
+
+  const blocks: unknown[] = [
+    section(`日次サマリー（${date}・計測 ${count} 回）\n${avgLine}`),
+    section(`*7日間平均（前ターム比）*\n${termLine}`),
+  ];
+
+  if (stats.baselineDate !== null) {
+    const baselineLine = [
+      `*体重* : ${fmtDiff(stats.baselineDiff.weight, ' kg')}`,
+      `*脂肪量* : ${fmtDiff(stats.baselineDiff.fat_mass, ' kg')}`,
+      `*除脂肪体重* : ${fmtDiff(stats.baselineDiff.fat_free_mass, ' kg')}`,
+    ].join(' | ');
+    blocks.push(section(`*基準日（${stats.baselineDate}）からの変化*\n${baselineLine}`));
+  }
+
+  blocks.push(section(`ダッシュボード: ${dashboardUrl}`));
+  if (ogImageUrl) {
+    blocks.push({ type: 'image', image_url: ogImageUrl, alt_text: '直近30日のグラフ' });
+  }
+  return blocks;
+}
+
+/**
+ * 日次ダイジェストの送信バッチを投入する（23:59ローカルのcronから呼ぶ）。
+ * その日に計測がなければ何もしない。UNIQUE(batch_id, destination_id)により再実行しても二重送信しない。
+ */
+export async function runDailyDigest(env: Env, origin: string): Promise<{ queued: number }> {
+  const destinations = parseDestinations(env).filter((d) => d.mode === 'daily' || d.mode === 'both');
+  if (destinations.length === 0) return { queued: 0 };
+
+  const today = ymdWithOffset(isoNow(), offsetHours(env));
+  const count = await getDayMeasurementCount(env, today);
+  if (count === 0) return { queued: 0 };
+
+  const batchId = `${DAILY_BATCH_PREFIX}${today}`;
+  const statements = destinations.map((d) =>
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO notification_batches (batch_id, destination_id, status, next_attempt_at) VALUES (?1, ?2, 'pending', datetime('now'))",
+    ).bind(batchId, d.id),
+  );
+  const results = await env.DB.batch(statements);
+  const queued = results.reduce((n, r) => n + r.meta.changes, 0);
+  if (queued > 0) {
+    await processNotificationBatches(env, origin);
+  }
+  return { queued };
+}
+
+async function buildDailyDigestMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
+  try {
+    const date = batchId.slice(DAILY_BATCH_PREFIX.length);
+    const [series, count] = await Promise.all([
+      getDailySeries(env, date, date),
+      getDayMeasurementCount(env, date),
+    ]);
+    const day = series[series.length - 1];
+    if (!day) {
+      return { kind: 'permanent', error: `daily digest ${date} has no measurements` };
+    }
+    // 基準日比は「その日の平均」との差分にする
+    const latestLike: LatestMeasurement = {
+      measured_at: `${date}T00:00:00Z`,
+      weight: day.weight,
+      fat_mass: day.fat_mass,
+      fat_free_mass: day.fat_free_mass,
+      fat_ratio: null,
+    };
+    const stats = await getNotificationStats(env, latestLike);
+    const base = `${origin}${dashboardBase(env)}`;
+    const v = `${date}-r${OG_RENDERER_VERSION}`;
+    return {
+      kind: 'ok',
+      blocks: buildDigestBlocks({
+        date,
+        count,
+        day,
+        stats,
+        dashboardUrl: `${base}?v=${date}`,
+        ogImageUrl: `${base}og.png?v=${v}`,
+      }),
+    };
+  } catch (e) {
+    console.error('[slack] failed to build daily digest for', batchId, e);
+    return { kind: 'transient', error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 export async function sendAdminAlert(env: Env, text: string): Promise<void> {
@@ -222,6 +342,9 @@ async function deferOrDead(
 }
 
 async function buildBatchMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
+  if (batchId.startsWith(DAILY_BATCH_PREFIX)) {
+    return buildDailyDigestMessage(env, origin, batchId);
+  }
   try {
     const found = await getLatestForBatch(env, batchId);
     if (!found) {

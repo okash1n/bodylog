@@ -182,6 +182,17 @@ LIMIT 1`,
   };
 }
 
+/** 指定ローカル日付の計測回数（日次ダイジェストの件数表示用） */
+export async function getDayMeasurementCount(env: Env, ymd: string): Promise<number> {
+  const tz = tzModifier(env);
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM measurements WHERE date(measured_at, '${tz}') = ?1`,
+  )
+    .bind(ymd)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
 export async function getImportStatus(env: Env): Promise<ImportStatus> {
   const row = await env.DB.prepare(
     `

@@ -116,10 +116,18 @@ npx wrangler secret put ADMIN_SLACK_WEBHOOK     # 任意: 管理者アラート�
 
 ```json
 [
-  {"id": "main", "url": "https://hooks.slack.com/services/XXX/YYY/ZZZ"},
-  {"id": "family", "url": "https://hooks.slack.com/services/AAA/BBB/CCC"}
+  {"id": "main", "url": "https://hooks.slack.com/services/XXX/YYY/ZZZ", "mode": "immediate"},
+  {"id": "family", "url": "https://hooks.slack.com/services/AAA/BBB/CCC", "mode": "daily"}
 ]
 ```
+
+`mode` は通知先ごとの通知方式（省略時 `immediate`）:
+
+| mode | 動作 |
+|---|---|
+| `immediate` | 計測を取り込むたびに通知（既定） |
+| `daily` | 23:59（JST）にその日の平均値の日次ダイジェストのみ |
+| `both` | 両方 |
 
 注意: JSON 配列はプロンプトが表示されてから 1 行でそのまま貼り付ける（シェルの引数として渡すと引用符が壊れやすい）。
 
@@ -195,6 +203,7 @@ cron トリガー:
 
 - `*/5 * * * *` — webhook inbox の処理、通知の再送、初期インポートの再開
 - `15 20 * * *`（05:15 JST） — 日次バックフィル、古い行の掃除、notify 購読の確認・復旧
+- `59 14 * * *`（23:59 JST） — 日次ダイジェスト通知（`mode: daily / both` の通知先へ。その日に計測がなければ送らない。`TZ_OFFSET_HOURS` を変える場合はこの cron も合わせて変更する）
 
 ## ダッシュボード
 
@@ -210,10 +219,19 @@ cron トリガー:
 
 計測を取り込むと Block Kit で通知する。数値はインラインコード、見出しは太字、データ欠如は `—`。
 
-- 最新計測値（体重・体脂肪率・除脂肪体重）
+通知は2種類あり、通知先ごとに `mode` で選べる。
+
+**即時通知**（計測を取り込むたび）:
+
+- 最新計測値（体重・脂肪量・除脂肪体重、参考として体脂肪率）
 - 7日間平均と前ターム比（直近7暦日 vs その前の7暦日）
 - 基準日からの変化（`baseline_date` 設定時のみ）
 - ダッシュボードリンク + **直近30日のグラフ画像**
+
+**日次ダイジェスト**（23:59 JST、その日に計測があった日のみ）:
+
+- その日の平均値（体重・脂肪量・除脂肪体重）と計測回数
+- 7日間平均と前ターム比・基準日からの変化・ダッシュボードリンク・グラフ画像
 
 グラフは画像ブロックとして通知に直接埋め込まれる（Incoming Webhook のメッセージ内リンクは Slack 仕様で自動展開されないため）。URL を人が手貼りした場合は OGP でも展開される。同一 URL の展開はキャッシュされるため、リンクには計測日のキャッシュバスター（`?v=`）が付く。
 
