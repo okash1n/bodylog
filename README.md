@@ -116,18 +116,19 @@ npx wrangler secret put ADMIN_SLACK_WEBHOOK     # 任意: 管理者アラート�
 
 ```json
 [
-  {"id": "main", "url": "https://hooks.slack.com/services/XXX/YYY/ZZZ", "mode": "immediate"},
-  {"id": "family", "url": "https://hooks.slack.com/services/AAA/BBB/CCC", "mode": "daily"}
+  {"id": "main", "url": "https://hooks.slack.com/services/XXX/YYY/ZZZ", "mode": "both"},
+  {"id": "family", "url": "https://hooks.slack.com/services/AAA/BBB/CCC", "mode": "daily", "digest_time": "21:00"},
+  {"id": "morning", "url": "https://hooks.slack.com/services/DDD/EEE/FFF", "mode": "daily", "digest_time": "07:00", "digest_target": "previous"}
 ]
 ```
 
-`mode` は通知先ごとの通知方式（省略時 `immediate`）:
+通知先ごとのオプション（`mode` 以外はダイジェスト用。すべて省略可）:
 
-| mode | 動作 |
-|---|---|
-| `immediate` | 計測を取り込むたびに通知（既定） |
-| `daily` | 送信時刻（`settings.digest_time`、既定 23:55 ローカル）にその日の平均値の日次ダイジェストのみ |
-| `both` | 両方 |
+| キー | 値 | 動作 |
+|---|---|---|
+| `mode` | `immediate`（既定） / `daily` / `both` | 計測ごとの即時通知 / 日次ダイジェストのみ / 両方 |
+| `digest_time` | `"HH:MM"`（ローカル） | この通知先のダイジェスト送信時刻。省略時は全体設定 `settings.digest_time`（既定 23:55）。5分刻み・最遅 23:55 |
+| `digest_target` | `same`（既定） / `previous` | ダイジェストの対象日。`previous` にすると前日のまとめ（朝に送る用途） |
 
 注意: JSON 配列はプロンプトが表示されてから 1 行でそのまま貼り付ける（シェルの引数として渡すと引用符が壊れやすい）。
 

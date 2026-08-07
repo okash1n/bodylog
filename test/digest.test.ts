@@ -107,6 +107,23 @@ describe('digest_time（送信時刻設定）', () => {
     expect(parseDigestTime('23:59')).toBe(23 * 60 + 55); // その日のうちにtickが来ないためclamp
   });
 
+  it('通知先ごとのdigest_time/digest_targetをパースし、不正値はthrow', () => {
+    const env = envWith(
+      '[{"id":"a","url":"https://hooks.slack.com/a","mode":"daily","digest_time":"07:00","digest_target":"previous"},{"id":"b","url":"https://hooks.slack.com/b","mode":"daily"}]',
+    );
+    const [a, b] = parseDestinations(env);
+    expect(a.digestTimeMinutes).toBe(7 * 60);
+    expect(a.digestTarget).toBe('previous');
+    expect(b.digestTimeMinutes).toBeNull(); // 全体設定に従う
+    expect(b.digestTarget).toBe('same');
+    expect(() =>
+      parseDestinations(envWith('[{"id":"x","url":"https://hooks.slack.com/x","digest_time":"7時"}]')),
+    ).toThrow();
+    expect(() =>
+      parseDestinations(envWith('[{"id":"x","url":"https://hooks.slack.com/x","digest_target":"tomorrow"}]')),
+    ).toThrow();
+  });
+
   it('runDailyDigestIfDue: digest_time=00:00 なら常に送信対象', async () => {
     await setSetting('digest_time', '00:00');
     await insertMeasurement({ grpid: 9101, measured_at: new Date().toISOString(), weight: 81 });
@@ -120,5 +137,30 @@ describe('digest_time（送信時刻設定）', () => {
     const result = await runDailyDigestIfDue(DAILY_ENV, ORIGIN);
     expect(result.queued).toBe(1);
     expect(stub.requests({ host: SLACK_HOST })).toHaveLength(1);
+  });
+
+  it('digest_target=previous は前日分のダイジェストを送る', async () => {
+    const env = envWith(
+      '[{"id":"morning","url":"https://hooks.slack.com/services/T0/B0/X","mode":"daily","digest_time":"00:00","digest_target":"previous"}]',
+    );
+    // 前日の計測のみ挿入（当日は0件）
+    await insertMeasurement({
+      grpid: 9201,
+      measured_at: new Date(Date.now() - 86_400_000).toISOString(),
+      weight: 79.5,
+      fat_free_mass: 60.0,
+    });
+    const stub = stubFetch().on({
+      host: SLACK_HOST,
+      path: SLACK_PATH,
+      method: 'POST',
+      times: 1,
+      reply: () => new Response('ok'),
+    });
+    const result = await runDailyDigestIfDue(env, ORIGIN);
+    expect(result.queued).toBe(1);
+    const body = stub.requests({ host: SLACK_HOST })[0].body;
+    expect(body).toContain('日次サマリー');
+    expect(body).toContain('79.5 kg');
   });
 });

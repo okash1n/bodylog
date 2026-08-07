@@ -16,13 +16,19 @@ export interface Env {
   ADMIN_SLACK_WEBHOOK?: string;
 }
 
-/** immediate=計測ごとに通知（既定） / daily=23:59の日次ダイジェストのみ / both=両方 */
+/** immediate=計測ごとに通知（既定） / daily=日次ダイジェストのみ / both=両方 */
 export type NotifyMode = 'immediate' | 'daily' | 'both';
+
+/** ダイジェストの対象日: same=送信時刻の当日（既定） / previous=前日（朝に前日まとめを送る用途） */
+export type DigestTarget = 'same' | 'previous';
 
 export interface SlackDestination {
   id: string;
   url: string;
   mode: NotifyMode;
+  /** ダイジェスト送信時刻（ローカル、分）。nullは全体設定（settings.digest_time、既定23:55）に従う */
+  digestTimeMinutes: number | null;
+  digestTarget: DigestTarget;
 }
 
 export interface TokenRow {

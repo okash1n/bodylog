@@ -1,4 +1,12 @@
-import type { DayPoint, Env, LatestMeasurement, NotificationStats, NotifyMode, SlackDestination } from './types';
+import type {
+  DayPoint,
+  DigestTarget,
+  Env,
+  LatestMeasurement,
+  NotificationStats,
+  NotifyMode,
+  SlackDestination,
+} from './types';
 import { LIMITS, assertSecret, dashboardBase, isoNow, offsetHours, ymdWithOffset } from './util';
 import { getDailySeries, getDayMeasurementCount, getLatestForBatch, getNotificationStats } from './queries';
 import { OG_RENDERER_VERSION } from './og';
@@ -23,7 +31,7 @@ export function parseDestinations(env: Env): SlackDestination[] {
     if (typeof item !== 'object' || item === null) {
       throw new Error('SLACK_WEBHOOKS entries must be objects of {id, url, mode?}');
     }
-    const { id, url, mode } = item as Record<string, unknown>;
+    const { id, url, mode, digest_time, digest_target } = item as Record<string, unknown>;
     if (typeof id !== 'string' || id.length === 0) {
       throw new Error('SLACK_WEBHOOKS entries must have a non-empty string "id"');
     }
@@ -33,12 +41,30 @@ export function parseDestinations(env: Env): SlackDestination[] {
     if (mode !== undefined && mode !== 'immediate' && mode !== 'daily' && mode !== 'both') {
       throw new Error(`SLACK_WEBHOOKS entry "${id}" has invalid mode (immediate | daily | both)`);
     }
+    let digestTimeMinutes: number | null = null;
+    if (digest_time !== undefined) {
+      if (typeof digest_time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(digest_time)) {
+        throw new Error(`SLACK_WEBHOOKS entry "${id}" has invalid digest_time (HH:MM)`);
+      }
+      digestTimeMinutes = clampDigestMinutes(
+        Number(digest_time.slice(0, 2)) * 60 + Number(digest_time.slice(3, 5)),
+      );
+    }
+    if (digest_target !== undefined && digest_target !== 'same' && digest_target !== 'previous') {
+      throw new Error(`SLACK_WEBHOOKS entry "${id}" has invalid digest_target (same | previous)`);
+    }
     // destination_id はD1に保存される安定IDのため重複を拒否
     if (seen.has(id)) {
       throw new Error(`SLACK_WEBHOOKS has duplicate id "${id}"`);
     }
     seen.add(id);
-    out.push({ id, url, mode: (mode as NotifyMode | undefined) ?? 'immediate' });
+    out.push({
+      id,
+      url,
+      mode: (mode as NotifyMode | undefined) ?? 'immediate',
+      digestTimeMinutes,
+      digestTarget: (digest_target as DigestTarget | undefined) ?? 'same',
+    });
   }
   return out;
 }
@@ -170,9 +196,18 @@ export function buildDigestBlocks(input: {
 const DEFAULT_DIGEST_MINUTES = 23 * 60 + 55;
 const MAX_DIGEST_MINUTES = DEFAULT_DIGEST_MINUTES;
 
+/** 23:55超は「その日のうちに5分毎tickが来ない」ため23:55へclamp */
+function clampDigestMinutes(minutes: number): number {
+  if (minutes > MAX_DIGEST_MINUTES) {
+    console.warn('[slack] digest time later than 23:55 cannot fire same-day; clamping to 23:55');
+    return MAX_DIGEST_MINUTES;
+  }
+  return minutes;
+}
+
 /**
  * settings.digest_time（ローカル "HH:MM"）を分に変換する。
- * 不正値は既定23:55にフォールバック。23:55超は「その日のうちにtickが来ない」ため23:55へclamp。
+ * 通知先個別のdigest_time未指定時の全体既定値。不正値は既定23:55にフォールバック。
  */
 export function parseDigestTime(raw: string | null): number {
   if (raw === null) return DEFAULT_DIGEST_MINUTES;
@@ -181,46 +216,34 @@ export function parseDigestTime(raw: string | null): number {
     console.warn('[slack] invalid settings.digest_time, using default 23:55:', raw);
     return DEFAULT_DIGEST_MINUTES;
   }
-  const minutes = Number(m[1]) * 60 + Number(m[2]);
-  if (minutes > MAX_DIGEST_MINUTES) {
-    console.warn('[slack] digest_time later than 23:55 cannot fire same-day; clamping to 23:55');
-    return MAX_DIGEST_MINUTES;
+  return clampDigestMinutes(Number(m[1]) * 60 + Number(m[2]));
+}
+
+interface DigestQueueItem {
+  destinationId: string;
+  targetDate: string;
+}
+
+async function queueDigestBatches(
+  env: Env,
+  origin: string,
+  items: DigestQueueItem[],
+): Promise<{ queued: number }> {
+  if (items.length === 0) return { queued: 0 };
+
+  // 対象日ごとに計測の有無を確認し、計測ゼロの日はスキップ
+  const dates = [...new Set(items.map((i) => i.targetDate))];
+  const counts = new Map<string, number>();
+  for (const date of dates) {
+    counts.set(date, await getDayMeasurementCount(env, date));
   }
-  return minutes;
-}
+  const eligible = items.filter((i) => (counts.get(i.targetDate) ?? 0) > 0);
+  if (eligible.length === 0) return { queued: 0 };
 
-/**
- * 5分毎cronから呼ぶ。ローカル時刻が digest_time を過ぎていれば当日分のダイジェストを送る。
- * 送信済みかはUNIQUE制約が担保するため、同日の後続tickでは何も起きない。
- */
-export async function runDailyDigestIfDue(env: Env, origin: string): Promise<{ queued: number }> {
-  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'digest_time'")
-    .first<{ value: string | null }>();
-  const dueMinutes = parseDigestTime(row?.value ?? null);
-  const localMs = Date.now() + offsetHours(env) * 3_600_000;
-  const local = new Date(localMs);
-  const nowMinutes = local.getUTCHours() * 60 + local.getUTCMinutes();
-  if (nowMinutes < dueMinutes) return { queued: 0 };
-  return runDailyDigest(env, origin);
-}
-
-/**
- * 日次ダイジェストの送信バッチを投入する。
- * その日に計測がなければ何もしない。UNIQUE(batch_id, destination_id)により再実行しても二重送信しない。
- */
-export async function runDailyDigest(env: Env, origin: string): Promise<{ queued: number }> {
-  const destinations = parseDestinations(env).filter((d) => d.mode === 'daily' || d.mode === 'both');
-  if (destinations.length === 0) return { queued: 0 };
-
-  const today = ymdWithOffset(isoNow(), offsetHours(env));
-  const count = await getDayMeasurementCount(env, today);
-  if (count === 0) return { queued: 0 };
-
-  const batchId = `${DAILY_BATCH_PREFIX}${today}`;
-  const statements = destinations.map((d) =>
+  const statements = eligible.map((i) =>
     env.DB.prepare(
       "INSERT OR IGNORE INTO notification_batches (batch_id, destination_id, status, next_attempt_at) VALUES (?1, ?2, 'pending', datetime('now'))",
-    ).bind(batchId, d.id),
+    ).bind(`${DAILY_BATCH_PREFIX}${i.targetDate}`, i.destinationId),
   );
   const results = await env.DB.batch(statements);
   const queued = results.reduce((n, r) => n + r.meta.changes, 0);
@@ -228,6 +251,45 @@ export async function runDailyDigest(env: Env, origin: string): Promise<{ queued
     await processNotificationBatches(env, origin);
   }
   return { queued };
+}
+
+/**
+ * 5分毎cronから呼ぶ。通知先ごとの送信時刻（未指定はsettings.digest_time、既定23:55）を
+ * 過ぎていればダイジェストを投入する。対象日はdigest_target（same=当日 / previous=前日）。
+ * 送信済みかはUNIQUE(batch_id, destination_id)が担保するため、後続tickでは何も起きない。
+ */
+export async function runDailyDigestIfDue(env: Env, origin: string): Promise<{ queued: number }> {
+  const destinations = parseDestinations(env).filter((d) => d.mode === 'daily' || d.mode === 'both');
+  if (destinations.length === 0) return { queued: 0 };
+
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'digest_time'")
+    .first<{ value: string | null }>();
+  const defaultMinutes = parseDigestTime(row?.value ?? null);
+
+  const offset = offsetHours(env);
+  const local = new Date(Date.now() + offset * 3_600_000);
+  const nowMinutes = local.getUTCHours() * 60 + local.getUTCMinutes();
+  const today = ymdWithOffset(isoNow(), offset);
+  const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+
+  const due = destinations
+    .filter((d) => nowMinutes >= (d.digestTimeMinutes ?? defaultMinutes))
+    .map((d) => ({
+      destinationId: d.id,
+      targetDate: d.digestTarget === 'previous' ? yesterday : today,
+    }));
+  return queueDigestBatches(env, origin, due);
+}
+
+/** 時刻条件を無視して当日分のダイジェストを今すぐ投入する（手動実行・テスト用） */
+export async function runDailyDigest(env: Env, origin: string): Promise<{ queued: number }> {
+  const destinations = parseDestinations(env).filter((d) => d.mode === 'daily' || d.mode === 'both');
+  const today = ymdWithOffset(isoNow(), offsetHours(env));
+  return queueDigestBatches(
+    env,
+    origin,
+    destinations.map((d) => ({ destinationId: d.id, targetDate: today })),
+  );
 }
 
 async function buildDailyDigestMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
