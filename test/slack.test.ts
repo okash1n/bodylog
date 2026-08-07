@@ -12,14 +12,14 @@ describe('buildMessageBlocks', () => {
   const latest: LatestMeasurement = {
     measured_at: '2026-01-05T15:00:00Z',
     weight: 65.2,
-    fat_ratio: null,
+    fat_mass: null,
     fat_free_mass: 53.1,
   };
   const stats: NotificationStats = {
-    recent7: { weight: 65.5, fat_ratio: null, fat_free_mass: 53.0 },
-    diff7: { weight: -0.4, fat_ratio: null, fat_free_mass: 0.3 },
+    recent7: { weight: 65.5, fat_mass: null, fat_free_mass: 53.0 },
+    diff7: { weight: -0.4, fat_mass: null, fat_free_mass: 0.3 },
     baselineDate: '2025-12-01',
-    baselineDiff: { weight: -2.3, fat_ratio: null, fat_free_mass: 0.5 },
+    baselineDiff: { weight: -2.3, fat_mass: null, fat_free_mass: 0.5 },
   };
   const dashboardUrl = 'https://origin.example/d/slug/?v=2026-01-06';
 
@@ -34,7 +34,7 @@ describe('buildMessageBlocks', () => {
     expect(text).toContain('*体重*');
     expect(text).toContain('`65.2 kg`');
     expect(text).toContain('`53.1 kg`');
-    expect(text).toContain('—'); // fat_ratio null
+    expect(text).toContain('—'); // fat_mass null
     expect(text).toContain('-0.4 kg'); // 符号付き差分
     expect(text).toContain('基準日（2025-12-01）');
     expect(text).toContain('-2.3 kg');
@@ -46,7 +46,7 @@ describe('buildMessageBlocks', () => {
     const blocks = buildMessageBlocks({
       latest,
       extraCount: 2,
-      stats: { ...stats, diff7: { weight: 0.3, fat_ratio: null, fat_free_mass: null } },
+      stats: { ...stats, diff7: { weight: 0.3, fat_mass: null, fat_free_mass: null } },
       dashboardUrl,
       tzOffset: 9,
     });
@@ -75,7 +75,7 @@ describe('buildMessageBlocks', () => {
     const blocks = buildMessageBlocks({
       latest,
       extraCount: 0,
-      stats: { ...stats, baselineDate: null, baselineDiff: { weight: null, fat_ratio: null, fat_free_mass: null } },
+      stats: { ...stats, baselineDate: null, baselineDiff: { weight: null, fat_mass: null, fat_free_mass: null } },
       dashboardUrl,
       tzOffset: 9,
     });

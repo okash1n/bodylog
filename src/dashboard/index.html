@@ -7,7 +7,7 @@
 <title>体重ダッシュボード</title>
 <meta property="og:title" content="体重ダッシュボード">
 <meta property="og:type" content="website">
-<meta property="og:description" content="体重・体脂肪率・除脂肪体重の推移">
+<meta property="og:description" content="体重・脂肪量・除脂肪体重の推移">
 <meta property="og:image" content="{{OG_IMAGE_URL}}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="{{OG_IMAGE_URL}}">
@@ -70,10 +70,10 @@
         <p class="card-sub">期間比 <span id="card-weight-diff">—</span><span class="unit">kg</span></p>
       </article>
       <article class="card">
-        <h3>体脂肪率</h3>
-        <p class="card-value"><span id="card-fat-value">—</span><span class="unit">%</span></p>
-        <p class="card-sub">7日平均 <span id="card-fat-avg">—</span><span class="unit">%</span></p>
-        <p class="card-sub">期間比 <span id="card-fat-diff">—</span><span class="unit">%</span></p>
+        <h3>脂肪量</h3>
+        <p class="card-value"><span id="card-fat-value">—</span><span class="unit">kg</span></p>
+        <p class="card-sub">7日平均 <span id="card-fat-avg">—</span><span class="unit">kg</span></p>
+        <p class="card-sub">期間比 <span id="card-fat-diff">—</span><span class="unit">kg</span></p>
       </article>
       <article class="card">
         <h3>除脂肪体重</h3>
@@ -107,7 +107,7 @@
 
     <section id="chart-section">
       <div id="chart-wrap" class="chart-wrap">
-        <canvas id="chart" role="img" aria-label="体重・体脂肪率・除脂肪体重の推移グラフ"></canvas>
+        <canvas id="chart" role="img" aria-label="体重・脂肪量・除脂肪体重の推移グラフ"></canvas>
       </div>
     </section>
 
@@ -123,7 +123,7 @@
           <tr>
             <th id="table-col-date">日付</th>
             <th>体重 <span class="unit">kg</span></th>
-            <th>体脂肪率 <span class="unit">%</span></th>
+            <th>脂肪量 <span class="unit">kg</span></th>
             <th>除脂肪体重 <span class="unit">kg</span></th>
           </tr>
         </thead>

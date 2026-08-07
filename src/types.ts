@@ -54,20 +54,24 @@ export interface MeasurementUpsert {
   raw_json: string;
 }
 
-/** 日単位集計 + 7日移動平均の1日分 */
+/**
+ * 日単位集計 + 7日移動平均の1日分。
+ * fat_mass（脂肪量kg）はD1に保存せず、weight - fat_free_mass から導出する
+ * （体脂肪率の差分は解釈しづらいため、表示・通知はすべて脂肪量で扱う）
+ */
 export interface DayPoint {
   d: string; // ローカル日付 YYYY-MM-DD
   weight: number | null;
-  fat_ratio: number | null;
+  fat_mass: number | null;
   fat_free_mass: number | null;
   weight_7d_avg: number | null;
-  fat_ratio_7d_avg: number | null;
+  fat_mass_7d_avg: number | null;
   fat_free_mass_7d_avg: number | null;
 }
 
 export interface MetricTriple {
   weight: number | null;
-  fat_ratio: number | null;
+  fat_mass: number | null;
   fat_free_mass: number | null;
 }
 
@@ -81,7 +85,7 @@ export interface NotificationStats {
 export interface LatestMeasurement {
   measured_at: string;
   weight: number | null;
-  fat_ratio: number | null;
+  fat_mass: number | null; // weight - fat_free_mass（SQL側で導出）
   fat_free_mass: number | null;
 }
 

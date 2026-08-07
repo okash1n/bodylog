@@ -60,10 +60,10 @@ function mkDays(n: number): DayPoint[] {
     d: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
     // null 日はスキップされる仕様なので混ぜておく
     weight: i === 3 ? null : 65 + Math.sin(i / 3),
-    fat_ratio: null,
+    fat_mass: null,
     fat_free_mass: null,
     weight_7d_avg: i === 3 ? null : 65,
-    fat_ratio_7d_avg: null,
+    fat_mass_7d_avg: null,
     fat_free_mass_7d_avg: null,
   }));
 }

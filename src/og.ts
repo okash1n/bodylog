@@ -10,7 +10,7 @@ const GRID: Rgb = [237, 241, 246]; // 枠より薄いグリッド線
 const TEXT: Rgb = [30, 41, 59]; // --text #1e293b
 const MUTED: Rgb = [100, 116, 139]; // --text-muted #64748b
 const WEIGHT: Rgb = [2, 132, 199]; // --accent #0284c7
-const FAT: Rgb = [217, 119, 6]; // --accent-2 #d97706
+const FAT_MASS: Rgb = [217, 119, 6]; // --accent-2 #d97706
 const FFM: Rgb = [5, 150, 105]; // --accent-3 #059669
 
 /**
@@ -18,7 +18,7 @@ const FFM: Rgb = [5, 150, 105]; // --accent-3 #059669
  * og.pngのキャッシュバスターに含め、データが同じでも描画変更が
  * Slack等の画像プロキシキャッシュを貫通するようにする。
  */
-export const OG_RENDERER_VERSION = 4;
+export const OG_RENDERER_VERSION = 5;
 
 const PADDING = 104;
 const LINE_THICKNESS = 3;
@@ -287,7 +287,7 @@ export async function renderOgPng(days: DayPoint[], opts: { width: number; heigh
   // 凡例（プロット枠の上）
   const legendItems: { label: string; rgb: Rgb }[] = [
     { label: '体重', rgb: WEIGHT },
-    { label: '体脂肪率', rgb: FAT },
+    { label: '脂肪量', rgb: FAT_MASS },
     { label: '除脂肪体重', rgb: FFM },
   ];
   let legendX = left;
@@ -299,9 +299,9 @@ export async function renderOgPng(days: DayPoint[], opts: { width: number; heigh
   }
 
   const weightPoints = collectSeries(days, (d) => d.weight);
-  const fatPoints = collectSeries(days, (d) => d.fat_ratio);
+  const fatMassPoints = collectSeries(days, (d) => d.fat_mass);
   const ffmPoints = collectSeries(days, (d) => d.fat_free_mass);
-  if (weightPoints.length + fatPoints.length + ffmPoints.length === 0) {
+  if (weightPoints.length + fatMassPoints.length + ffmPoints.length === 0) {
     return encodePng(c);
   }
 
@@ -318,32 +318,19 @@ export async function renderOgPng(days: DayPoint[], opts: { width: number; heigh
   const xOf = (index: number): number =>
     t1 === t0 ? right : Math.round(left + ((right - left) * (times[index] - t0)) / (t1 - t0));
 
+  // 3系列すべてkgなので単一スケールで描く（%軸は廃止）
   const kgScale = makeYScale(
-    [...weightPoints, ...ffmPoints].map((p) => p.value),
-    top,
-    bottom,
-  );
-  const pctScale = makeYScale(
-    fatPoints.map((p) => p.value),
+    [...weightPoints, ...fatMassPoints, ...ffmPoints].map((p) => p.value),
     top,
     bottom,
   );
 
-  // 軸の数値: 左=kg（上限/下限）、右=%（上限/下限）
+  // 軸の数値: 左=kg（上限/下限）
   if (kgScale) {
     const hiText = kgScale.hi.toFixed(1);
     const loText = kgScale.lo.toFixed(1);
     drawText(c, left - measureText(hiText) - 10, top - Math.round(FONT_HEIGHT / 2), hiText, MUTED);
     drawText(c, left - measureText(loText) - 10, bottom - Math.round(FONT_HEIGHT / 2), loText, MUTED);
-  }
-  if (pctScale) {
-    const hiText = `${pctScale.hi.toFixed(1)}%`;
-    const loText = `${pctScale.lo.toFixed(1)}%`;
-    // 画像右端からはみ出さないようにclamp
-    const hiX = Math.min(right + 10, width - measureText(hiText) - 4);
-    const loX = Math.min(right + 10, width - measureText(loText) - 4);
-    drawText(c, hiX, top - Math.round(FONT_HEIGHT / 2), hiText, MUTED);
-    drawText(c, loX, bottom - Math.round(FONT_HEIGHT / 2), loText, MUTED);
   }
 
   // X軸の日付（最初と最後の計測日）
@@ -355,7 +342,7 @@ export async function renderOgPng(days: DayPoint[], opts: { width: number; heigh
   }
 
   drawSeries(c, ffmPoints, xOf, kgScale, FFM);
-  drawSeries(c, fatPoints, xOf, pctScale, FAT);
+  drawSeries(c, fatMassPoints, xOf, kgScale, FAT_MASS);
   // 体重を最前面に描く
   drawSeries(c, weightPoints, xOf, kgScale, WEIGHT);
 

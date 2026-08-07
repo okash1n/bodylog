@@ -335,8 +335,8 @@
     return {
       weight: pick('weight'),
       weight7: pick('weight_7d_avg'),
-      fat: pick('fat_ratio'),
-      fat7: pick('fat_ratio_7d_avg'),
+      fat: pick('fat_mass'),
+      fat7: pick('fat_mass_7d_avg'),
       ffm: pick('fat_free_mass'),
       ffm7: pick('fat_free_mass_7d_avg'),
     };
@@ -435,8 +435,8 @@
         hidden: hideRaw,
       }),
       avg('体重 7日平均', sets.weight7, t.accent, 'yKg', 'kg', !hideRaw),
-      measured('体脂肪率', sets.fat, t.accent2, 'yPct', '%', { hidden: hideRaw }),
-      avg('体脂肪率 7日平均', sets.fat7, t.accent2, 'yPct', '%', !hideRaw),
+      measured('脂肪量', sets.fat, t.accent2, 'yKg', 'kg', { hidden: hideRaw }),
+      avg('脂肪量 7日平均', sets.fat7, t.accent2, 'yKg', 'kg', !hideRaw),
       measured('除脂肪体重', sets.ffm, t.accent3, 'yKg', 'kg', { hidden: hideRaw }),
       avg('除脂肪体重 7日平均', sets.ffm7, t.accent3, 'yKg', 'kg', !hideRaw),
     ];
@@ -484,20 +484,12 @@
   function applyAxisRanges(ch) {
     var s = ch.options.scales;
     var kg = axisRange(visibleValues(ch, 'yKg'));
-    var pct = axisRange(visibleValues(ch, 'yPct'));
     if (kg) {
       s.yKg.min = kg.min;
       s.yKg.max = kg.max;
     } else {
       delete s.yKg.min;
       delete s.yKg.max;
-    }
-    if (pct) {
-      s.yPct.min = pct.min;
-      s.yPct.max = pct.max;
-    } else {
-      delete s.yPct.min;
-      delete s.yPct.max;
     }
   }
 
@@ -561,12 +553,12 @@
   function createChart(labels, sets, density) {
     var t = themeCache;
     var limits = tickLimitsFor(currentBp);
-    // 初期レンジは「表示モードで見えている系列」全部から計算する
-    // （kg軸は体重+除脂肪体重。体重だけだと除脂肪体重が軸外に出て描画が壊れる）
+    // 初期レンジは「表示モードで見えている系列」全部から計算する（全系列kgの単一軸）
     var kgRange = axisRange(
-      seriesMode === 'avg' ? sets.weight7.concat(sets.ffm7) : sets.weight.concat(sets.ffm),
+      seriesMode === 'avg'
+        ? sets.weight7.concat(sets.fat7, sets.ffm7)
+        : sets.weight.concat(sets.fat, sets.ffm),
     );
-    var pctRange = axisRange(seriesMode === 'avg' ? sets.fat7 : sets.fat);
     chart = new Chart(els.canvas, {
       type: 'line',
       data: { labels: labels, datasets: buildDatasets(sets, density, t) },
@@ -615,16 +607,6 @@
             max: kgRange ? kgRange.max : undefined,
             ticks: { color: t.muted, maxTicksLimit: limits.y, callback: yTickCallback },
             grid: { color: t.grid },
-            border: { display: false },
-          },
-          yPct: {
-            type: 'linear',
-            position: 'right',
-            display: 'auto',
-            min: pctRange ? pctRange.min : undefined,
-            max: pctRange ? pctRange.max : undefined,
-            ticks: { color: t.muted, maxTicksLimit: limits.y, callback: yTickCallback },
-            grid: { drawOnChartArea: false, color: t.grid },
             border: { display: false },
           },
         },
@@ -680,7 +662,7 @@
   function renderCards(days) {
     var metrics = [
       { key: 'weight', id: 'card-weight' },
-      { key: 'fat_ratio', id: 'card-fat' },
+      { key: 'fat_mass', id: 'card-fat' },
       { key: 'fat_free_mass', id: 'card-ffm' },
     ];
     metrics.forEach(function (m) {
@@ -711,7 +693,7 @@
     var frag = document.createDocumentFragment();
     for (var i = days.length - 1; i >= 0; i--) {
       var d = days[i];
-      appendRow(frag, [d.d, fmt(d.weight), fmt(d.fat_ratio), fmt(d.fat_free_mass)]);
+      appendRow(frag, [d.d, fmt(d.weight), fmt(d.fat_mass), fmt(d.fat_free_mass)]);
     }
     els.tableBody.replaceChildren(frag);
   }
@@ -724,7 +706,7 @@
       appendRow(frag, [
         ms == null ? '—' : formatLocalDateTime(ms),
         fmt(m.weight),
-        fmt(m.fat_ratio),
+        fmt(m.fat_mass),
         fmt(m.fat_free_mass),
       ]);
     });
@@ -807,7 +789,6 @@
     s.x.border.color = t.grid;
     s.yKg.ticks.color = t.muted;
     s.yKg.grid.color = t.grid;
-    s.yPct.ticks.color = t.muted;
     chart.update('none');
   }
 
@@ -906,7 +887,6 @@
         var limits = tickLimitsFor(bp);
         chart.options.scales.x.ticks.maxTicksLimit = limits.x;
         chart.options.scales.yKg.ticks.maxTicksLimit = limits.y;
-        chart.options.scales.yPct.ticks.maxTicksLimit = limits.y;
         chart.update('none');
       });
       ro.observe(els.chartWrap);

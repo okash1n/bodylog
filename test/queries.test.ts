@@ -42,8 +42,8 @@ describe('getDailySeries', () => {
     expect(series[0].weight).toBeCloseTo(65, 5);
     // (60+61+62+63+64+65+65)/7
     expect(series[0].weight_7d_avg).toBeCloseTo(440 / 7, 5);
-    expect(series[0].fat_ratio).toBeNull();
-    expect(series[0].fat_ratio_7d_avg).toBeNull();
+    expect(series[0].fat_mass).toBeNull();
+    expect(series[0].fat_mass_7d_avg).toBeNull();
   });
 
   it('JST境界: UTC 15:00 の計測は翌ローカル日に割り当てられる', async () => {
@@ -71,7 +71,7 @@ describe('getNotificationStats', () => {
   const latest: LatestMeasurement = {
     measured_at: new Date().toISOString(),
     weight: 64,
-    fat_ratio: null,
+    fat_mass: null,
     fat_free_mass: null,
   };
 
@@ -85,12 +85,12 @@ describe('getNotificationStats', () => {
     const stats = await getNotificationStats(testEnv, latest);
     expect(stats.recent7.weight).toBeCloseTo(65, 5);
     expect(stats.diff7.weight).toBeCloseTo(-5, 5);
-    expect(stats.recent7.fat_ratio).toBeNull();
-    expect(stats.diff7.fat_ratio).toBeNull();
+    expect(stats.recent7.fat_mass).toBeNull();
+    expect(stats.diff7.fat_mass).toBeNull();
     expect(stats.baselineDate).toBe(baselineDate);
     // 基準日（10日前）の日平均 70 に対し latest.weight 64
     expect(stats.baselineDiff.weight).toBeCloseTo(-6, 5);
-    expect(stats.baselineDiff.fat_ratio).toBeNull();
+    expect(stats.baselineDiff.fat_mass).toBeNull();
   });
 
   it('基準日に計測がない場合は基準日以降最初の計測値を使う', async () => {

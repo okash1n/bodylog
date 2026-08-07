@@ -70,7 +70,7 @@ export function buildMessageBlocks(input: {
 
   const latestLine = [
     `*体重* : ${fmtValue(latest.weight, ' kg')}`,
-    `*体脂肪率* : ${fmtValue(latest.fat_ratio, '%')}`,
+    `*脂肪量* : ${fmtValue(latest.fat_mass, ' kg')}`,
     `*除脂肪体重* : ${fmtValue(latest.fat_free_mass, ' kg')}`,
   ].join(' | ');
 
@@ -78,7 +78,7 @@ export function buildMessageBlocks(input: {
   // スパンがずれるため、コードスパンの前後は半角括弧+半角スペースにする
   const avgLine = [
     `*体重* : ${fmtValue(stats.recent7.weight, ' kg')} (${fmtDiff(stats.diff7.weight, ' kg')})`,
-    `*体脂肪率* : ${fmtValue(stats.recent7.fat_ratio, '%')} (${fmtDiff(stats.diff7.fat_ratio, '%')})`,
+    `*脂肪量* : ${fmtValue(stats.recent7.fat_mass, ' kg')} (${fmtDiff(stats.diff7.fat_mass, ' kg')})`,
     `*除脂肪体重* : ${fmtValue(stats.recent7.fat_free_mass, ' kg')} (${fmtDiff(stats.diff7.fat_free_mass, ' kg')})`,
   ].join(' | ');
 
@@ -91,7 +91,7 @@ export function buildMessageBlocks(input: {
   if (stats.baselineDate !== null) {
     const baselineLine = [
       `*体重* : ${fmtDiff(stats.baselineDiff.weight, ' kg')}`,
-      `*体脂肪率* : ${fmtDiff(stats.baselineDiff.fat_ratio, '%')}`,
+      `*脂肪量* : ${fmtDiff(stats.baselineDiff.fat_mass, ' kg')}`,
       `*除脂肪体重* : ${fmtDiff(stats.baselineDiff.fat_free_mass, ' kg')}`,
     ].join(' | ');
     blocks.push(section(`*基準日（${stats.baselineDate}）からの変化*\n${baselineLine}`));

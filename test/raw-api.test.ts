@@ -21,7 +21,7 @@ describe('api/raw（計測明細）', () => {
     const d = localYmdDaysAgo(1);
     // ローカル日付 d のUTC正午相当（JST前提のテスト値ではなくローカル日付に収まる時刻を選ぶ）
     await insertMeasurement({ grpid: 1, measured_at: `${d}T01:00:00.000Z`, weight: 85.0 });
-    await insertMeasurement({ grpid: 2, measured_at: `${d}T03:30:00.000Z`, weight: 84.4, fat_ratio: 23.4 });
+    await insertMeasurement({ grpid: 2, measured_at: `${d}T03:30:00.000Z`, weight: 84.4, fat_free_mass: 64.6 });
     const res = await request(`/d/${slug}/api/raw?from=${d}&to=${d}`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { measurements: LatestMeasurement[] };
@@ -29,7 +29,8 @@ describe('api/raw（計測明細）', () => {
     // 新しい順
     expect(body.measurements[0].weight).toBe(84.4);
     expect(body.measurements[1].weight).toBe(85.0);
-    expect(body.measurements[1].fat_ratio).toBeNull();
+    expect(body.measurements[0].fat_mass).toBeCloseTo(19.8, 5); // weight - fat_free_mass
+    expect(body.measurements[1].fat_mass).toBeNull();
   });
 
   it('期間バリデーションは api/measurements と同一', async () => {

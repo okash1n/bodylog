@@ -11,7 +11,7 @@ import { tzModifier } from './util';
 function diffTriple(a: MetricTriple, b: MetricTriple): MetricTriple {
   return {
     weight: a.weight !== null && b.weight !== null ? a.weight - b.weight : null,
-    fat_ratio: a.fat_ratio !== null && b.fat_ratio !== null ? a.fat_ratio - b.fat_ratio : null,
+    fat_mass: a.fat_mass !== null && b.fat_mass !== null ? a.fat_mass - b.fat_mass : null,
     fat_free_mass:
       a.fat_free_mass !== null && b.fat_free_mass !== null
         ? a.fat_free_mass - b.fat_free_mass
@@ -23,17 +23,18 @@ export async function getDailySeries(env: Env, from: string, to: string): Promis
   // tzはユーザー入力ではなくutil経由の固定値のみ埋め込む。
   // 表示期間先頭でも7日移動平均が成立するよう、集計対象は from-6日 から取る。
   const tz = tzModifier(env);
+  // 脂肪量 = weight - fat_free_mass（どちらか欠けた計測はNULLになりAVGから除外される）
   const sql = `
 WITH daily AS (
   SELECT date(measured_at, '${tz}') AS d,
-         AVG(weight) AS weight, AVG(fat_ratio) AS fat_ratio, AVG(fat_free_mass) AS fat_free_mass
+         AVG(weight) AS weight, AVG(weight - fat_free_mass) AS fat_mass, AVG(fat_free_mass) AS fat_free_mass
   FROM measurements
   WHERE date(measured_at, '${tz}') BETWEEN date(?1, '-6 days') AND ?2
   GROUP BY 1
 )
-SELECT d, weight, fat_ratio, fat_free_mass,
+SELECT d, weight, fat_mass, fat_free_mass,
   (SELECT AVG(d2.weight) FROM daily d2 WHERE d2.d BETWEEN date(daily.d, '-6 days') AND daily.d) AS weight_7d_avg,
-  (SELECT AVG(d2.fat_ratio) FROM daily d2 WHERE d2.d BETWEEN date(daily.d, '-6 days') AND daily.d) AS fat_ratio_7d_avg,
+  (SELECT AVG(d2.fat_mass) FROM daily d2 WHERE d2.d BETWEEN date(daily.d, '-6 days') AND daily.d) AS fat_mass_7d_avg,
   (SELECT AVG(d2.fat_free_mass) FROM daily d2 WHERE d2.d BETWEEN date(daily.d, '-6 days') AND daily.d) AS fat_free_mass_7d_avg
 FROM daily
 WHERE d >= ?1
@@ -44,10 +45,10 @@ ORDER BY d`;
 
 interface TermRow {
   recent_weight: number | null;
-  recent_fat_ratio: number | null;
+  recent_fat_mass: number | null;
   recent_fat_free_mass: number | null;
   prev_weight: number | null;
-  prev_fat_ratio: number | null;
+  prev_fat_mass: number | null;
   prev_fat_free_mass: number | null;
 }
 
@@ -61,29 +62,29 @@ export async function getNotificationStats(
     `
 WITH daily AS (
   SELECT date(measured_at, '${tz}') AS d,
-         AVG(weight) AS weight, AVG(fat_ratio) AS fat_ratio, AVG(fat_free_mass) AS fat_free_mass
+         AVG(weight) AS weight, AVG(weight - fat_free_mass) AS fat_mass, AVG(fat_free_mass) AS fat_free_mass
   FROM measurements
   WHERE date(measured_at, '${tz}') BETWEEN date('now', '${tz}', '-13 days') AND date('now', '${tz}')
   GROUP BY 1
 )
 SELECT
   AVG(CASE WHEN d >= date('now', '${tz}', '-6 days') THEN weight END) AS recent_weight,
-  AVG(CASE WHEN d >= date('now', '${tz}', '-6 days') THEN fat_ratio END) AS recent_fat_ratio,
+  AVG(CASE WHEN d >= date('now', '${tz}', '-6 days') THEN fat_mass END) AS recent_fat_mass,
   AVG(CASE WHEN d >= date('now', '${tz}', '-6 days') THEN fat_free_mass END) AS recent_fat_free_mass,
   AVG(CASE WHEN d < date('now', '${tz}', '-6 days') THEN weight END) AS prev_weight,
-  AVG(CASE WHEN d < date('now', '${tz}', '-6 days') THEN fat_ratio END) AS prev_fat_ratio,
+  AVG(CASE WHEN d < date('now', '${tz}', '-6 days') THEN fat_mass END) AS prev_fat_mass,
   AVG(CASE WHEN d < date('now', '${tz}', '-6 days') THEN fat_free_mass END) AS prev_fat_free_mass
 FROM daily`,
   ).first<TermRow>();
 
   const recent7: MetricTriple = {
     weight: termRow?.recent_weight ?? null,
-    fat_ratio: termRow?.recent_fat_ratio ?? null,
+    fat_mass: termRow?.recent_fat_mass ?? null,
     fat_free_mass: termRow?.recent_fat_free_mass ?? null,
   };
   const prev7: MetricTriple = {
     weight: termRow?.prev_weight ?? null,
-    fat_ratio: termRow?.prev_fat_ratio ?? null,
+    fat_mass: termRow?.prev_fat_mass ?? null,
     fat_free_mass: termRow?.prev_fat_free_mass ?? null,
   };
 
@@ -91,18 +92,18 @@ FROM daily`,
     .first<{ value: string | null }>();
   const baselineDate = baselineRow?.value ?? null;
 
-  let baselineDiff: MetricTriple = { weight: null, fat_ratio: null, fat_free_mass: null };
+  let baselineDiff: MetricTriple = { weight: null, fat_mass: null, fat_free_mass: null };
   if (baselineDate !== null) {
     // 基準値 = 基準日の日平均。基準日に計測がなければ基準日以降最初の計測値
     const base = await env.DB.prepare(
       `
 WITH base_day AS (
-  SELECT COUNT(*) AS n, AVG(weight) AS weight, AVG(fat_ratio) AS fat_ratio, AVG(fat_free_mass) AS fat_free_mass
+  SELECT COUNT(*) AS n, AVG(weight) AS weight, AVG(weight - fat_free_mass) AS fat_mass, AVG(fat_free_mass) AS fat_free_mass
   FROM measurements
   WHERE date(measured_at, '${tz}') = ?1
 ),
 first_after AS (
-  SELECT weight, fat_ratio, fat_free_mass
+  SELECT weight, (weight - fat_free_mass) AS fat_mass, fat_free_mass
   FROM measurements
   WHERE date(measured_at, '${tz}') >= ?1
   ORDER BY measured_at
@@ -110,14 +111,14 @@ first_after AS (
 )
 SELECT
   CASE WHEN (SELECT n FROM base_day) > 0 THEN (SELECT weight FROM base_day) ELSE (SELECT weight FROM first_after) END AS weight,
-  CASE WHEN (SELECT n FROM base_day) > 0 THEN (SELECT fat_ratio FROM base_day) ELSE (SELECT fat_ratio FROM first_after) END AS fat_ratio,
+  CASE WHEN (SELECT n FROM base_day) > 0 THEN (SELECT fat_mass FROM base_day) ELSE (SELECT fat_mass FROM first_after) END AS fat_mass,
   CASE WHEN (SELECT n FROM base_day) > 0 THEN (SELECT fat_free_mass FROM base_day) ELSE (SELECT fat_free_mass FROM first_after) END AS fat_free_mass`,
     )
       .bind(baselineDate)
       .first<MetricTriple>();
     if (base) {
       baselineDiff = diffTriple(
-        { weight: latest.weight, fat_ratio: latest.fat_ratio, fat_free_mass: latest.fat_free_mass },
+        { weight: latest.weight, fat_mass: latest.fat_mass, fat_free_mass: latest.fat_free_mass },
         base,
       );
     }
@@ -134,7 +135,7 @@ export async function getRawMeasurements(
 ): Promise<LatestMeasurement[]> {
   const tz = tzModifier(env);
   const res = await env.DB.prepare(
-    `SELECT measured_at, weight, fat_ratio, fat_free_mass
+    `SELECT measured_at, weight, (weight - fat_free_mass) AS fat_mass, fat_free_mass
 FROM measurements
 WHERE date(measured_at, '${tz}') BETWEEN ?1 AND ?2
 ORDER BY measured_at DESC
@@ -151,7 +152,7 @@ export async function getLatestForBatch(
 ): Promise<{ latest: LatestMeasurement; count: number } | null> {
   const row = await env.DB.prepare(
     `
-SELECT m.measured_at AS measured_at, m.weight AS weight, m.fat_ratio AS fat_ratio, m.fat_free_mass AS fat_free_mass,
+SELECT m.measured_at AS measured_at, m.weight AS weight, (m.weight - m.fat_free_mass) AS fat_mass, m.fat_free_mass AS fat_free_mass,
        COUNT(*) OVER () AS cnt
 FROM notification_batch_items i
 JOIN measurements m ON m.grpid = i.grpid
@@ -163,7 +164,7 @@ LIMIT 1`,
     .first<{
       measured_at: string;
       weight: number | null;
-      fat_ratio: number | null;
+      fat_mass: number | null;
       fat_free_mass: number | null;
       cnt: number;
     }>();
@@ -172,7 +173,7 @@ LIMIT 1`,
     latest: {
       measured_at: row.measured_at,
       weight: row.weight,
-      fat_ratio: row.fat_ratio,
+      fat_mass: row.fat_mass,
       fat_free_mass: row.fat_free_mass,
     },
     count: row.cnt,
