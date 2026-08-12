@@ -327,7 +327,8 @@ async function scheduled(
 const rwApp = createRwApp();
 
 const provider = new OAuthProvider<Env>({
-  apiRoute: '/rw/',
+  // /rw/ 配下（REST書き込み・MCP）に加え、MCPは短い /mcp でも受ける（どちらもOAuth必須）
+  apiRoute: ['/rw/', '/mcp'],
   apiHandler: { fetch: rwApp.fetch },
   defaultHandler: { fetch: app.fetch },
   authorizeEndpoint: '/authorize',

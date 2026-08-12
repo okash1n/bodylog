@@ -80,6 +80,35 @@ describe('MCPサーバー（/rw/mcp・OAuth必須）', () => {
     expect(res.status).toBe(401);
   });
 
+  it('/mcp（短いパス）もOAuth必須で、認証付きならtools/listを返す', async () => {
+    const anon = await worker.fetch(
+      new Request('http://localhost/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+      }),
+      rootEnv,
+      createExecutionContext(),
+    );
+    expect(anon.status).toBe(401);
+    const authed = await worker.fetch(
+      new Request('http://localhost/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+      }),
+      rootEnv,
+      createExecutionContext(),
+    );
+    expect(authed.status).toBe(200);
+    const body = (await authed.json()) as RpcResponse;
+    expect((body.result as { tools: unknown[] }).tools).toHaveLength(11);
+  });
+
   it('initializeに応答する（ステートレス・セッションIDなし）', async () => {
     const res = await rwRpc(token, 'initialize', {
       protocolVersion: '2025-06-18',

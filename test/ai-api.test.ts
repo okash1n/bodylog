@@ -143,8 +143,8 @@ describe('AI向けREST拡張', () => {
       expect(res.headers.get('X-Robots-Tag')).toContain('noindex');
       const text = await res.text();
       expect(text).toContain('http://localhost/api/summary');
-      expect(text).toContain('http://localhost/rw/mcp'); // 無認証/mcpは廃止・OAuthの/rw/mcpのみ
-      expect(text).not.toContain('http://localhost/mcp ');
+      expect(text).toContain('http://localhost/mcp'); // MCPは短い/mcp（OAuth必須）を案内
+      expect(text).toContain('http://localhost/rw/mcp'); // /rw/mcp も後方互換エイリアスとして明記
       expect(text).toContain('kg');
     });
 

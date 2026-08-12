@@ -106,6 +106,8 @@ export function createRwApp(): Hono<{ Bindings: Env }> {
       ? c.json({ ok: true }, 200, headers())
       : c.json({ error: 'exercise log not found' }, 404, headers()));
 
+  // MCPは /mcp（短いパス）と /rw/mcp（後方互換エイリアス）の両方で受ける。どちらもOAuth必須・同一挙動
+  app.all('/mcp', (c) => handleMcpRequest(c, { write: true }));
   app.all('/rw/mcp', (c) => handleMcpRequest(c, { write: true }));
 
   app.notFound((c) => c.text('not found', 404, noindexHeaders()));

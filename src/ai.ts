@@ -37,7 +37,7 @@ export function llmsTxt(origin: string, base: string, tzOffsetHours: number): st
 - GET ${root}/api/exercise/logs?days=30 — 運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）
 - GET ${root}/api/exercise/daily?days=30 — 日次の消費カロリー（有酸素）と総ボリューム（筋トレ）
 - GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（ChatGPTカスタムGPTのActionsにはこれを登録する）
-- POST ${root}/rw/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール
+- POST ${root}/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール（旧 ${root}/rw/mcp も同一挙動でエイリアス）
 
 ## 例
 
