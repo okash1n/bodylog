@@ -49,6 +49,18 @@ function b64url(s: string): string {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+/** /authorize のSet-CookieヘッダーからCookie値を取り出す（ブラウザのCookieジャーの代わり） */
+function extractCookieValue(res: Response, name: string): string {
+  const raw = res.headers.get('set-cookie');
+  if (!raw) throw new Error(`no set-cookie header (looking for ${name})`);
+  const found = raw
+    .split(';')
+    .map((s) => s.trim())
+    .find((s) => s.startsWith(`${name}=`));
+  if (!found) throw new Error(`cookie ${name} not found in set-cookie header: ${raw}`);
+  return found.slice(name.length + 1);
+}
+
 async function registerClient(env: Env): Promise<string> {
   const res = await worker.fetch(
     req('/register', {
@@ -88,6 +100,15 @@ describe('Google認可フロー', () => {
     const googleUrl = new URL(authorize.headers.get('Location')!);
     expect(googleUrl.host).toBe('accounts.google.com');
     const googleState = googleUrl.searchParams.get('state')!;
+    // Googleへの必須パラメータの検証（Googleレッグ自体にもPKCEを付ける多層防御）
+    expect(googleUrl.searchParams.get('client_id')).toBe('gcid');
+    expect(googleUrl.searchParams.get('response_type')).toBe('code');
+    expect(googleUrl.searchParams.get('scope')).toBeTruthy();
+    expect(googleUrl.searchParams.get('code_challenge')).toBeTruthy();
+    expect(googleUrl.searchParams.get('code_challenge_method')).toBe('S256');
+    // /authorize はブラウザセッション束縛用のCookieを発行する
+    const txnCookie = extractCookieValue(authorize, 'oauth_txn');
+    expect(txnCookie).toBe(googleState);
 
     const stub = stubFetch();
     stub.on({ host: 'oauth2.googleapis.com', path: '/token', reply: () => Response.json({ access_token: 'g-at' }) });
@@ -97,7 +118,9 @@ describe('Google認可フロー', () => {
       reply: () => Response.json({ email: 'owner@example.com', email_verified: true }),
     });
     const cb = await worker.fetch(
-      req(`/authorize/callback?code=g-code&state=${encodeURIComponent(googleState)}`),
+      req(`/authorize/callback?code=g-code&state=${encodeURIComponent(googleState)}`, {
+        headers: { Cookie: `oauth_txn=${txnCookie}` },
+      }),
       rootEnv,
       createExecutionContext(),
     );
@@ -138,6 +161,7 @@ describe('Google認可フロー', () => {
       createExecutionContext(),
     );
     const googleState = new URL(authorize.headers.get('Location')!).searchParams.get('state')!;
+    const txnCookie = extractCookieValue(authorize, 'oauth_txn');
     const stub = stubFetch();
     stub.on({ host: 'oauth2.googleapis.com', path: '/token', reply: () => Response.json({ access_token: 'g-at' }) });
     stub.on({
@@ -146,10 +170,47 @@ describe('Google認可フロー', () => {
       reply: () => Response.json({ email: 'attacker@example.com', email_verified: true }),
     });
     const cb = await worker.fetch(
-      req(`/authorize/callback?code=g-code&state=${encodeURIComponent(googleState)}`),
+      req(`/authorize/callback?code=g-code&state=${encodeURIComponent(googleState)}`, {
+        headers: { Cookie: `oauth_txn=${txnCookie}` },
+      }),
       rootEnv,
       createExecutionContext(),
     );
     expect(cb.status).toBe(403);
+    // トークン発行につながるcode/Locationが一切発行されていないこと
+    expect(cb.headers.get('Location')).toBeNull();
+  });
+
+  it('state（nonce）に対応するoauth_txn Cookieが無い/不一致だと403で、Googleへのトークン交換にも到達しない（login CSRF対策）', async () => {
+    const clientId = await registerClient(rootEnv);
+    const authorize = await worker.fetch(
+      req(
+        `/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent('http://localhost/cb')}&code_challenge=abc&code_challenge_method=S256&state=x&scope=meals`,
+      ),
+      rootEnv,
+      createExecutionContext(),
+    );
+    const googleState = new URL(authorize.headers.get('Location')!).searchParams.get('state')!;
+    // stubFetchにGoogleのルートを一切登録しない
+    // → CSRF検査より先にGoogleへのfetchが発生した場合は「unexpected fetch」で失敗する
+    stubFetch();
+
+    const noCookie = await worker.fetch(
+      req(`/authorize/callback?code=g-code&state=${encodeURIComponent(googleState)}`),
+      rootEnv,
+      createExecutionContext(),
+    );
+    expect(noCookie.status).toBe(403);
+    expect(noCookie.headers.get('Location')).toBeNull();
+
+    const wrongCookie = await worker.fetch(
+      req(`/authorize/callback?code=g-code&state=${encodeURIComponent(googleState)}`, {
+        headers: { Cookie: 'oauth_txn=not-the-real-nonce' },
+      }),
+      rootEnv,
+      createExecutionContext(),
+    );
+    expect(wrongCookie.status).toBe(403);
+    expect(wrongCookie.headers.get('Location')).toBeNull();
   });
 });
