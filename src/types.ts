@@ -4,6 +4,7 @@
 
 export interface Env {
   DB: D1Database;
+  OAUTH_KV: KVNamespace;
   // Vars (wrangler.toml)
   WEBHOOK_PATH_SECRET: string;
   DASHBOARD_SLUG: string;
@@ -14,6 +15,9 @@ export interface Env {
   SLACK_WEBHOOKS?: string;
   SETUP_SECRET?: string;
   ADMIN_SLACK_WEBHOOK?: string;
+  GOOGLE_OAUTH_CLIENT_ID?: string;
+  GOOGLE_OAUTH_CLIENT_SECRET?: string;
+  OWNER_EMAILS?: string; // カンマ区切りの許可メール
 }
 
 /** immediate=計測ごとに通知（既定） / daily=日次ダイジェストのみ / both=両方 */

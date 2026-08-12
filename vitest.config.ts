@@ -13,6 +13,7 @@ export default defineConfig({
       return {
         wrangler: { configPath: './wrangler.toml' },
         miniflare: {
+          kvNamespaces: ['OAUTH_KV'],
           bindings: {
             TEST_MIGRATIONS: migrations,
             // wrangler.toml の実値に依存しないようテスト用slugを固定する
@@ -21,6 +22,9 @@ export default defineConfig({
             SLACK_WEBHOOKS: '[{"id":"main","url":"https://hooks.slack.com/services/T0/B0/X"}]',
             WITHINGS_CLIENT_ID: 'cid',
             WITHINGS_CLIENT_SECRET: 'csec',
+            GOOGLE_OAUTH_CLIENT_ID: 'gcid',
+            GOOGLE_OAUTH_CLIENT_SECRET: 'gsec',
+            OWNER_EMAILS: 'owner@example.com',
           },
         },
       };
