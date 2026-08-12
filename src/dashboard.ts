@@ -12,7 +12,6 @@ import {
 } from './util';
 import { getDailySeries, getImportStatus, getRawMeasurements, getSummary } from './queries';
 import { llmsTxt, openapiSpec } from './ai';
-import { handleMcpRequest } from './mcp';
 import { serveMealsDaily, serveMealsList, serveMenus } from './meals-api';
 import { OG_RENDERER_VERSION, renderOgPng } from './og';
 import indexHtmlTpl from './dashboard/index.html';
@@ -151,8 +150,6 @@ const serveOpenapi: Handler = (c) =>
     noindexHeaders({ 'Cache-Control': STATIC_CACHE_CONTROL }),
   );
 
-const serveMcp: Handler = (c) => handleMcpRequest(c);
-
 const serveStatus: Handler = async (c) => {
   const headers = noindexHeaders({ 'Cache-Control': 'no-store' });
   try {
@@ -211,7 +208,6 @@ export function createDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/:slug/api/meals', guarded(serveMealsList));
   app.get('/:slug/llms.txt', guarded(serveLlmsTxt));
   app.get('/:slug/openapi.json', guarded(serveOpenapi));
-  app.all('/:slug/mcp', guarded(serveMcp));
   app.get('/:slug/og.png', guarded(serveOg));
   return app;
 }
@@ -239,7 +235,6 @@ export function createRootDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/api/meals', guarded(serveMealsList));
   app.get('/llms.txt', guarded(serveLlmsTxt));
   app.get('/openapi.json', guarded(serveOpenapi));
-  app.all('/mcp', guarded(serveMcp));
   app.get('/og.png', guarded(serveOg));
   return app;
 }
