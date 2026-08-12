@@ -178,6 +178,15 @@
   var currentLabels = [];
   var currentDensity = 'dense';
   var currentBp = breakpointFor(window.innerWidth);
+  // カロリーオーバーレイ（既定ON）。localStorageに保存
+  var calorieOverlay = (function () {
+    try {
+      return localStorage.getItem('dash-calorie-overlay') !== '0';
+    } catch (e) {
+      return true;
+    }
+  })();
+  var lastCals = null; // 直近のカロリー整列結果（テーマ/リサイズ再描画で参照）
   var period = '1m';
   var customFromValue = null;
   var customToValue = null;
@@ -257,16 +266,27 @@
     showState('loading');
     var r = rangeForPeriod();
     var url = BASE + 'api/measurements?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
+    var mealsUrl = BASE + 'api/meals/daily?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
     Promise.all([
       fetch(url).then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
       }),
+      // カロリー日次は取得失敗しても体重表示を壊さない（空扱い）
+      fetch(mealsUrl)
+        .then(function (res) {
+          return res.ok ? res.json() : { days: [] };
+        })
+        .catch(function (err) {
+          console.error('[dashboard] meals/daily fetch failed', err);
+          return { days: [] };
+        }),
       fetchStatus(),
     ])
       .then(function (results) {
         var days = (results[0] && results[0].days) || [];
-        var status = results[1];
+        var mealsDays = (results[1] && results[1].days) || [];
+        var status = results[2];
         rawRows = null; // 期間が変わった可能性があるので明細キャッシュを破棄
         renderHeader(days, status);
         if (days.length === 0) {
@@ -274,7 +294,7 @@
           return;
         }
         showState('ready');
-        renderAll(days, r.from, r.to);
+        renderAll(days, mealsDays, r.from, r.to);
       })
       .catch(function (err) {
         console.error('[dashboard] load failed', err);
@@ -342,6 +362,27 @@
     };
   }
 
+  // カロリー日次(/api/meals/daily)を日付ラベルへ整列。欠損日はnull。rawはテーブル結合用のd→row
+  function calorieSeriesFrom(mealsDays, labels) {
+    var byDate = Object.create(null);
+    (mealsDays || []).forEach(function (row) {
+      byDate[row.d] = row;
+    });
+    function pick(key) {
+      return labels.map(function (l) {
+        var r = byDate[l];
+        return r && r[key] != null ? r[key] : null;
+      });
+    }
+    return {
+      cal: pick('calories'),
+      p: pick('protein_g'),
+      f: pick('fat_g'),
+      c: pick('carbs_g'),
+      raw: byDate,
+    };
+  }
+
   function weightGradient(ctx) {
     var area = ctx.chart.chartArea;
     if (!area) return 'rgba(0,0,0,0)';
@@ -384,7 +425,7 @@
     return density === 'sparse' ? 0 : 4;
   }
 
-  function buildDatasets(sets, density, t) {
+  function buildDatasets(sets, cals, density, t) {
     var pr = pointRadiusFor(density);
     var phr = pointHoverRadiusFor(density);
     function measured(label, data, color, axis, unit, extra) {
@@ -439,11 +480,25 @@
       avg('脂肪量 7日平均', sets.fat7, t.accent2, 'yKg', 'kg', !hideRaw),
       measured('除脂肪体重', sets.ffm, t.accent3, 'yKg', 'kg', { hidden: hideRaw }),
       avg('除脂肪体重 7日平均', sets.ffm7, t.accent3, 'yKg', 'kg', !hideRaw),
+      // 総カロリー棒（右軸 yKcal, 折れ線の背面 order:99, kg系列とは独立）
+      {
+        type: 'bar',
+        label: '摂取カロリー',
+        data: cals.cal,
+        yAxisID: 'yKcal',
+        unit: 'kcal',
+        backgroundColor: hexToRgba(t.accent2, 0.3),
+        borderWidth: 0,
+        order: 99,
+        hidden: !calorieOverlay,
+        _pfc: { p: cals.p, f: cals.f, c: cals.c },
+      },
     ];
   }
 
   var RAW_DATASET_INDEXES = [0, 2, 4];
   var AVG_DATASET_INDEXES = [1, 3, 5];
+  var CALORIE_DATASET_INDEX = 6;
 
   function setActiveMode(mode) {
     modeButtons.forEach(function (btn) {
@@ -490,6 +545,12 @@
     } else {
       delete s.yKg.min;
       delete s.yKg.max;
+    }
+    // カロリー右軸は0基点・可視最大の1.15倍。棒が隠れているときは触らない
+    var kcal = visibleValues(ch, 'yKcal');
+    if (s.yKcal && kcal.length) {
+      s.yKcal.min = 0;
+      s.yKcal.max = Math.max.apply(null, kcal) * 1.15;
     }
   }
 
@@ -550,7 +611,7 @@
     },
   };
 
-  function createChart(labels, sets, density) {
+  function createChart(labels, sets, cals, density) {
     var t = themeCache;
     var limits = tickLimitsFor(currentBp);
     // 初期レンジは「表示モードで見えている系列」全部から計算する（全系列kgの単一軸）
@@ -561,7 +622,7 @@
     );
     chart = new Chart(els.canvas, {
       type: 'line',
-      data: { labels: labels, datasets: buildDatasets(sets, density, t) },
+      data: { labels: labels, datasets: buildDatasets(sets, cals, density, t) },
       plugins: [pointLabelsPlugin],
       options: {
         responsive: true,
@@ -583,7 +644,20 @@
               },
               label: function (ctx) {
                 var v = ctx.parsed.y;
+                if (ctx.dataset.yAxisID === 'yKcal') {
+                  return ' ' + ctx.dataset.label + ': ' + (v == null ? '—' : Math.round(v) + ' kcal');
+                }
                 return ' ' + ctx.dataset.label + ': ' + (v == null ? '—' : v.toFixed(1) + ' ' + (ctx.dataset.unit || ''));
+              },
+              afterLabel: function (ctx) {
+                var pfc = ctx.dataset._pfc;
+                if (!pfc) return undefined;
+                var i = ctx.dataIndex;
+                var parts = [];
+                if (pfc.p[i] != null) parts.push('P' + pfc.p[i]);
+                if (pfc.f[i] != null) parts.push('F' + pfc.f[i]);
+                if (pfc.c[i] != null) parts.push('C' + pfc.c[i]);
+                return parts.length ? '   ' + parts.join(' ') : undefined;
               },
             },
           },
@@ -609,6 +683,22 @@
             grid: { color: t.grid },
             border: { display: false },
           },
+          yKcal: {
+            type: 'linear',
+            position: 'right',
+            beginAtZero: true,
+            display: calorieOverlay,
+            // カロリー軸のグリッドは体重グリッドと重なると煩いので描かない
+            grid: { drawOnChartArea: false },
+            ticks: {
+              color: t.muted,
+              maxTicksLimit: limits.y,
+              callback: function (v) {
+                return v + ' kcal';
+              },
+            },
+            border: { display: false },
+          },
         },
       },
     });
@@ -618,11 +708,11 @@
     }, 700);
   }
 
-  function renderChart(labels, sets, density) {
+  function renderChart(labels, sets, cals, density) {
     currentLabels = labels;
     currentDensity = density;
     if (!chart) {
-      createChart(labels, sets, density);
+      createChart(labels, sets, cals, density);
       return;
     }
     chart.data.labels = labels;
@@ -633,6 +723,12 @@
     d[3].data = sets.fat7;
     d[4].data = sets.ffm;
     d[5].data = sets.ffm7;
+    if (d[CALORIE_DATASET_INDEX]) {
+      d[CALORIE_DATASET_INDEX].data = cals.cal;
+      d[CALORIE_DATASET_INDEX]._pfc = { p: cals.p, f: cals.f, c: cals.c };
+      d[CALORIE_DATASET_INDEX].hidden = !calorieOverlay;
+      chart.options.scales.yKcal.display = calorieOverlay;
+    }
     var pr = pointRadiusFor(density);
     var phr = pointHoverRadiusFor(density);
     d.forEach(function (ds) {
@@ -647,12 +743,14 @@
     chart.update('none');
   }
 
-  function renderAll(days, from, to) {
+  function renderAll(days, mealsDays, from, to) {
     lastDays = days;
     var labels = buildDateLabels(from, to);
     var density = densityFor(labels.length);
     var sets = seriesFrom(days, labels);
-    renderChart(labels, sets, density);
+    var cals = calorieSeriesFrom(mealsDays, labels);
+    lastCals = cals;
+    renderChart(labels, sets, cals, density);
     renderCards(days);
     renderTable(days);
   }
@@ -690,10 +788,12 @@
 
   function renderDailyTable(days) {
     els.tableColDate.textContent = '日付';
+    var byDate = (lastCals && lastCals.raw) || Object.create(null);
     var frag = document.createDocumentFragment();
     for (var i = days.length - 1; i >= 0; i--) {
       var d = days[i];
-      appendRow(frag, [d.d, fmt(d.weight), fmt(d.fat_mass), fmt(d.fat_free_mass)]);
+      var cal = byDate[d.d] && byDate[d.d].calories != null ? Math.round(byDate[d.d].calories) + '' : '—';
+      appendRow(frag, [d.d, fmt(d.weight), fmt(d.fat_mass), fmt(d.fat_free_mass), cal]);
     }
     els.tableBody.replaceChildren(frag);
   }
@@ -703,11 +803,13 @@
     var frag = document.createDocumentFragment();
     rows.forEach(function (m) {
       var ms = parseUtcMs(m.measured_at);
+      // 計測明細は1計測=1行で日次カロリーとは粒度が違うため摂取列は空
       appendRow(frag, [
         ms == null ? '—' : formatLocalDateTime(ms),
         fmt(m.weight),
         fmt(m.fat_mass),
         fmt(m.fat_free_mass),
+        '—',
       ]);
     });
     els.tableBody.replaceChildren(frag);
@@ -778,6 +880,11 @@
     var t = themeCache;
     var colors = [t.accent, t.accent, t.accent2, t.accent2, t.accent3, t.accent3];
     chart.data.datasets.forEach(function (ds, i) {
+      if (ds.yAxisID === 'yKcal') {
+        // カロリー棒はテーマ変更時も半透明accent2で塗り直す（色配列の対象外）
+        ds.backgroundColor = hexToRgba(t.accent2, 0.3);
+        return;
+      }
       ds.borderColor = colors[i];
       ds.pointBackgroundColor = colors[i];
       if (i !== 0) ds.backgroundColor = colors[i];
@@ -789,6 +896,7 @@
     s.x.border.color = t.grid;
     s.yKg.ticks.color = t.muted;
     s.yKg.grid.color = t.grid;
+    if (s.yKcal) s.yKcal.ticks.color = t.muted;
     chart.update('none');
   }
 
@@ -822,6 +930,23 @@
         applySeriesMode(btn.getAttribute('data-mode'));
       });
     });
+
+    var calToggle = document.getElementById('calorie-toggle');
+    if (calToggle) {
+      calToggle.checked = calorieOverlay;
+      calToggle.addEventListener('change', function () {
+        calorieOverlay = calToggle.checked;
+        try {
+          localStorage.setItem('dash-calorie-overlay', calorieOverlay ? '1' : '0');
+        } catch (e) { /* 保存不可でも表示は切り替わる */ }
+        if (!chart) return;
+        var d = chart.data.datasets[CALORIE_DATASET_INDEX];
+        if (d) d.hidden = !calorieOverlay;
+        chart.options.scales.yKcal.display = calorieOverlay;
+        applyAxisRanges(chart);
+        chart.update('none');
+      });
+    }
 
     tableModeButtons.forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -887,6 +1012,7 @@
         var limits = tickLimitsFor(bp);
         chart.options.scales.x.ticks.maxTicksLimit = limits.x;
         chart.options.scales.yKg.ticks.maxTicksLimit = limits.y;
+        chart.options.scales.yKcal.ticks.maxTicksLimit = limits.y;
         chart.update('none');
       });
       ro.observe(els.chartWrap);
