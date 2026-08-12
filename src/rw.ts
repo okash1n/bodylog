@@ -8,6 +8,7 @@ import {
   createMenu, deleteMealLog, logMeal, parseMealFields, parseMenuInput, parseMenuPatch, setMenuArchived,
   updateMealLog, updateMenu,
 } from './meals';
+import { handleMcpRequest } from './mcp';
 import { noindexHeaders } from './util';
 
 export function createRwApp(): Hono<{ Bindings: Env }> {
@@ -61,6 +62,8 @@ export function createRwApp(): Hono<{ Bindings: Env }> {
     (await deleteMealLog(c.env, c.req.param('id')))
       ? c.json({ ok: true }, 200, headers())
       : c.json({ error: 'meal log not found' }, 404, headers()));
+
+  app.all('/rw/mcp', (c) => handleMcpRequest(c, { write: true }));
 
   app.notFound((c) => c.text('not found', 404, noindexHeaders()));
   app.onError((err, c) => {

@@ -1,5 +1,7 @@
 /**
- * MCP（Model Context Protocol）サーバー。読み取り専用ツール3つを公開する。
+ * MCP（Model Context Protocol）サーバー。公開エンドポイント（/mcp）では読み取り専用
+ * ツール5つを、認証済みエンドポイント（/rw/mcp）では書き込みツール2つ（log_meal /
+ * create_menu）を追加で公開する。
  * リクエストごとにサーバー/トランスポートを生成するステートレス構成
  * （セッションを持たないため、Durable Objects等の追加インフラが不要）。
  */
@@ -12,7 +14,7 @@ import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { getDailySeries, getRawMeasurements, getSummary } from './queries';
-import { listMealLogs, listMenus } from './meals';
+import { createMenu, listMealLogs, listMenus, logMeal, parseMealFields, parseMenuInput } from './meals';
 import type { Env } from './types';
 import { LIMITS, localToday, noindexHeaders, offsetHours, resolveRange } from './util';
 
@@ -59,7 +61,7 @@ const rangeShape = {
   to: z.string().optional().describe('終了日 YYYY-MM-DD（ローカル日付、今日以前）'),
 };
 
-function buildServer(env: Env): McpServer {
+function buildServer(env: Env, opts: { write: boolean }): McpServer {
   const server = new McpServer(
     { name: 'withings-weight-tracker', version: MCP_SERVER_VERSION },
     { instructions: instructions(offsetHours(env)) },
@@ -124,6 +126,63 @@ function buildServer(env: Env): McpServer {
       return jsonResult({ meals: await listMealLogs(env, range.from, range.to) });
     }),
   );
+  if (opts.write) {
+    server.registerTool(
+      'log_meal',
+      {
+        description:
+          '食事を記録する。menu_id か menu_name で登録済みメニューを指定する（メニューにない食事は記録できない。無ければユーザーに確認の上create_menuで登録してから記録する）',
+        inputSchema: {
+          menu_id: z.string().optional().describe('メニューID（search_menusで取得）'),
+          menu_name: z.string().optional().describe('メニュー名（完全一致→一意な部分一致の順で解決）'),
+          multiplier: z.number().positive().max(20).optional().describe('倍率（省略時1.0）'),
+          eaten_at: z.string().optional().describe('食べた日時 ISO8601（省略時は現在時刻）'),
+          meal_type: z.enum(['breakfast', 'lunch', 'dinner', 'snack']).optional(),
+        },
+      },
+      (args) => guarded('log_meal', async () => {
+        let menuId = args.menu_id;
+        if (!menuId && args.menu_name) {
+          const all = await listMenus(env, { q: args.menu_name });
+          const exact = all.filter((m) => m.name === args.menu_name);
+          const candidates = exact.length > 0 ? exact : all;
+          if (candidates.length === 0) return errorResult(`menu not found: ${args.menu_name}`);
+          if (candidates.length > 1) {
+            return errorResult(
+              `menu name is ambiguous: ${candidates.slice(0, 5).map((m) => m.name).join(' / ')}`,
+            );
+          }
+          menuId = candidates[0].id;
+        }
+        if (!menuId) return errorResult('menu_id or menu_name is required');
+        const fields = parseMealFields(args as Record<string, unknown>);
+        if (!fields.ok) return errorResult(fields.error);
+        const log = await logMeal(env, { menu_id: menuId, ...fields.value });
+        if ('error' in log) return errorResult(log.error);
+        return jsonResult(log);
+      }),
+    );
+    server.registerTool(
+      'create_menu',
+      {
+        description:
+          '食事メニュー（マスタ）を新規登録する。ユーザーが明示的にメニュー登録を依頼したときだけ使うこと',
+        inputSchema: {
+          name: z.string().describe('メニュー名'),
+          calories: z.number().positive().describe('1食分のkcal'),
+          protein_g: z.number().positive().optional(),
+          fat_g: z.number().positive().optional(),
+          carbs_g: z.number().positive().optional(),
+          note: z.string().optional(),
+        },
+      },
+      (args) => guarded('create_menu', async () => {
+        const parsed = parseMenuInput(args);
+        if (!parsed.ok) return errorResult(parsed.error);
+        return jsonResult(await createMenu(env, parsed.value));
+      }),
+    );
+  }
   return server;
 }
 
@@ -137,8 +196,12 @@ function withNoindex(res: Response): Response {
   return new Response(res.body, { status: res.status, headers });
 }
 
-async function dispatchToTransport(c: Context<{ Bindings: Env }>, body: unknown): Promise<Response> {
-  const server = buildServer(c.env);
+async function dispatchToTransport(
+  c: Context<{ Bindings: Env }>,
+  body: unknown,
+  write: boolean,
+): Promise<Response> {
+  const server = buildServer(c.env, { write });
   const transport = new StreamableHTTPTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
@@ -156,7 +219,11 @@ async function dispatchToTransport(c: Context<{ Bindings: Env }>, body: unknown)
  * ステートレス構成でサーバー発信メッセージは無いため、POST以外は405で受けない
  * （MCP仕様: GETのSSEを提供しないサーバーは405を返してよい）。
  */
-export async function handleMcpRequest(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleMcpRequest(
+  c: Context<{ Bindings: Env }>,
+  opts?: { write?: boolean },
+): Promise<Response> {
+  const write = opts?.write ?? false;
   if (c.req.method !== 'POST') {
     return c.text('method not allowed', 405, noindexHeaders({ Allow: 'POST' }));
   }
@@ -185,7 +252,7 @@ export async function handleMcpRequest(c: Context<{ Bindings: Env }>): Promise<R
       const headers = new Headers(c.req.raw.headers);
       headers.delete('mcp-protocol-version');
       const inner = new Hono<{ Bindings: Env }>()
-        .post('*', (ic) => dispatchToTransport(ic, body))
+        .post('*', (ic) => dispatchToTransport(ic, body, write))
         .onError((err, ic) => {
           if (err instanceof HTTPException) return withNoindex(err.getResponse());
           console.error('[mcp] transport error', err);
@@ -197,7 +264,7 @@ export async function handleMcpRequest(c: Context<{ Bindings: Env }>): Promise<R
         c.executionCtx,
       );
     }
-    return await dispatchToTransport(c, body);
+    return await dispatchToTransport(c, body, write);
   } catch (err) {
     // @hono/mcpは検証エラー（Accept/Content-Type/セッション等）をHTTPExceptionで
     // throwする。グローバルonErrorに渡すと500になるため、本来の4xxで返す
