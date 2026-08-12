@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/types';
 import {
+  formatIntakeLine,
   immediateDestinations,
   parseDestinations,
   parseDigestTime,
@@ -162,5 +163,26 @@ describe('digest_time（送信時刻設定）', () => {
     const body = stub.requests({ host: SLACK_HOST })[0].body;
     expect(body).toContain('日次サマリー');
     expect(body).toContain('79.5 kg');
+  });
+});
+
+describe('ダイジェストの摂取カロリー行', () => {
+  it('カロリー+PFCを整形する', () => {
+    expect(
+      formatIntakeLine({ d: '2026-08-12', count: 3, calories: 1850.4, protein_g: 90.2, fat_g: 55, carbs_g: 210 }),
+    ).toBe('*摂取* : 1850 kcal (P90.2 F55 C210)');
+  });
+  it('PFCが全てnullならカロリーのみ', () => {
+    expect(
+      formatIntakeLine({ d: '2026-08-12', count: 1, calories: 700, protein_g: null, fat_g: null, carbs_g: null }),
+    ).toBe('*摂取* : 700 kcal');
+  });
+  it('PFCが一部だけでも入力済み分を出す', () => {
+    expect(
+      formatIntakeLine({ d: '2026-08-12', count: 2, calories: 900, protein_g: 30, fat_g: null, carbs_g: 100 }),
+    ).toBe('*摂取* : 900 kcal (P30 C100)');
+  });
+  it('記録なし（null）は行を出さない', () => {
+    expect(formatIntakeLine(null)).toBeNull();
   });
 });
