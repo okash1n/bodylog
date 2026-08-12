@@ -145,6 +145,11 @@ export async function handleMcpRequest(c: Context<{ Bindings: Env }>): Promise<R
   if (Array.isArray(body)) {
     return rpcError(c, -32600, 'JSON-RPC batch requests are not supported');
   }
+  // クライアント互換性問題の切り分け用（bodyはtailに出ないため、メソッドとツール名だけ残す）
+  if (typeof body === 'object' && body !== null) {
+    const b = body as { method?: unknown; params?: { name?: unknown } };
+    console.log('[mcp] request', String(b.method ?? '?'), String(b.params?.name ?? ''));
+  }
   try {
     // ChatGPT（openai-mcp）等はSDK未対応の新しいMCP-Protocol-Versionヘッダを
     // 交渉前から送り、@hono/mcpはそれをヘッダ検証404でthrowする。未対応版は
