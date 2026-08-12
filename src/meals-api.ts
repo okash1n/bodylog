@@ -1,4 +1,4 @@
-/** 食事の公開読み取りREST。書き込みは src/rw.ts（認証必須） */
+/** 食事の公開読み取りREST。書き込みは src/writes.ts（/api の POST/PATCH/DELETE・認証必須） */
 import type { Context } from 'hono';
 import { getDailyIntake, listMealLogs, listMenus } from './meals';
 import type { Env } from './types';

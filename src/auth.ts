@@ -24,7 +24,12 @@ const HELPERS_OPTIONS: OAuthProviderOptions<Env> = {
   tokenEndpoint: '/token',
 };
 
-/** Authorization: Bearer のトークンを検証し、オーナー（＝有効トークン保持者）なら true */
+/**
+ * Authorization: Bearer のトークンを検証し、オーナー（＝有効トークン保持者）なら true。
+ * 単一オーナー前提のため audience / scope / clientId は意図的に検証しない
+ * （このproviderが発行した未期限切れトークンは全てオーナーのもの）。マルチテナント化する
+ * ときはこの前提を見直すこと。
+ */
 export async function isOwner(c: Context<{ Bindings: Env }>): Promise<boolean> {
   const match = /^Bearer (.+)$/.exec(c.req.header('Authorization') ?? '');
   if (!match) return false;
