@@ -10,8 +10,11 @@
     "typecheck": "npm run sync-vendor && tsc --noEmit"
   },
   "dependencies": {
+    "@hono/mcp": "^0.3.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "chart.js": "4.4.9",
-    "hono": "^4.6.0"
+    "hono": "^4.6.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.20.1",

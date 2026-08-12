@@ -75,3 +75,65 @@ export function isValidYmd(s: string): boolean {
   const d = new Date(`${s}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
+
+/** ローカル日付 YYYY-MM-DD に日数を加算する（負なら過去） */
+export function addDaysYmd(ymd: string, days: number): string {
+  return new Date(Date.parse(`${ymd}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** from〜to の日数（両端含む） */
+export function inclusiveDays(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+}
+
+/** 現在時刻のローカル日付 YYYY-MM-DD */
+export function localToday(env: Env): string {
+  return ymdWithOffset(isoNow(), offsetHours(env));
+}
+
+export interface RangeInput {
+  days?: string | number;
+  from?: string;
+  to?: string;
+}
+
+export type RangeResult = { ok: true; from: string; to: string } | { ok: false; error: string };
+
+/**
+ * days（ローカル今日を末尾とする直近N日、当日含む）または from/to を検証して期間に解決する。
+ * REST（クエリ文字列）とMCP（ツール引数）の両方から使うため、daysは文字列と数値を受ける。
+ */
+export function resolveRange(input: RangeInput, today: string): RangeResult {
+  const hasDays = input.days !== undefined && input.days !== '';
+  const hasFromTo = Boolean(input.from) || Boolean(input.to);
+  if (hasDays && hasFromTo) {
+    return { ok: false, error: 'days cannot be combined with from/to' };
+  }
+  if (hasDays) {
+    const n =
+      typeof input.days === 'number'
+        ? input.days
+        : /^\d+$/.test(input.days ?? '')
+          ? Number(input.days)
+          : Number.NaN;
+    if (!Number.isInteger(n) || n < 1 || n > LIMITS.API_MAX_RANGE_DAYS) {
+      return { ok: false, error: `days must be an integer between 1 and ${LIMITS.API_MAX_RANGE_DAYS}` };
+    }
+    return { ok: true, from: addDaysYmd(today, -(n - 1)), to: today };
+  }
+  const from = input.from ?? '';
+  const to = input.to ?? '';
+  if (!isValidYmd(from) || !isValidYmd(to)) {
+    return { ok: false, error: 'from/to must be valid YYYY-MM-DD' };
+  }
+  if (from > to) {
+    return { ok: false, error: 'from must be on or before to' };
+  }
+  if (to > today) {
+    return { ok: false, error: 'to must not be a future date' };
+  }
+  if (inclusiveDays(from, to) > LIMITS.API_MAX_RANGE_DAYS) {
+    return { ok: false, error: `range must be within ${LIMITS.API_MAX_RANGE_DAYS} days` };
+  }
+  return { ok: true, from, to };
+}

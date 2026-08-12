@@ -194,9 +194,13 @@ npx wrangler d1 execute withings-weight --remote \
 | `GET /auth/callback` | 認可コールバック。トークン保存・購読登録・初期インポート投入 |
 | `GET/HEAD/POST /webhook/withings-{WEBHOOK_PATH_SECRET}` | Withings notify 受信。GET/HEAD は疎通確認用に即 200 |
 | `GET {base}/` | ダッシュボード本体（PWA） |
-| `GET {base}/api/measurements?from=&to=` | 日次系列 JSON（日平均 + 7日移動平均） |
-| `GET {base}/api/raw?from=&to=` | 計測明細 JSON（1計測=1行、新しい順） |
+| `GET {base}/api/measurements?from=&to=` または `?days=N` | 日次系列 JSON（日平均 + 7日移動平均） |
+| `GET {base}/api/raw?from=&to=` または `?days=N` | 計測明細 JSON（1計測=1行、新しい順） |
 | `GET {base}/api/status` | 初期インポート状況・最終同期時刻 |
+| `GET {base}/api/summary` | 要約 JSON（最新計測・直近7日平均・前週比・基準日比・最終同期） |
+| `GET {base}/llms.txt` | AI向けのAPI案内（プレーンテキスト） |
+| `GET {base}/openapi.json` | OpenAPI 3.1 定義（ChatGPT カスタムGPTの Actions 登録用） |
+| `POST {base}/mcp` | MCP（Model Context Protocol）エンドポイント。Streamable HTTP・ステートレス |
 | `GET {base}/og.png` | OGP 画像（直近30日の体重グラフを PNG 生成。依存ライブラリなしの自前エンコーダ） |
 | 上記以外 | 404（全レスポンスに `X-Robots-Tag: noindex` 付与） |
 
@@ -215,6 +219,16 @@ cron トリガー:
 - **テーマ**: OS 設定に追従 + 手動トグル
 
 グラフ・表・通知の集計はすべて「日単位（`TZ_OFFSET_HOURS` のローカル日付境界）」で行う。1日に複数回計測した場合、日次系列はその日の平均になる。
+
+## AI から使う
+
+ChatGPT・Claude などのAIクライアントから体重推移を照会できる（すべて読み取り専用・認証なし。公開範囲はダッシュボードと同じ）。
+
+- **URLを渡して読ませる**: `https://weight.example.com/llms.txt` にエンドポイント一覧と使い方が載っているので、「このURLを見て最近の体重推移を教えて」だけで動く。要約は `/api/summary`、時系列は `/api/measurements?days=90` のように相対期間で取れる
+- **ChatGPT カスタムGPT（Actions）**: GPT編集画面の Actions で「URLからインポート」に `https://weight.example.com/openapi.json` を指定する。認証は「なし」
+- **MCP クライアント**: `https://weight.example.com/mcp` を Streamable HTTP のリモートMCPサーバーとして登録する（認証なし）。ツールは `get_weight_summary` / `get_daily_series` / `get_raw_measurements` の3つ。ChatGPT の場合は開発者モードのコネクタとして追加する（通常コネクタが要求する `search`/`fetch` ツールは未実装）
+
+単位は kg（`fat_ratio` のみ %）、日付境界は `TZ_OFFSET_HOURS` のローカル日付。`fat_mass` は `weight - fat_free_mass` の導出値。
 
 ## Slack 通知
 

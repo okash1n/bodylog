@@ -2,15 +2,17 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from './types';
 import {
-  LIMITS,
+  addDaysYmd,
   dashboardBase,
-  isValidYmd,
-  isoNow,
+  localToday,
   noindexHeaders,
   offsetHours,
+  resolveRange,
   ymdWithOffset,
 } from './util';
-import { getDailySeries, getImportStatus, getRawMeasurements } from './queries';
+import { getDailySeries, getImportStatus, getRawMeasurements, getSummary } from './queries';
+import { llmsTxt, openapiSpec } from './ai';
+import { handleMcpRequest } from './mcp';
 import { OG_RENDERER_VERSION, renderOgPng } from './og';
 import indexHtmlTpl from './dashboard/index.html';
 import stylesCss from './dashboard/styles.css';
@@ -30,18 +32,6 @@ type Handler = (c: DashboardContext) => Response | Promise<Response>;
 
 function notFound(c: DashboardContext): Response {
   return c.text('not found', 404, noindexHeaders());
-}
-
-function localToday(env: Env): string {
-  return ymdWithOffset(isoNow(), offsetHours(env));
-}
-
-function addDaysYmd(ymd: string, days: number): string {
-  return new Date(Date.parse(`${ymd}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
-}
-
-function inclusiveDays(from: string, to: string): number {
-  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
 }
 
 // ---- 共有ハンドラ（/d/{slug}/ 配下とドメイン直下の両モードから使う） ----
@@ -106,21 +96,12 @@ function validatedRange(
   c: DashboardContext,
   headers: Record<string, string>,
 ): { from: string; to: string } | Response {
-  const from = c.req.query('from') ?? '';
-  const to = c.req.query('to') ?? '';
-  if (!isValidYmd(from) || !isValidYmd(to)) {
-    return c.json({ error: 'from/to must be valid YYYY-MM-DD' }, 400, headers);
-  }
-  if (from > to) {
-    return c.json({ error: 'from must be on or before to' }, 400, headers);
-  }
-  if (to > localToday(c.env)) {
-    return c.json({ error: 'to must not be a future date' }, 400, headers);
-  }
-  if (inclusiveDays(from, to) > LIMITS.API_MAX_RANGE_DAYS) {
-    return c.json({ error: `range must be within ${LIMITS.API_MAX_RANGE_DAYS} days` }, 400, headers);
-  }
-  return { from, to };
+  const result = resolveRange(
+    { days: c.req.query('days'), from: c.req.query('from'), to: c.req.query('to') },
+    localToday(c.env),
+  );
+  if (!result.ok) return c.json({ error: result.error }, 400, headers);
+  return { from: result.from, to: result.to };
 }
 
 const serveMeasurements: Handler = async (c) => {
@@ -148,6 +129,36 @@ const serveRaw: Handler = async (c) => {
     return c.json({ error: 'internal error' }, 500, headers);
   }
 };
+
+const serveSummary: Handler = async (c) => {
+  const headers = noindexHeaders({ 'Cache-Control': 'no-store' });
+  try {
+    const summary = await getSummary(c.env);
+    return c.json(summary, 200, headers);
+  } catch (err) {
+    console.error('[dashboard] getSummary failed', err);
+    return c.json({ error: 'internal error' }, 500, headers);
+  }
+};
+
+const serveLlmsTxt: Handler = (c) =>
+  c.body(
+    llmsTxt(new URL(c.req.url).origin, dashboardBase(c.env), offsetHours(c.env)),
+    200,
+    noindexHeaders({
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': STATIC_CACHE_CONTROL,
+    }),
+  );
+
+const serveOpenapi: Handler = (c) =>
+  c.json(
+    openapiSpec(new URL(c.req.url).origin, dashboardBase(c.env), offsetHours(c.env)),
+    200,
+    noindexHeaders({ 'Cache-Control': STATIC_CACHE_CONTROL }),
+  );
+
+const serveMcp: Handler = (c) => handleMcpRequest(c);
 
 const serveStatus: Handler = async (c) => {
   const headers = noindexHeaders({ 'Cache-Control': 'no-store' });
@@ -200,6 +211,10 @@ export function createDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/:slug/api/measurements', guarded(serveMeasurements));
   app.get('/:slug/api/raw', guarded(serveRaw));
   app.get('/:slug/api/status', guarded(serveStatus));
+  app.get('/:slug/api/summary', guarded(serveSummary));
+  app.get('/:slug/llms.txt', guarded(serveLlmsTxt));
+  app.get('/:slug/openapi.json', guarded(serveOpenapi));
+  app.all('/:slug/mcp', guarded(serveMcp));
   app.get('/:slug/og.png', guarded(serveOg));
   return app;
 }
@@ -220,6 +235,10 @@ export function createRootDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/api/measurements', guarded(serveMeasurements));
   app.get('/api/raw', guarded(serveRaw));
   app.get('/api/status', guarded(serveStatus));
+  app.get('/api/summary', guarded(serveSummary));
+  app.get('/llms.txt', guarded(serveLlmsTxt));
+  app.get('/openapi.json', guarded(serveOpenapi));
+  app.all('/mcp', guarded(serveMcp));
   app.get('/og.png', guarded(serveOg));
   return app;
 }

@@ -5,8 +5,9 @@ import type {
   LatestMeasurement,
   MetricTriple,
   NotificationStats,
+  WeightSummary,
 } from './types';
-import { tzModifier } from './util';
+import { isoNow, offsetHours, tzModifier } from './util';
 
 function diffTriple(a: MetricTriple, b: MetricTriple): MetricTriple {
   return {
@@ -191,6 +192,39 @@ export async function getDayMeasurementCount(env: Env, ymd: string): Promise<num
     .bind(ymd)
     .first<{ n: number }>();
   return row?.n ?? 0;
+}
+
+/** 全期間で最新の計測1件。計測が1件もなければ null */
+export async function getLatestMeasurement(env: Env): Promise<LatestMeasurement | null> {
+  const row = await env.DB.prepare(
+    `SELECT measured_at, weight, (weight - fat_free_mass) AS fat_mass, fat_free_mass, fat_ratio
+FROM measurements
+ORDER BY measured_at DESC, grpid DESC
+LIMIT 1`,
+  ).first<LatestMeasurement>();
+  return row ?? null;
+}
+
+function nullTriple(): MetricTriple {
+  return { weight: null, fat_mass: null, fat_free_mass: null };
+}
+
+/** /api/summary・MCP get_weight_summary の本体。集計はSlack通知と同じロジックを使う */
+export async function getSummary(env: Env): Promise<WeightSummary> {
+  const latest = await getLatestMeasurement(env);
+  const stats = latest ? await getNotificationStats(env, latest) : null;
+  const lastSync = await env.DB.prepare(`SELECT value FROM settings WHERE key = 'last_sync_at'`)
+    .first<{ value: string | null }>();
+  return {
+    as_of: isoNow(),
+    units: { mass: 'kg', fat_ratio: 'percent' },
+    timezone_offset_hours: offsetHours(env),
+    latest,
+    recent7_avg: stats?.recent7 ?? nullTriple(),
+    diff_vs_prev7: stats?.diff7 ?? nullTriple(),
+    baseline: { date: stats?.baselineDate ?? null, diff: stats?.baselineDiff ?? nullTriple() },
+    last_sync_at: lastSync?.value ?? null,
+  };
 }
 
 export async function getImportStatus(env: Env): Promise<ImportStatus> {

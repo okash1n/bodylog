@@ -100,6 +100,18 @@ export interface LatestMeasurement {
   fat_ratio: number | null; // 計測時点の参考値（通知の計測結果行にのみ表示）
 }
 
+/** /api/summary と MCP get_weight_summary のレスポンス */
+export interface WeightSummary {
+  as_of: string; // ISO8601 UTC
+  units: { mass: 'kg'; fat_ratio: 'percent' };
+  timezone_offset_hours: number;
+  latest: LatestMeasurement | null; // 計測が1件もなければ null
+  recent7_avg: MetricTriple; // 直近7暦日の日平均の平均
+  diff_vs_prev7: MetricTriple; // recent7 - その前の7暦日
+  baseline: { date: string | null; diff: MetricTriple }; // 最新計測 - 基準日値
+  last_sync_at: string | null;
+}
+
 export interface ImportStatus {
   import_status: string | null; // pending / running / done / error
   import_error: string | null;
