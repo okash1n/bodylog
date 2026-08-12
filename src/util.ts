@@ -1,3 +1,4 @@
+import type { Context } from 'hono';
 import type { Env } from './types';
 
 /** 処理量の上限。D1無料枠（50クエリ/invocation）とwaitUntil 30秒に収める予算 */
@@ -136,4 +137,21 @@ export function resolveRange(input: RangeInput, today: string): RangeResult {
     return { ok: false, error: `range must be within ${LIMITS.API_MAX_RANGE_DAYS} days` };
   }
   return { ok: true, from, to };
+}
+
+/**
+ * REST公開エンドポイント共通のHTTPレイヤ検証。Honoの Context からクエリ（days/from/to）を読んで
+ * resolveRange に渡し、不正なら 400 + {error} の Response を返す。
+ * dashboard.ts と meals-api.ts の両方から使う（重複実装を避けるための共通化）。
+ */
+export function resolveRangeFromQuery(
+  c: Context<{ Bindings: Env }>,
+  headers: Record<string, string>,
+): { from: string; to: string } | Response {
+  const result = resolveRange(
+    { days: c.req.query('days'), from: c.req.query('from'), to: c.req.query('to') },
+    localToday(c.env),
+  );
+  if (!result.ok) return c.json({ error: result.error }, 400, headers);
+  return { from: result.from, to: result.to };
 }

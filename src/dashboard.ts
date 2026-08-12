@@ -7,7 +7,7 @@ import {
   localToday,
   noindexHeaders,
   offsetHours,
-  resolveRange,
+  resolveRangeFromQuery,
   ymdWithOffset,
 } from './util';
 import { getDailySeries, getImportStatus, getRawMeasurements, getSummary } from './queries';
@@ -93,21 +93,9 @@ const serveSw: Handler = (c) =>
     noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': 'no-cache' }),
   );
 
-function validatedRange(
-  c: DashboardContext,
-  headers: Record<string, string>,
-): { from: string; to: string } | Response {
-  const result = resolveRange(
-    { days: c.req.query('days'), from: c.req.query('from'), to: c.req.query('to') },
-    localToday(c.env),
-  );
-  if (!result.ok) return c.json({ error: result.error }, 400, headers);
-  return { from: result.from, to: result.to };
-}
-
 const serveMeasurements: Handler = async (c) => {
   const headers = noindexHeaders({ 'Cache-Control': 'no-store' });
-  const range = validatedRange(c, headers);
+  const range = resolveRangeFromQuery(c, headers);
   if (range instanceof Response) return range;
   try {
     const days = await getDailySeries(c.env, range.from, range.to);
@@ -120,7 +108,7 @@ const serveMeasurements: Handler = async (c) => {
 
 const serveRaw: Handler = async (c) => {
   const headers = noindexHeaders({ 'Cache-Control': 'no-store' });
-  const range = validatedRange(c, headers);
+  const range = resolveRangeFromQuery(c, headers);
   if (range instanceof Response) return range;
   try {
     const measurements = await getRawMeasurements(c.env, range.from, range.to);

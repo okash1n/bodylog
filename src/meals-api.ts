@@ -2,7 +2,7 @@
 import type { Context } from 'hono';
 import { getDailyIntake, listMealLogs, listMenus } from './meals';
 import type { Env } from './types';
-import { localToday, noindexHeaders, resolveRange } from './util';
+import { noindexHeaders, resolveRangeFromQuery } from './util';
 
 type MealsContext = Context<{ Bindings: Env }>;
 type Handler = (c: MealsContext) => Response | Promise<Response>;
@@ -14,11 +14,8 @@ function withRange(
   fn: (from: string, to: string) => Promise<Response>,
 ): Promise<Response> | Response {
   const headers = noindexHeaders(NO_STORE);
-  const range = resolveRange(
-    { days: c.req.query('days'), from: c.req.query('from'), to: c.req.query('to') },
-    localToday(c.env),
-  );
-  if (!range.ok) return c.json({ error: range.error }, 400, headers);
+  const range = resolveRangeFromQuery(c, headers);
+  if (range instanceof Response) return range;
   return fn(range.from, range.to);
 }
 
