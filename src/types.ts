@@ -4,6 +4,7 @@
 
 export interface Env {
   DB: D1Database;
+  OAUTH_KV: KVNamespace;
   // Vars (wrangler.toml)
   WEBHOOK_PATH_SECRET: string;
   DASHBOARD_SLUG: string;
@@ -14,6 +15,9 @@ export interface Env {
   SLACK_WEBHOOKS?: string;
   SETUP_SECRET?: string;
   ADMIN_SLACK_WEBHOOK?: string;
+  GOOGLE_OAUTH_CLIENT_ID?: string;
+  GOOGLE_OAUTH_CLIENT_SECRET?: string;
+  OWNER_EMAILS?: string; // カンマ区切りの許可メール
 }
 
 /** immediate=計測ごとに通知（既定） / daily=日次ダイジェストのみ / both=両方 */
@@ -110,6 +114,7 @@ export interface WeightSummary {
   diff_vs_prev7: MetricTriple; // recent7 - その前の7暦日
   baseline: { date: string | null; diff: MetricTriple }; // 最新計測 - 基準日値
   last_sync_at: string | null;
+  intake_today: DailyIntake | null; // 今日のローカル日付の食事摂取量（記録がなければ null）
 }
 
 export interface ImportStatus {
@@ -120,3 +125,54 @@ export interface ImportStatus {
 }
 
 export type IngestContext = 'webhook' | 'import' | 'backfill';
+
+export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
+
+export interface Menu {
+  id: string;
+  name: string;
+  calories: number;
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+  note: string | null;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MenuInput {
+  name: string;
+  calories: number;
+  protein_g?: number | null;
+  fat_g?: number | null;
+  carbs_g?: number | null;
+  note?: string | null;
+}
+
+export interface MealLog {
+  id: string;
+  menu_id: string;
+  eaten_at: string; // ISO8601 UTC
+  meal_type: MealType | null;
+  multiplier: number;
+  menu_name: string;
+  calories: number; // 1食分スナップショット
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+  created_at: string;
+  effective_calories: number; // calories * multiplier（読み取り時に計算）
+  effective_protein_g: number | null;
+  effective_fat_g: number | null;
+  effective_carbs_g: number | null;
+}
+
+export interface DailyIntake {
+  d: string; // ローカル日付 YYYY-MM-DD
+  count: number;
+  calories: number;
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+}

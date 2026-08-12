@@ -1,6 +1,7 @@
-import { env } from 'cloudflare:test';
+import { createExecutionContext, env } from 'cloudflare:test';
 import { vi } from 'vitest';
 import type { Env } from '../src/types';
+import worker from '../src/index';
 import { offsetHours, ymdWithOffset } from '../src/util';
 
 export const testEnv = env as unknown as Env;
@@ -8,6 +9,8 @@ export const testEnv = env as unknown as Env;
 /** 各テスト前に呼び、関連テーブルを全て空にする */
 export async function resetTables(): Promise<void> {
   const tables = [
+    'meal_logs',
+    'menus',
     'measurements',
     'tokens',
     'settings',
@@ -152,4 +155,88 @@ export function stubFetch(): FetchStub {
 /** Withings API 形式（HTTP 200 + {status, body}）の応答を作る */
 export function withingsReply(body: unknown, status = 0): Response {
   return Response.json({ status, body });
+}
+
+/** /authorize のSet-CookieヘッダーからCookie値を取り出す（ブラウザのCookieジャーの代わり） */
+function extractCookieValue(res: Response, name: string): string {
+  const raw = res.headers.get('set-cookie');
+  if (!raw) throw new Error(`no set-cookie header (looking for ${name})`);
+  const found = raw
+    .split(';')
+    .map((s) => s.trim())
+    .find((s) => s.startsWith(`${name}=`));
+  if (!found) throw new Error(`cookie ${name} not found in set-cookie header: ${raw}`);
+  return found.slice(name.length + 1);
+}
+
+/**
+ * OAuthフロー一式（動的クライアント登録→/authorize→Googleコールバック→/token交換）を通して
+ * 実アクセストークンを得るテストヘルパー。Googleとの通信はstubFetchでスタブする
+ * （呼び出し側でstubFetchを開始していない前提。内部で開始・解除する）。
+ * /authorize が発行するoauth_txn Cookie（login CSRF対策）をcallbackへ引き継ぐ点に注意。
+ */
+export async function obtainAccessToken(env: Env): Promise<string> {
+  const ctx = () => createExecutionContext();
+  const reg = await worker.fetch(
+    new Request('http://localhost/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: 'test',
+        redirect_uris: ['http://localhost/cb'],
+        token_endpoint_auth_method: 'none',
+      }),
+    }),
+    env,
+    ctx(),
+  );
+  const { client_id } = (await reg.json()) as { client_id: string };
+  const verifier = 'helper-verifier-0123456789012345678901234567';
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+  const auth = await worker.fetch(
+    new Request(
+      `http://localhost/authorize?response_type=code&client_id=${client_id}&redirect_uri=${encodeURIComponent('http://localhost/cb')}&code_challenge=${challenge}&code_challenge_method=S256&state=s&scope=meals`,
+    ),
+    env,
+    ctx(),
+  );
+  const googleState = new URL(auth.headers.get('Location')!).searchParams.get('state')!;
+  const txnCookie = extractCookieValue(auth, 'oauth_txn');
+  const stub = stubFetch();
+  stub
+    .on({ host: 'oauth2.googleapis.com', path: '/token', reply: () => Response.json({ access_token: 'g-at' }) })
+    .on({
+      host: 'openidconnect.googleapis.com',
+      path: '/v1/userinfo',
+      reply: () => Response.json({ email: 'owner@example.com', email_verified: true }),
+    });
+  const cb = await worker.fetch(
+    new Request(`http://localhost/authorize/callback?code=g&state=${encodeURIComponent(googleState)}`, {
+      headers: { Cookie: `oauth_txn=${txnCookie}` },
+    }),
+    env,
+    ctx(),
+  );
+  vi.unstubAllGlobals();
+  const code = new URL(cb.headers.get('Location')!).searchParams.get('code')!;
+  const token = await worker.fetch(
+    new Request('http://localhost/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: 'http://localhost/cb',
+        client_id,
+        code_verifier: verifier,
+      }).toString(),
+    }),
+    env,
+    ctx(),
+  );
+  return ((await token.json()) as { access_token: string }).access_token;
 }

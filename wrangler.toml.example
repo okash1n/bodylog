@@ -9,6 +9,9 @@
 #   wrangler secret put SLACK_WEBHOOKS          # 例: [{"id":"main","url":"https://hooks.slack.com/services/..."}]
 #   wrangler secret put SETUP_SECRET            # /auth/start の保護キー（ランダム文字列）
 #   wrangler secret put ADMIN_SLACK_WEBHOOK     # 任意: 管理者アラート送信先（未設定時はSLACK_WEBHOOKSの先頭）
+#   wrangler secret put GOOGLE_OAUTH_CLIENT_ID      # 食事記録の書き込みAPI用。Google CloudのOAuthクライアントID
+#   wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET  # 同 Client Secret
+#   wrangler secret put OWNER_EMAILS                # 書き込みを許可するGoogleアカウントのメール（カンマ区切り、例: "a@example.com,b@example.com"）
 
 name = "withings-weight-tracker"
 main = "src/index.ts"
@@ -23,6 +26,11 @@ compatibility_date = "2026-04-01"
 binding = "DB"
 database_name = "withings-weight"
 database_id = "YOUR_D1_DATABASE_ID" # wrangler d1 create withings-weight で表示されるID
+
+# OAuth 2.1（食事記録の書き込みAPI用）のトークン・認可フロー保存先
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "YOUR_OAUTH_KV_NAMESPACE_ID" # wrangler kv namespace create OAUTH_KV で表示されるID
 
 [vars]
 # Webhook受信パスのランダム部分: /webhook/withings-{WEBHOOK_PATH_SECRET}

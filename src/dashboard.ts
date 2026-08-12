@@ -7,22 +7,24 @@ import {
   localToday,
   noindexHeaders,
   offsetHours,
-  resolveRange,
+  resolveRangeFromQuery,
   ymdWithOffset,
 } from './util';
 import { getDailySeries, getImportStatus, getRawMeasurements, getSummary } from './queries';
 import { llmsTxt, openapiSpec } from './ai';
 import { handleMcpRequest } from './mcp';
+import { serveMealsDaily, serveMealsList, serveMenus } from './meals-api';
 import { OG_RENDERER_VERSION, renderOgPng } from './og';
 import indexHtmlTpl from './dashboard/index.html';
 import stylesCss from './dashboard/styles.css';
 import appJs from './dashboard/app.js';
+import mealsJs from './dashboard/meals.js';
 import swJsTpl from './dashboard/sw.js';
 import manifestTpl from './dashboard/manifest.webmanifest';
 import chartVendorJs from './dashboard/vendor/chart.umd.js';
 
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
-export const ASSET_VERSION = '2026-08-07-1';
+export const ASSET_VERSION = '2026-08-13-1';
 
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';
 const JS_CONTENT_TYPE = 'text/javascript; charset=utf-8';
@@ -67,6 +69,9 @@ const serveStyles: Handler = (c) =>
 const serveAppJs: Handler = (c) =>
   c.body(appJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': STATIC_CACHE_CONTROL }));
 
+const serveMealsJs: Handler = (c) =>
+  c.body(mealsJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': STATIC_CACHE_CONTROL }));
+
 const serveVendor: Handler = (c) =>
   c.body(
     chartVendorJs,
@@ -92,21 +97,9 @@ const serveSw: Handler = (c) =>
     noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': 'no-cache' }),
   );
 
-function validatedRange(
-  c: DashboardContext,
-  headers: Record<string, string>,
-): { from: string; to: string } | Response {
-  const result = resolveRange(
-    { days: c.req.query('days'), from: c.req.query('from'), to: c.req.query('to') },
-    localToday(c.env),
-  );
-  if (!result.ok) return c.json({ error: result.error }, 400, headers);
-  return { from: result.from, to: result.to };
-}
-
 const serveMeasurements: Handler = async (c) => {
   const headers = noindexHeaders({ 'Cache-Control': 'no-store' });
-  const range = validatedRange(c, headers);
+  const range = resolveRangeFromQuery(c, headers);
   if (range instanceof Response) return range;
   try {
     const days = await getDailySeries(c.env, range.from, range.to);
@@ -119,7 +112,7 @@ const serveMeasurements: Handler = async (c) => {
 
 const serveRaw: Handler = async (c) => {
   const headers = noindexHeaders({ 'Cache-Control': 'no-store' });
-  const range = validatedRange(c, headers);
+  const range = resolveRangeFromQuery(c, headers);
   if (range instanceof Response) return range;
   try {
     const measurements = await getRawMeasurements(c.env, range.from, range.to);
@@ -205,6 +198,7 @@ export function createDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/:slug/', guarded(serveIndex));
   app.get('/:slug/styles.css', guarded(serveStyles));
   app.get('/:slug/app.js', guarded(serveAppJs));
+  app.get('/:slug/meals.js', guarded(serveMealsJs));
   app.get('/:slug/vendor/chart.umd.js', guarded(serveVendor));
   app.get('/:slug/manifest.webmanifest', guarded(serveManifest));
   app.get('/:slug/sw.js', guarded(serveSw));
@@ -212,6 +206,9 @@ export function createDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/:slug/api/raw', guarded(serveRaw));
   app.get('/:slug/api/status', guarded(serveStatus));
   app.get('/:slug/api/summary', guarded(serveSummary));
+  app.get('/:slug/api/menus', guarded(serveMenus));
+  app.get('/:slug/api/meals/daily', guarded(serveMealsDaily));
+  app.get('/:slug/api/meals', guarded(serveMealsList));
   app.get('/:slug/llms.txt', guarded(serveLlmsTxt));
   app.get('/:slug/openapi.json', guarded(serveOpenapi));
   app.all('/:slug/mcp', guarded(serveMcp));
@@ -229,6 +226,7 @@ export function createRootDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/', guarded(serveIndex));
   app.get('/styles.css', guarded(serveStyles));
   app.get('/app.js', guarded(serveAppJs));
+  app.get('/meals.js', guarded(serveMealsJs));
   app.get('/vendor/chart.umd.js', guarded(serveVendor));
   app.get('/manifest.webmanifest', guarded(serveManifest));
   app.get('/sw.js', guarded(serveSw));
@@ -236,6 +234,9 @@ export function createRootDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/api/raw', guarded(serveRaw));
   app.get('/api/status', guarded(serveStatus));
   app.get('/api/summary', guarded(serveSummary));
+  app.get('/api/menus', guarded(serveMenus));
+  app.get('/api/meals/daily', guarded(serveMealsDaily));
+  app.get('/api/meals', guarded(serveMealsList));
   app.get('/llms.txt', guarded(serveLlmsTxt));
   app.get('/openapi.json', guarded(serveOpenapi));
   app.all('/mcp', guarded(serveMcp));

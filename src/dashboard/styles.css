@@ -362,3 +362,12 @@ body {
   .skeleton::after { animation: none; }
   * { transition: none !important; }
 }
+
+/* ---- 食事タブ ---- */
+.tabs { display: flex; gap: .5rem; margin-bottom: 1rem; }
+.tab { padding: .4rem 1rem; border-radius: 6px; border: 1px solid var(--border, #ccc); background: transparent; cursor: pointer; }
+.tab.active { background: var(--accent, #3b82f6); color: #fff; border-color: transparent; }
+#panel-meals ul { list-style: none; padding: 0; }
+#panel-meals li { padding: .3rem 0; border-bottom: 1px solid var(--border, #eee); }
+#meal-menu-candidates li { cursor: pointer; }
+#meal-add-form, #menu-form { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; }

@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
+import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import type { Env } from './types';
 import { LIMITS, dashboardBase, newId, noindexHeaders } from './util';
+import { createRwApp } from './rw';
 import {
   authorizeUrl,
   exchangeAuthorizationCode,
@@ -20,6 +22,7 @@ import {
 } from './ingest';
 import { processNotificationBatches, runDailyDigestIfDue } from './slack';
 import { createDashboardRouter, createRootDashboardRouter } from './dashboard';
+import { registerOauthRoutes } from './oauth';
 
 interface OauthStateEntry {
   state: string;
@@ -265,6 +268,7 @@ app.post('/webhook/:token', async (c) => {
   return c.text('ok', 200);
 });
 
+registerOauthRoutes(app);
 app.route('/d', createDashboardRouter());
 // DASHBOARD_SLUG が空文字（専用ドメイン運用）のときだけ有効になる
 app.route('/', createRootDashboardRouter());
@@ -320,7 +324,20 @@ async function scheduled(
   console.warn('[index] unknown cron expression', controller.cron);
 }
 
+const rwApp = createRwApp();
+
+const provider = new OAuthProvider<Env>({
+  apiRoute: '/rw/',
+  apiHandler: { fetch: rwApp.fetch },
+  defaultHandler: { fetch: app.fetch },
+  authorizeEndpoint: '/authorize',
+  tokenEndpoint: '/token',
+  clientRegistrationEndpoint: '/register',
+  scopesSupported: ['meals'],
+});
+
 export default {
-  fetch: app.fetch,
+  // メソッド参照のまま渡すとthisが失われるため、アロー関数で包む
+  fetch: (req: Request, env: Env, ctx: ExecutionContext) => provider.fetch(req, env, ctx),
   scheduled,
 } satisfies ExportedHandler<Env>;
