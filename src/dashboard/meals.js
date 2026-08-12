@@ -6,6 +6,28 @@
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+  // 小数第1位まで（整数はそのまま）
+  const r1 = (n) => (Math.round(n * 10) / 10).toString();
+  // P/F/C を「 · P9.3 F6.4 C60」の形に。全て未入力なら空文字（栄養素はnull可）
+  const pfc = (p, f, c) => {
+    const parts = [];
+    if (p != null) parts.push(`P${r1(p)}`);
+    if (f != null) parts.push(`F${r1(f)}`);
+    if (c != null) parts.push(`C${r1(c)}`);
+    return parts.length ? ` · ${parts.join(' ')}` : '';
+  };
+  // 実効PFCの合計（未入力=nullは加算しない。日次PFCの部分合計仕様に合わせる）
+  const sumEff = (arr, key) => {
+    let any = false;
+    let s = 0;
+    for (const m of arr) {
+      if (m[key] != null) {
+        any = true;
+        s += m[key];
+      }
+    }
+    return any ? s : null;
+  };
 
   // ---- タブ切替 ----
   const panels = { weight: $('panel-weight'), meals: $('panel-meals') };
@@ -125,15 +147,22 @@
     const meals = (await mealsRes.json()).meals ?? [];
     menus = (await menusRes.json()).menus ?? [];
     const total = meals.reduce((a, m) => a + m.effective_calories, 0);
-    $('meals-total').textContent = meals.length ? `${Math.round(total)} kcal` : '';
+    const totalPfc = pfc(
+      sumEff(meals, 'effective_protein_g'),
+      sumEff(meals, 'effective_fat_g'),
+      sumEff(meals, 'effective_carbs_g'),
+    );
+    $('meals-total').textContent = meals.length ? `${Math.round(total)} kcal${totalPfc}` : '';
     $('meals-list').innerHTML = meals
       .map(
-        (m) => `<li>${esc(m.menu_name)} ×${m.multiplier}（${Math.round(m.effective_calories)} kcal）
+        (m) => `<li>${esc(m.menu_name)} ×${m.multiplier}（${Math.round(m.effective_calories)} kcal${pfc(m.effective_protein_g, m.effective_fat_g, m.effective_carbs_g)}）
           ${loggedIn() ? `<button data-del="${m.id}" type="button">削除</button>` : ''}</li>`,
       )
       .join('');
     $('menus-list').innerHTML = menus
-      .map((m) => `<li>${esc(m.name)}（${m.calories} kcal）<button data-arch="${m.id}" type="button">アーカイブ</button></li>`)
+      .map(
+        (m) => `<li>${esc(m.name)}（${m.calories} kcal${pfc(m.protein_g, m.fat_g, m.carbs_g)}）<button data-arch="${m.id}" type="button">アーカイブ</button></li>`,
+      )
       .join('');
   }
   $('meals-list').addEventListener('click', async (e) => {
@@ -157,7 +186,7 @@
     const hits = q ? menus.filter((m) => m.name.includes(q)) : menus;
     $('meal-menu-candidates').innerHTML = hits
       .slice(0, 8)
-      .map((m) => `<li data-pick="${m.id}">${esc(m.name)}（${m.calories} kcal）</li>`)
+      .map((m) => `<li data-pick="${m.id}">${esc(m.name)}（${m.calories} kcal${pfc(m.protein_g, m.fat_g, m.carbs_g)}）</li>`)
       .join('');
   });
   $('meal-menu-candidates').addEventListener('click', (e) => {
