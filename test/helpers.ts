@@ -8,6 +8,8 @@ export const testEnv = env as unknown as Env;
 /** 各テスト前に呼び、関連テーブルを全て空にする */
 export async function resetTables(): Promise<void> {
   const tables = [
+    'meal_logs',
+    'menus',
     'measurements',
     'tokens',
     'settings',

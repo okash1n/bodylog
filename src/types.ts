@@ -124,3 +124,27 @@ export interface ImportStatus {
 }
 
 export type IngestContext = 'webhook' | 'import' | 'backfill';
+
+export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
+
+export interface Menu {
+  id: string;
+  name: string;
+  calories: number;
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+  note: string | null;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MenuInput {
+  name: string;
+  calories: number;
+  protein_g?: number | null;
+  fat_g?: number | null;
+  carbs_g?: number | null;
+  note?: string | null;
+}
