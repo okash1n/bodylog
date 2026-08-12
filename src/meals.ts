@@ -233,7 +233,10 @@ export function parseMenuInput(body: unknown): { ok: true; value: MenuInput } | 
  * name/calories はDB上NOT NULLのためnullクリアを許可しない（送るなら有効値必須）。
  */
 export function parseMenuPatch(body: unknown): { ok: true; value: Partial<MenuInput> } | { ok: false; error: string } {
-  const b = (body ?? {}) as Record<string, unknown>;
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return { ok: false, error: 'invalid request body' };
+  }
+  const b = body as Record<string, unknown>;
   const out: Partial<MenuInput> = {};
   if ('name' in b) {
     if (typeof b.name !== 'string' || b.name.trim() === '') return { ok: false, error: 'name is required' };

@@ -84,6 +84,11 @@ describe('/rw/ 書き込みAPI', () => {
 
     // 有効フィールドが1つも無い空パッチは400
     expect((await rw(`/rw/menus/${menu.id}`, token, 'PATCH', {})).status).toBe(400);
+
+    // 本文がオブジェクトでない妥当なJSON（数値・文字列・配列）も400（500にならないこと）
+    expect((await rw(`/rw/menus/${menu.id}`, token, 'PATCH', 5)).status).toBe(400);
+    expect((await rw(`/rw/menus/${menu.id}`, token, 'PATCH', 'x')).status).toBe(400);
+    expect((await rw(`/rw/menus/${menu.id}`, token, 'PATCH', ['x'])).status).toBe(400);
   });
 
   it('バリデーション: caloriesが負・multiplier過大・不正meal_typeは400', async () => {
