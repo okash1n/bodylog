@@ -32,6 +32,10 @@
     }
     return any ? s : null;
   };
+  const MEAL_TYPE_LABEL = { breakfast: '朝', lunch: '昼', dinner: '夜', snack: '間食' };
+  // ISO8601(UTC) → JST(+9)ローカル日付。履歴のグループ化キー
+  const localDateOf = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10);
+  const HISTORY_DAYS = 50;
 
   // ---- タブ切替 ----
   const panels = { weight: $('panel-weight'), meals: $('panel-meals') };
@@ -144,36 +148,68 @@
   let selectedMenu = null;
   async function refresh() {
     updateAuthUi();
-    const day = selectedDate();
     const [mealsRes, menusRes] = await Promise.all([
-      fetch(`${base}api/meals?from=${day}&to=${day}`),
+      fetch(`${base}api/meals?days=${HISTORY_DAYS}`),
       fetch(`${base}api/menus`),
     ]);
     const meals = (await mealsRes.json()).meals ?? [];
     menus = (await menusRes.json()).menus ?? [];
-    const total = meals.reduce((a, m) => a + m.effective_calories, 0);
-    const totalPfc = pfc(
-      sumEff(meals, 'effective_protein_g'),
-      sumEff(meals, 'effective_fat_g'),
-      sumEff(meals, 'effective_carbs_g'),
-    );
-    $('meals-total').textContent = meals.length ? `${Math.round(total)} kcal${totalPfc}` : '';
-    $('meals-list').innerHTML = meals
-      .map(
-        (m) => `<li>${esc(m.menu_name)} ×${m.multiplier}（${Math.round(m.effective_calories)} kcal${pfc(m.effective_protein_g, m.effective_fat_g, m.effective_carbs_g)}）
-          ${loggedIn() ? `<button data-del="${m.id}" type="button">削除</button>` : ''}</li>`,
-      )
-      .join('');
+    renderHistory(meals);
     $('menus-list').innerHTML = menus
       .map(
         (m) => `<li>${esc(m.name)}（${m.calories} kcal${pfc(m.protein_g, m.fat_g, m.carbs_g)}）<button data-arch="${m.id}" type="button">アーカイブ</button></li>`,
       )
       .join('');
   }
-  $('meals-list').addEventListener('click', async (e) => {
-    const id = e.target.dataset?.del;
-    if (id && confirm('この記録を削除しますか？')) {
-      await rw(`meals/${id}`, 'DELETE');
+
+  // 直近50日の食事を日付ごとにグループ化して表示。各日の見出しに合計、各食事にPFC。
+  // mealsはAPIが新しい順(ORDER BY eaten_at DESC)で返すので、その順序でグループ化＝日付降順になる。
+  function renderHistory(meals) {
+    if (!meals.length) {
+      $('meals-history').innerHTML = '<p class="meals-empty">まだ記録がありません。</p>';
+      return;
+    }
+    const canDel = loggedIn();
+    const groups = [];
+    const byDate = Object.create(null);
+    meals.forEach((m) => {
+      const d = localDateOf(m.eaten_at);
+      if (!byDate[d]) {
+        byDate[d] = { d, items: [] };
+        groups.push(byDate[d]);
+      }
+      byDate[d].items.push(m);
+    });
+    const span = canDel ? 6 : 5;
+    const rows = groups
+      .map((g) => {
+        // 日は新しい順のまま、各日の中は時刻昇順（朝→昼→夜）で読みやすく
+        g.items.sort((a, b) => String(a.eaten_at).localeCompare(String(b.eaten_at)));
+        const total = g.items.reduce((a, m) => a + m.effective_calories, 0);
+        const totalPfc = pfc(
+          sumEff(g.items, 'effective_protein_g'),
+          sumEff(g.items, 'effective_fat_g'),
+          sumEff(g.items, 'effective_carbs_g'),
+        );
+        const head = `<tr class="mh-day"><td colspan="${span}">${g.d}　合計 ${Math.round(total)} kcal${totalPfc}</td></tr>`;
+        const items = g.items
+          .map((m) => {
+            const t = MEAL_TYPE_LABEL[m.meal_type] || '—';
+            const macro = pfc(m.effective_protein_g, m.effective_fat_g, m.effective_carbs_g).replace(/^ · /, '');
+            return `<tr><td class="mh-type">${t}</td><td>${esc(m.menu_name)}</td><td class="mh-num">×${m.multiplier}</td><td class="mh-num">${Math.round(m.effective_calories)} kcal</td><td class="mh-macro">${macro || '—'}</td>${canDel ? `<td><button class="mh-del" data-del="${m.id}" type="button">削除</button></td>` : ''}</tr>`;
+          })
+          .join('');
+        return head + items;
+      })
+      .join('');
+    $('meals-history').innerHTML =
+      `<table class="meals-history-table"><thead><tr><th>区分</th><th>メニュー</th><th>倍率</th><th>kcal</th><th>PFC</th>${canDel ? '<th></th>' : ''}</tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  $('meals-history').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-del]');
+    if (btn && confirm('この記録を削除しますか？')) {
+      await rw(`meals/${btn.dataset.del}`, 'DELETE');
       refresh();
     }
   });
@@ -326,12 +362,12 @@
     refresh();
   });
 
-  // 日付セレクタ初期化（初期値=今日・上限=今日）。変更でその日を表示＆記録対象にする
+  // 日付セレクタ初期化（初期値=今日・上限=今日）。これは「記録する日」専用（backfill）。
+  // 履歴テーブルは常に直近50日を表示するため、日付変更では再取得しない（未来だけ弾く）
   $('meal-date').value = todayJst();
   $('meal-date').max = todayJst();
   $('meal-date').addEventListener('change', () => {
     if (!$('meal-date').value || $('meal-date').value > todayJst()) $('meal-date').value = todayJst();
-    refresh();
   });
 
   handleCallback();

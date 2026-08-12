@@ -149,9 +149,8 @@
       <button id="meals-login" type="button">ログインして記録する</button>
     </div>
     <div id="meals-today">
-      <h2><input id="meal-date" type="date" aria-label="表示・記録する日"> の食事 <span id="meals-total"></span></h2>
-      <ul id="meals-list"></ul>
       <form id="meal-add-form" hidden>
+        <label>記録する日 <input id="meal-date" type="date" aria-label="記録する日"></label>
         <input id="meal-menu-search" type="search" placeholder="メニューを検索" autocomplete="off">
         <ul id="meal-menu-candidates"></ul>
         <label>倍率 <input id="meal-multiplier" type="number" value="1" min="0.1" max="20" step="0.1"></label>
@@ -177,6 +176,10 @@
       </form>
       <ul id="menus-list"></ul>
     </details>
+    <section id="meals-history-section">
+      <h2>食事履歴 <span class="unit">直近50日</span></h2>
+      <div id="meals-history"></div>
+    </section>
   </section>
 
   <footer class="app-footer">
