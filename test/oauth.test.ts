@@ -30,9 +30,9 @@ describe('OAuthProvider骨組み', () => {
     expect(body.client_id).toBeTruthy();
   });
 
-  it('/rw/ 配下はトークン無しだと401', async () => {
+  it('/api/ の書き込み（POST）はトークン無しだと401', async () => {
     const res = await worker.fetch(
-      req('/rw/meals', { method: 'POST', body: '{}' }),
+      req('/api/meals', { method: 'POST', body: '{}' }),
       rootEnv,
       createExecutionContext(),
     );

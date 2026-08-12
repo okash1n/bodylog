@@ -209,7 +209,7 @@ function optionalNutrient(v: unknown): number | null | undefined {
   return isPositiveFinite(v) ? v : undefined;
 }
 
-/** REST（/rw/menus）とMCP（create_menu、Task 8）の両方から使うメニュー入力バリデータ */
+/** REST（/api/menus）とMCP（create_menu、Task 8）の両方から使うメニュー入力バリデータ */
 export function parseMenuInput(body: unknown): { ok: true; value: MenuInput } | { ok: false; error: string } {
   const b = (body ?? {}) as Record<string, unknown>;
   if (typeof b.name !== 'string' || b.name.trim() === '') return { ok: false, error: 'name is required' };
@@ -233,7 +233,7 @@ export function parseMenuInput(body: unknown): { ok: true; value: MenuInput } | 
 }
 
 /**
- * PATCH /rw/menus/:id 用の部分更新バリデータ。parseMenuInputと異なり、キーの有無
+ * PATCH /api/menus/:id 用の部分更新バリデータ。parseMenuInputと異なり、キーの有無
  * （送信されたか否か）と値のnullを区別する: キー無し=現状維持、null=クリア、値あり=検証してセット。
  * name/calories はDB上NOT NULLのためnullクリアを許可しない（送るなら有効値必須）。
  */
@@ -281,7 +281,7 @@ export interface MealFields {
   meal_type?: MealType;
 }
 
-/** REST（/rw/meals）とMCP（log_meal、Task 8）の両方から使う記録フィールドバリデータ */
+/** REST（/api/meals）とMCP（log_meal、Task 8）の両方から使う記録フィールドバリデータ */
 export function parseMealFields(b: Record<string, unknown>): { ok: true; value: MealFields } | { ok: false; error: string } {
   const out: MealFields = {};
   if (b.multiplier !== undefined) {

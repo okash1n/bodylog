@@ -14,6 +14,7 @@ import { getDailySeries, getImportStatus, getRawMeasurements, getSummary } from 
 import { llmsTxt, openapiSpec } from './ai';
 import { serveMealsDaily, serveMealsList, serveMenus } from './meals-api';
 import { serveExerciseDaily, serveExerciseLogs, serveExerciseMenus } from './exercise-api';
+import { registerWriteRoutes } from './writes';
 import { OG_RENDERER_VERSION, renderOgPng } from './og';
 import indexHtmlTpl from './dashboard/index.html';
 import stylesCss from './dashboard/styles.css';
@@ -218,6 +219,8 @@ export function createDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/:slug/llms.txt', guarded(serveLlmsTxt));
   app.get('/:slug/openapi.json', guarded(serveOpenapi));
   app.get('/:slug/og.png', guarded(serveOg));
+  // 書き込み（POST/PATCH/DELETE）は同じ /api 名前空間にメソッドで同居し、withAuthで保護する
+  registerWriteRoutes(app, guarded, '/:slug');
   return app;
 }
 
@@ -249,5 +252,6 @@ export function createRootDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/llms.txt', guarded(serveLlmsTxt));
   app.get('/openapi.json', guarded(serveOpenapi));
   app.get('/og.png', guarded(serveOg));
+  registerWriteRoutes(app, guarded, '');
   return app;
 }

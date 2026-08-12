@@ -74,7 +74,7 @@ describe('公開REST（運動）', () => {
   });
 });
 
-describe('/rw/ 書き込み（運動・OAuth必須）', () => {
+describe('/api/ 書き込み（運動・OAuth必須）', () => {
   let token: string;
   beforeEach(async () => {
     await resetTables();
@@ -83,29 +83,29 @@ describe('/rw/ 書き込み（運動・OAuth必須）', () => {
   });
 
   it('トークン無しは401', async () => {
-    expect((await rw('/rw/exercise/menus', null, 'POST', { name: 'x', category: 'strength' })).status).toBe(401);
+    expect((await rw('/api/exercise/menus', null, 'POST', { name: 'x', category: 'strength' })).status).toBe(401);
   });
 
   it('有酸素種目の作成→記録（消費kcal算出）→削除', async () => {
-    const created = await rw('/rw/exercise/menus', token, 'POST', { name: 'バイク', category: 'cardio', mets: 6 });
+    const created = await rw('/api/exercise/menus', token, 'POST', { name: 'バイク', category: 'cardio', mets: 6 });
     expect(created.status).toBe(201);
     const menu = (await created.json()) as { id: string };
 
-    const logged = await rw('/rw/exercise/logs', token, 'POST', { menu_id: menu.id, duration_min: 60 });
+    const logged = await rw('/api/exercise/logs', token, 'POST', { menu_id: menu.id, duration_min: 60 });
     expect(logged.status).toBe(201);
     const log = (await logged.json()) as { id: string; calories: number };
     expect(log.calories).toBeCloseTo(6 * 70 * 1 * 1.05); // 441
 
-    expect((await rw(`/rw/exercise/logs/${log.id}`, token, 'DELETE')).status).toBe(200);
-    expect((await rw(`/rw/exercise/logs/${log.id}`, token, 'DELETE')).status).toBe(404);
+    expect((await rw(`/api/exercise/logs/${log.id}`, token, 'DELETE')).status).toBe(200);
+    expect((await rw(`/api/exercise/logs/${log.id}`, token, 'DELETE')).status).toBe(404);
   });
 
   it('筋トレ種目の作成→セット記録→総ボリューム', async () => {
-    const created = await rw('/rw/exercise/menus', token, 'POST', {
+    const created = await rw('/api/exercise/menus', token, 'POST', {
       name: 'スクワット', category: 'strength', muscle_group: '脚',
     });
     const menu = (await created.json()) as { id: string };
-    const logged = await rw('/rw/exercise/logs', token, 'POST', {
+    const logged = await rw('/api/exercise/logs', token, 'POST', {
       menu_id: menu.id, sets: [{ reps: 5, weight_kg: 100 }, { reps: 5, weight_kg: 100 }],
     });
     expect(logged.status).toBe(201);
@@ -115,16 +115,16 @@ describe('/rw/ 書き込み（運動・OAuth必須）', () => {
   });
 
   it('バリデーション: cardioでmets無し・categoryなしは400、cardioにduration無しは400', async () => {
-    expect((await rw('/rw/exercise/menus', token, 'POST', { name: 'x', category: 'cardio' })).status).toBe(400);
-    expect((await rw('/rw/exercise/menus', token, 'POST', { name: 'x' })).status).toBe(400);
-    const cardio = await rw('/rw/exercise/menus', token, 'POST', { name: 'run', category: 'cardio', mets: 8 });
+    expect((await rw('/api/exercise/menus', token, 'POST', { name: 'x', category: 'cardio' })).status).toBe(400);
+    expect((await rw('/api/exercise/menus', token, 'POST', { name: 'x' })).status).toBe(400);
+    const cardio = await rw('/api/exercise/menus', token, 'POST', { name: 'run', category: 'cardio', mets: 8 });
     const menu = (await cardio.json()) as { id: string };
-    expect((await rw('/rw/exercise/logs', token, 'POST', { menu_id: menu.id })).status).toBe(400); // duration無し
+    expect((await rw('/api/exercise/logs', token, 'POST', { menu_id: menu.id })).status).toBe(400); // duration無し
   });
 });
 
-describe('MCP 運動ツール（/rw/mcp）', () => {
-  const RW_MCP = 'http://localhost/rw/mcp';
+describe('MCP 運動ツール（/mcp）', () => {
+  const RW_MCP = 'http://localhost/mcp';
   let token: string;
   beforeEach(async () => {
     await resetTables();

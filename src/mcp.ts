@@ -1,6 +1,6 @@
 /**
  * MCP（Model Context Protocol）サーバー。読み取り専用ツール7つ（体重3 / 食事2 / 運動2）を
- * 公開し、認証済みエンドポイント（/rw/mcp）では書き込みツール4つ（log_meal / create_menu /
+ * 公開し、認証済みエンドポイント（/mcp）では書き込みツール4つ（log_meal / create_menu /
  * log_exercise / create_exercise_menu）を追加で公開する。
  * リクエストごとにサーバー/トランスポートを生成するステートレス構成
  * （セッションを持たないため、Durable Objects等の追加インフラが不要）。
@@ -31,8 +31,8 @@ function instructions(tzOffsetHours: number): string {
     'fat_mass（脂肪量）は weight - fat_free_mass から導出した値。',
     `日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours}のローカル日付。`,
     'まず get_weight_summary で全体像を取り、詳細な推移が必要なときだけ get_daily_series / get_raw_measurements を使う。',
-    '食事記録はsearch_menus / get_meal_logsで照会できる（記録・メニュー作成は認可済みエンドポイント/rw/mcpのみ）。',
-    '運動記録はsearch_exercise_menus / get_exercise_logsで照会できる（有酸素は消費kcal、筋トレはセット明細と総ボリューム。記録・種目作成は/rw/mcpのみ）。',
+    '食事記録はsearch_menus / get_meal_logsで照会できる（記録・メニュー作成は認可済みエンドポイント/mcpのみ）。',
+    '運動記録はsearch_exercise_menus / get_exercise_logsで照会できる（有酸素は消費kcal、筋トレはセット明細と総ボリューム。記録・種目作成は/mcpのみ）。',
   ].join('\n');
 }
 

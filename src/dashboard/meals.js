@@ -1,4 +1,4 @@
-/* 食事タブ: 公開READは無認証、書き込みはOAuth(PKCE)のトークンで /rw/ を呼ぶ */
+/* 食事タブ: 公開READは無認証、書き込みはOAuth(PKCE)のトークンで /api の POST/PATCH/DELETE を呼ぶ */
 (() => {
   const base = document.querySelector('script[src*="meals.js"]').src.replace(/meals\.js.*$/, '');
   const origin = location.origin;
@@ -115,7 +115,7 @@
   }
   async function rw(path, method, body) {
     const call = () =>
-      fetch(`${origin}/rw/${path}`, {
+      fetch(`${base}api/${path}`, {
         method,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem(LS.token)}` },
         body: body === undefined ? undefined : JSON.stringify(body),

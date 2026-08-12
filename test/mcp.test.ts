@@ -4,10 +4,10 @@ import type { Env } from '../src/types';
 import worker from '../src/index';
 import { insertMeasurement, localYmdDaysAgo, obtainAccessToken, resetTables, testEnv } from './helpers';
 
-// 無認証の公開 /mcp は廃止。MCPは OAuth 必須の /rw/mcp のみ。
-// protocol層の挙動（handleMcpRequest）は /rw/mcp 経由（=index.tsのグローバルonError配下）で検証する。
+// MCPは OAuth 必須の /mcp のみ（旧 /rw/mcp は廃止）。
+// protocol層の挙動（handleMcpRequest）は /mcp 経由（=providerのapiHandler配下）で検証する。
 const rootEnv: Env = { ...testEnv, DASHBOARD_SLUG: '' };
-const RW_MCP = 'http://localhost/rw/mcp';
+const RW_MCP = 'http://localhost/mcp';
 
 interface RpcResponse {
   jsonrpc: string;
@@ -23,7 +23,7 @@ function parseToolJson<T>(result: Record<string, unknown>): T {
   return JSON.parse(content[0].text) as T;
 }
 
-/** 認証付きで /rw/mcp にJSON-RPCを投げる */
+/** 認証付きで /mcp にJSON-RPCを投げる */
 function rwRpc(token: string, method: string, params?: unknown, extraHeaders?: Record<string, string>): Promise<Response> {
   return worker.fetch(
     new Request(RW_MCP, {
@@ -41,7 +41,7 @@ function rwRpc(token: string, method: string, params?: unknown, extraHeaders?: R
   );
 }
 
-/** 認証付きで /rw/mcp に任意のボディ/メソッドで投げる（不正ボディ・非POSTの検証用） */
+/** 認証付きで /mcp に任意のボディ/メソッドで投げる（不正ボディ・非POSTの検証用） */
 function rwRaw(token: string, init: RequestInit): Promise<Response> {
   return worker.fetch(
     new Request(RW_MCP, {
@@ -53,7 +53,7 @@ function rwRaw(token: string, init: RequestInit): Promise<Response> {
   );
 }
 
-describe('MCPサーバー（/rw/mcp・OAuth必須）', () => {
+describe('MCPサーバー（/mcp・OAuth必須）', () => {
   let token: string;
   beforeEach(async () => {
     await resetTables();

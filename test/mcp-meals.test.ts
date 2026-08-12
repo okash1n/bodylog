@@ -23,7 +23,7 @@ function parseToolJson<T>(result: Record<string, unknown>): T {
 
 async function rwRpc(env: Env, token: string, method: string, params?: unknown): Promise<Response> {
   return worker.fetch(
-    new Request('http://localhost/rw/mcp', {
+    new Request('http://localhost/mcp', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -37,7 +37,7 @@ async function rwRpc(env: Env, token: string, method: string, params?: unknown):
   );
 }
 
-describe('/rw/mcp 書き込みツール', () => {
+describe('/mcp 書き込みツール', () => {
   let token: string;
   beforeEach(async () => {
     await resetTables();
@@ -46,7 +46,7 @@ describe('/rw/mcp 書き込みツール', () => {
 
   it('トークン無しは401', async () => {
     const res = await worker.fetch(
-      new Request('http://localhost/rw/mcp', {
+      new Request('http://localhost/mcp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),

@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import type { Env } from './types';
 import { LIMITS, dashboardBase, newId, noindexHeaders } from './util';
-import { createRwApp } from './rw';
+import { handleMcpRequest } from './mcp';
 import {
   authorizeUrl,
   exchangeAuthorizationCode,
@@ -324,12 +324,20 @@ async function scheduled(
   console.warn('[index] unknown cron expression', controller.cron);
 }
 
-const rwApp = createRwApp();
+// apiHandlerはMCPエンドポイント（/mcp）専用。MCPだけprovider apiRouteでゲートするのは、
+// MCPクライアント（ChatGPT等）のOAuth接続にproviderの401＋WWW-Authenticate＋保護リソース
+// メタデータが必要なため。REST書き込み（/api/*）はdefaultHandler側でwithAuthが検証する。
+const mcpApp = new Hono<{ Bindings: Env }>();
+mcpApp.all('/mcp', (c) => handleMcpRequest(c, { write: true }));
+mcpApp.notFound((c) => c.text('not found', 404, noindexHeaders()));
+mcpApp.onError((err, c) => {
+  console.error('[mcp-api] unhandled error', err);
+  return c.text('internal error', 500, noindexHeaders());
+});
 
 const provider = new OAuthProvider<Env>({
-  // /rw/ 配下（REST書き込み・MCP）に加え、MCPは短い /mcp でも受ける（どちらもOAuth必須）
-  apiRoute: ['/rw/', '/mcp'],
-  apiHandler: { fetch: rwApp.fetch },
+  apiRoute: '/mcp',
+  apiHandler: { fetch: mcpApp.fetch },
   defaultHandler: { fetch: app.fetch },
   authorizeEndpoint: '/authorize',
   tokenEndpoint: '/token',
