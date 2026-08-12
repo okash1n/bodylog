@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../src/types';
 import { createDashboardRouter, createRootDashboardRouter } from '../src/dashboard';
+import worker from '../src/index';
 import { insertMeasurement, localYmdDaysAgo, resetTables, testEnv } from './helpers';
 
 const rootEnv: Env = { ...testEnv, DASHBOARD_SLUG: '' };
@@ -192,6 +193,96 @@ describe('MCPサーバー（/mcp）', () => {
   it('POST応答にもX-Robots-Tag: noindexが付く', async () => {
     const res = await rpc(app, rootEnv, '/mcp', 'tools/list');
     expect(res.headers.get('X-Robots-Tag')).toContain('noindex');
+  });
+
+  // ChatGPT（openai-mcp）はSDK未対応の新しいプロトコル版ヘッダを交渉前から送る。
+  // ヘッダ検証で拒否せず、initialize本文のバージョン交渉に任せることを保証する
+  it('SDK未対応のMCP-Protocol-Versionヘッダが付いていても処理できる', async () => {
+    const res = await app.request(
+      '/mcp',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          'MCP-Protocol-Version': '2026-07-28',
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 10, method: 'tools/list', params: {} }),
+      },
+      rootEnv,
+      createExecutionContext(),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as RpcResponse;
+    expect((body.result as { tools: unknown[] }).tools).toHaveLength(3);
+  });
+
+  it('未対応バージョンヘッダ付きinitializeはサーバー対応版へ交渉される', async () => {
+    const res = await app.request(
+      '/mcp',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          'MCP-Protocol-Version': '2026-07-28',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 11,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2026-07-28',
+            capabilities: {},
+            clientInfo: { name: 'openai-mcp', version: '1.0.0' },
+          },
+        }),
+      },
+      rootEnv,
+      createExecutionContext(),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as RpcResponse;
+    const negotiated = (body.result as { protocolVersion: string }).protocolVersion;
+    // サーバーが対応する版（YYYY-MM-DD形式）にダウングレードして返す
+    expect(negotiated).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(negotiated <= '2025-11-25').toBe(true);
+  });
+
+  // @hono/mcp の検証エラー（HTTPException）がグローバルonErrorで500化されず、
+  // 本来の4xxで返ることを保証する
+  it('不正なAcceptヘッダは500ではなく406で返る', async () => {
+    const res = await app.request(
+      '/mcp',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'text/html' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 12, method: 'tools/list', params: {} }),
+      },
+      rootEnv,
+      createExecutionContext(),
+    );
+    expect(res.status).toBe(406);
+    expect(res.headers.get('X-Robots-Tag')).toContain('noindex');
+  });
+
+  // 本番はsrc/index.tsのグローバルonError配下で動く。HTTPExceptionが500化される
+  // 回帰（ChatGPTコネクタ作成失敗の原因）を防ぐ統合テスト
+  it('本番構成（index.ts経由）でも未対応バージョンヘッダが500にならない', async () => {
+    const res = await worker.fetch(
+      new Request('http://localhost/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          'MCP-Protocol-Version': '2026-07-28',
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 13, method: 'tools/list', params: {} }),
+      }),
+      rootEnv,
+      createExecutionContext(),
+    );
+    expect(res.status).toBe(200);
   });
 
   it('slugモードでは /d/{slug}/mcp で動き、ドメイン直下は404', async () => {

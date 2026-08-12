@@ -6,7 +6,10 @@
 import { StreamableHTTPTransport } from '@hono/mcp';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '@modelcontextprotocol/sdk/types.js';
+import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { getDailySeries, getRawMeasurements, getSummary } from './queries';
 import type { Env } from './types';
@@ -103,6 +106,25 @@ function rpcError(c: Context<{ Bindings: Env }>, code: number, message: string):
   return c.json({ jsonrpc: '2.0', error: { code, message }, id: null }, 400, noindexHeaders());
 }
 
+function withNoindex(res: Response): Response {
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(noindexHeaders())) headers.set(k, v);
+  return new Response(res.body, { status: res.status, headers });
+}
+
+async function dispatchToTransport(c: Context<{ Bindings: Env }>, body: unknown): Promise<Response> {
+  const server = buildServer(c.env);
+  const transport = new StreamableHTTPTransport({
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true,
+  });
+  await server.connect(transport);
+  const res = await transport.handleRequest(c, body);
+  // ステートレスPOST処理では必ずResponseが返る想定。念のためのフォールバック
+  if (!res) return c.text('not found', 404, noindexHeaders());
+  return withNoindex(res);
+}
+
 /**
  * Streamable HTTPのMCPリクエストを処理する。POSTのレスポンスはJSON
  * （enableJsonResponse）にして、SSE非対応のクライアントとテストを単純にする。
@@ -123,16 +145,33 @@ export async function handleMcpRequest(c: Context<{ Bindings: Env }>): Promise<R
   if (Array.isArray(body)) {
     return rpcError(c, -32600, 'JSON-RPC batch requests are not supported');
   }
-  const server = buildServer(c.env);
-  const transport = new StreamableHTTPTransport({
-    sessionIdGenerator: undefined,
-    enableJsonResponse: true,
-  });
-  await server.connect(transport);
-  const res = await transport.handleRequest(c, body);
-  // ステートレスPOST処理では必ずResponseが返る想定。念のためのフォールバック
-  if (!res) return c.text('not found', 404, noindexHeaders());
-  const headers = new Headers(res.headers);
-  for (const [k, v] of Object.entries(noindexHeaders())) headers.set(k, v);
-  return new Response(res.body, { status: res.status, headers });
+  try {
+    // ChatGPT（openai-mcp）等はSDK未対応の新しいMCP-Protocol-Versionヘッダを
+    // 交渉前から送り、@hono/mcpはそれをヘッダ検証404でthrowする。未対応版は
+    // ヘッダを外し、initialize本文でのバージョン交渉（サーバー対応版への
+    // ダウングレード）に任せる
+    const protocolVersion = c.req.header('mcp-protocol-version');
+    if (protocolVersion !== undefined && !SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
+      const headers = new Headers(c.req.raw.headers);
+      headers.delete('mcp-protocol-version');
+      const inner = new Hono<{ Bindings: Env }>()
+        .post('*', (ic) => dispatchToTransport(ic, body))
+        .onError((err, ic) => {
+          if (err instanceof HTTPException) return withNoindex(err.getResponse());
+          console.error('[mcp] transport error', err);
+          return ic.text('internal error', 500, noindexHeaders());
+        });
+      return await inner.fetch(
+        new Request(c.req.url, { method: 'POST', headers, body: JSON.stringify(body) }),
+        c.env,
+        c.executionCtx,
+      );
+    }
+    return await dispatchToTransport(c, body);
+  } catch (err) {
+    // @hono/mcpは検証エラー（Accept/Content-Type/セッション等）をHTTPExceptionで
+    // throwする。グローバルonErrorに渡すと500になるため、本来の4xxで返す
+    if (err instanceof HTTPException) return withNoindex(err.getResponse());
+    throw err;
+  }
 }
