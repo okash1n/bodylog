@@ -73,15 +73,17 @@ describe('MCPサーバー（/mcp）', () => {
     expect(serverInfo.name).toBe('withings-weight-tracker');
   });
 
-  it('tools/list が読み取り専用ツール3つを返す', async () => {
+  it('tools/list が読み取り専用ツール5つを返す', async () => {
     const res = await rpc(app, rootEnv, '/mcp', 'tools/list');
     expect(res.status).toBe(200);
     const body = (await res.json()) as RpcResponse;
     const tools = (body.result as { tools: { name: string }[] }).tools;
     expect(tools.map((t) => t.name).sort()).toEqual([
       'get_daily_series',
+      'get_meal_logs',
       'get_raw_measurements',
       'get_weight_summary',
+      'search_menus',
     ]);
   });
 
@@ -214,7 +216,7 @@ describe('MCPサーバー（/mcp）', () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as RpcResponse;
-    expect((body.result as { tools: unknown[] }).tools).toHaveLength(3);
+    expect((body.result as { tools: unknown[] }).tools).toHaveLength(5);
   });
 
   it('未対応バージョンヘッダ付きinitializeはサーバー対応版へ交渉される', async () => {

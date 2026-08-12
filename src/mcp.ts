@@ -12,6 +12,7 @@ import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { getDailySeries, getRawMeasurements, getSummary } from './queries';
+import { listMealLogs, listMenus } from './meals';
 import type { Env } from './types';
 import { LIMITS, localToday, noindexHeaders, offsetHours, resolveRange } from './util';
 
@@ -24,6 +25,7 @@ function instructions(tzOffsetHours: number): string {
     'fat_mass（脂肪量）は weight - fat_free_mass から導出した値。',
     `日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours}のローカル日付。`,
     'まず get_weight_summary で全体像を取り、詳細な推移が必要なときだけ get_daily_series / get_raw_measurements を使う。',
+    '食事記録はsearch_menus / get_meal_logsで照会できる（記録・メニュー作成は認可済みエンドポイント/rw/mcpのみ）。',
   ].join('\n');
 }
 
@@ -98,6 +100,29 @@ function buildServer(env: Env): McpServer {
         if (!range.ok) return errorResult(range.error);
         return jsonResult({ measurements: await getRawMeasurements(env, range.from, range.to) });
       }),
+  );
+  server.registerTool(
+    'search_menus',
+    {
+      description: '登録済みの食事メニュー（マスタ）を名前の部分一致で検索する',
+      inputSchema: { q: z.string().optional().describe('検索語（省略時は全件、最大500件）') },
+      annotations: { readOnlyHint: true },
+    },
+    (args) => guarded('search_menus', async () =>
+      jsonResult({ menus: await listMenus(env, { q: args.q }) })),
+  );
+  server.registerTool(
+    'get_meal_logs',
+    {
+      description: '食事記録を返す（メニュー名・倍率・実効kcal/PFC付き）。daysまたはfrom/toで期間指定',
+      inputSchema: rangeShape,
+      annotations: { readOnlyHint: true },
+    },
+    (args) => guarded('get_meal_logs', async () => {
+      const range = resolveRange(args, localToday(env));
+      if (!range.ok) return errorResult(range.error);
+      return jsonResult({ meals: await listMealLogs(env, range.from, range.to) });
+    }),
   );
   return server;
 }
