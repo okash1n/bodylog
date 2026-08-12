@@ -28,6 +28,9 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     // Phase 2: カロリーオーバーレイのトグルと日次表の摂取列
     expect(html).toContain('id="calorie-toggle"');
     expect(html).toContain('摂取 <span class="unit">kcal</span>');
+    // 食事履歴テーブル（直近50日）
+    expect(html).toContain('id="meals-history"');
+    expect(html).not.toContain('id="meals-list"');
   });
 
   it('manifestの start_url / scope が / になる', async () => {
