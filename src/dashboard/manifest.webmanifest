@@ -1,6 +1,6 @@
 {
-  "name": "体重ダッシュボード",
-  "short_name": "体重",
+  "name": "bodylog",
+  "short_name": "bodylog",
   "lang": "ja",
   "start_url": "{{BASE}}",
   "scope": "{{BASE}}",

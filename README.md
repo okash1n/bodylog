@@ -1,12 +1,12 @@
-# withings-weight-tracker
+# bodylog
 
-Withings 体重計の計測データを Cloudflare Workers で受け取り、D1 に保存して Slack に通知し、公開ダッシュボードで可視化するシングルユーザー向けアプリケーション。
+Withings 体重計の計測データ（体重・体組成）に加え、食事・運動の記録も扱うシングルユーザー向けの「からだ」トラッキングアプリ。Cloudflare Workers で受け取り、D1 に保存し、Slack 通知と公開ダッシュボードで可視化する。
 
 Fork/clone して設定値を差し替えるだけで動く（コード変更不要）。Cloudflare 無料枠内で動作する。
 
-- 対象データ: 体重・体脂肪率・除脂肪体重、食事記録（登録済みメニューからのカロリー・PFC記録）
+- 対象データ: 体重・体脂肪率・除脂肪体重、食事記録（登録済みメニューからのカロリー・PFC記録）、運動記録（有酸素の推定消費kcal・筋トレのセット/総ボリューム）
 - 通知: Slack Incoming Webhook（複数送信先対応）。最新計測値・7日間平均（前ターム比）・基準日からの変化に加え、**直近30日のグラフ画像を通知に直接埋め込む**
-- ダッシュボード: PWA 対応・noindex。実測⇔7日平均のワンクリック切替、期間プリセット（1M/3M/1Y/カスタム）、日次集計⇔計測明細の表、ライト/ダークテーマ、OGP 画像を Worker 内で生成。食事タブから記録の閲覧・入力もできる
+- ダッシュボード: PWA 対応・noindex。実測⇔7日平均のワンクリック切替、期間プリセット（1M/3M/1Y/カスタム）、日次集計⇔計測明細の表、ライト/ダークテーマ、OGP 画像を Worker 内で生成。食事・運動タブから記録の閲覧・入力もでき、体重グラフには摂取/消費/ネット（摂取−運動消費）のカロリーを重ねられる
 - 食事記録: 登録済みメニュー（マスタ）からのみ記録する方式（自由入力ではない）。閲覧は公開API・認証不要、記録・メニュー登録はオーナーの Google アカウントによる OAuth 2.1 認可が必要
 - インフラ: Cloudflare Workers + D1 + KV（KV は食事記録の書き込みAPI用 OAuth の認可フロー・トークン保存にのみ使用。Queues / Durable Objects は不使用）。外部依存は Hono / Chart.js / `@cloudflare/workers-oauth-provider` / `@modelcontextprotocol/sdk` / `@hono/mcp` / zod
 - 動作確認済みバージョン: Node.js 22+ / wrangler 4.118（大きく異なるバージョンでは手順が変わることがある）
@@ -48,7 +48,7 @@ Webhook は受信内容を即座に D1 の inbox テーブルへ永続化して 
 ### 1. リポジトリの準備
 
 ```sh
-git clone https://github.com/okash1n/withings.git   # または Fork
+git clone https://github.com/okash1n/bodylog.git   # または Fork
 cd withings
 npm install
 npx wrangler login
