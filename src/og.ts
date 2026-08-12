@@ -9,16 +9,16 @@ const FRAME: Rgb = [226, 232, 240]; // --border #e2e8f0
 const GRID: Rgb = [237, 241, 246]; // 枠より薄いグリッド線
 const TEXT: Rgb = [30, 41, 59]; // --text #1e293b
 const MUTED: Rgb = [100, 116, 139]; // --text-muted #64748b
-const WEIGHT: Rgb = [2, 132, 199]; // --accent #0284c7
-const FAT_MASS: Rgb = [217, 119, 6]; // --accent-2 #d97706
-const FFM: Rgb = [5, 150, 105]; // --accent-3 #059669
+const WEIGHT: Rgb = [2, 132, 199]; // --accent #0284c7（青）
+const FAT_MASS: Rgb = [202, 138, 4]; // --accent-2 #ca8a04（黄）
+const FFM: Rgb = [220, 38, 38]; // --accent-3 #dc2626（赤）
 
 /**
  * 描画エンジンのバージョン。見た目に影響する変更をしたら上げる。
  * og.pngのキャッシュバスターに含め、データが同じでも描画変更が
  * Slack等の画像プロキシキャッシュを貫通するようにする。
  */
-export const OG_RENDERER_VERSION = 5;
+export const OG_RENDERER_VERSION = 6;
 
 const PADDING = 104;
 const LINE_THICKNESS = 3;
