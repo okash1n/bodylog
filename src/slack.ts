@@ -1,4 +1,5 @@
 import type {
+  DailyExercise,
   DailyIntake,
   DayPoint,
   DigestTarget,
@@ -11,6 +12,7 @@ import type {
 import { LIMITS, assertSecret, dashboardBase, isoNow, offsetHours, ymdWithOffset } from './util';
 import { getDailySeries, getDayMeasurementCount, getLatestForBatch, getNotificationStats } from './queries';
 import { getIntakeForDay } from './meals';
+import { getExerciseForDay } from './exercise';
 import { OG_RENDERER_VERSION } from './og';
 
 /** 日次ダイジェストのバッチID（notification_batchesのUNIQUE制約で同日二重送信を防ぐ） */
@@ -169,6 +171,21 @@ export function formatIntakeLine(intake: DailyIntake | null): string | null {
   return `*摂取* : ${Math.round(intake.calories)} kcal${macros}`;
 }
 
+/** ダイジェストの消費行（有酸素）。消費が無い/0の日は行を出さない */
+export function formatBurnLine(exercise: DailyExercise | null): string | null {
+  if (!exercise || exercise.calories_burned == null || exercise.calories_burned <= 0) return null;
+  return `*消費(有酸素)* : ${Math.round(exercise.calories_burned)} kcal`;
+}
+
+/**
+ * ネット行 = 摂取 − 運動消費。摂取と消費の両方がある日だけ出す。
+ * 基礎代謝は含まない（真のエネルギー収支ではないことを明記する）。
+ */
+export function formatNetLine(intake: DailyIntake | null, exercise: DailyExercise | null): string | null {
+  if (!intake || exercise?.calories_burned == null || exercise.calories_burned <= 0) return null;
+  return `*ネット* : ${Math.round(intake.calories - exercise.calories_burned)} kcal (摂取−運動消費)`;
+}
+
 /** 日次ダイジェスト（その日の平均3値 + 7日平均比 + 基準日比 + 当日摂取） */
 export function buildDigestBlocks(input: {
   date: string;
@@ -178,6 +195,7 @@ export function buildDigestBlocks(input: {
   dashboardUrl: string;
   ogImageUrl?: string;
   intake?: DailyIntake | null;
+  exercise?: DailyExercise | null;
 }): unknown[] {
   const { date, count, day, stats, dashboardUrl, ogImageUrl } = input;
 
@@ -207,8 +225,13 @@ export function buildDigestBlocks(input: {
     blocks.push(section(`*基準日（${stats.baselineDate}）からの変化*\n${baselineLine}`));
   }
 
-  const intakeLine = formatIntakeLine(input.intake ?? null);
-  if (intakeLine) blocks.push(section(intakeLine));
+  // 当日の摂取 → 消費(有酸素) → ネット の順。それぞれ該当データがある日だけ出す
+  const energyLines = [
+    formatIntakeLine(input.intake ?? null),
+    formatBurnLine(input.exercise ?? null),
+    formatNetLine(input.intake ?? null, input.exercise ?? null),
+  ].filter((l): l is string => l !== null);
+  if (energyLines.length) blocks.push(section(energyLines.join('\n')));
 
   blocks.push(section(`ダッシュボード: ${dashboardUrl}`));
   if (ogImageUrl) {
@@ -320,10 +343,11 @@ export async function runDailyDigest(env: Env, origin: string): Promise<{ queued
 async function buildDailyDigestMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
   try {
     const date = batchId.slice(DAILY_BATCH_PREFIX.length);
-    const [series, count, intake] = await Promise.all([
+    const [series, count, intake, exercise] = await Promise.all([
       getDailySeries(env, date, date),
       getDayMeasurementCount(env, date),
       getIntakeForDay(env, date),
+      getExerciseForDay(env, date),
     ]);
     const day = series[series.length - 1];
     if (!day) {
@@ -348,6 +372,7 @@ async function buildDailyDigestMessage(env: Env, origin: string, batchId: string
         day,
         stats,
         intake,
+        exercise,
         dashboardUrl: `${base}?v=${date}`,
         ogImageUrl: `${base}og.png?v=${v}`,
       }),

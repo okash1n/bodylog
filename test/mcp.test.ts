@@ -93,18 +93,22 @@ describe('MCPサーバー（/rw/mcp・OAuth必須）', () => {
     expect(serverInfo.name).toBe('withings-weight-tracker');
   });
 
-  it('tools/list が読み取り5＋書き込み2ツールを返す', async () => {
+  it('tools/list が読み取り7＋書き込み4ツールを返す', async () => {
     const res = await rwRpc(token, 'tools/list');
     expect(res.status).toBe(200);
     const body = (await res.json()) as RpcResponse;
     const names = (body.result as { tools: { name: string }[] }).tools.map((t) => t.name).sort();
     expect(names).toEqual([
+      'create_exercise_menu',
       'create_menu',
       'get_daily_series',
+      'get_exercise_logs',
       'get_meal_logs',
       'get_raw_measurements',
       'get_weight_summary',
+      'log_exercise',
       'log_meal',
+      'search_exercise_menus',
       'search_menus',
     ]);
   });
@@ -199,7 +203,7 @@ describe('MCPサーバー（/rw/mcp・OAuth必須）', () => {
     const res = await rwRpc(token, 'tools/list', {}, { 'MCP-Protocol-Version': '2026-07-28' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as RpcResponse;
-    expect((body.result as { tools: unknown[] }).tools).toHaveLength(7);
+    expect((body.result as { tools: unknown[] }).tools).toHaveLength(11);
   });
 
   it('未対応バージョンヘッダ付きinitializeはサーバー対応版へ交渉される', async () => {

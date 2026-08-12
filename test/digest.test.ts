@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/types';
 import {
+  formatBurnLine,
   formatIntakeLine,
+  formatNetLine,
   immediateDestinations,
   parseDestinations,
   parseDigestTime,
   runDailyDigest,
   runDailyDigestIfDue,
 } from '../src/slack';
+import type { DailyExercise, DailyIntake } from '../src/types';
 import { insertMeasurement, resetTables, setSetting, stubFetch, testEnv } from './helpers';
 
 const SLACK_HOST = 'hooks.slack.com';
@@ -184,5 +187,29 @@ describe('ダイジェストの摂取カロリー行', () => {
   });
   it('記録なし（null）は行を出さない', () => {
     expect(formatIntakeLine(null)).toBeNull();
+  });
+});
+
+describe('ダイジェストの運動（消費・ネット）行', () => {
+  const intake = (cal: number): DailyIntake => ({ d: '2026-08-12', count: 2, calories: cal, protein_g: null, fat_g: null, carbs_g: null });
+  const ex = (burned: number | null, volume: number | null): DailyExercise => ({
+    d: '2026-08-12', calories_burned: burned, strength_volume: volume, cardio_count: burned ? 1 : 0, strength_count: volume ? 1 : 0,
+  });
+
+  it('消費(有酸素)を整形する', () => {
+    expect(formatBurnLine(ex(320.6, null))).toBe('*消費(有酸素)* : 321 kcal');
+  });
+  it('消費が無い/0/筋トレのみは行を出さない', () => {
+    expect(formatBurnLine(null)).toBeNull();
+    expect(formatBurnLine(ex(0, null))).toBeNull();
+    expect(formatBurnLine(ex(null, 1200))).toBeNull(); // 筋トレのみ
+  });
+  it('ネットは摂取−運動消費（基礎代謝は含まない旨を明記）', () => {
+    expect(formatNetLine(intake(1850), ex(320, null))).toBe('*ネット* : 1530 kcal (摂取−運動消費)');
+  });
+  it('ネットは摂取と消費の両方がある日だけ出す', () => {
+    expect(formatNetLine(null, ex(320, null))).toBeNull();
+    expect(formatNetLine(intake(1850), null)).toBeNull();
+    expect(formatNetLine(intake(1850), ex(0, null))).toBeNull();
   });
 });

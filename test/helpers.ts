@@ -11,6 +11,9 @@ export async function resetTables(): Promise<void> {
   const tables = [
     'meal_logs',
     'menus',
+    'exercise_sets',
+    'exercise_logs',
+    'exercise_menus',
     'measurements',
     'tokens',
     'settings',

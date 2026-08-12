@@ -176,3 +176,64 @@ export interface DailyIntake {
   fat_g: number | null;
   carbs_g: number | null;
 }
+
+// ---- 運動記録 ----
+
+export type ExerciseCategory = 'cardio' | 'strength';
+
+export interface ExerciseMenu {
+  id: string;
+  name: string;
+  category: ExerciseCategory;
+  mets: number | null; // cardio用（安静時比の運動強度）
+  muscle_group: string | null; // strength任意
+  is_bodyweight: boolean; // strength用（自重種目）
+  note: string | null;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExerciseMenuInput {
+  name: string;
+  category: ExerciseCategory;
+  mets?: number | null;
+  muscle_group?: string | null;
+  is_bodyweight?: boolean;
+  note?: string | null;
+}
+
+/** 筋トレ1セット（実効重量・ボリュームは読み取り時に算出） */
+export interface ExerciseSet {
+  set_index: number;
+  reps: number;
+  weight_kg: number | null; // 追加/バーの重量。null/0 = 純自重
+  effective_weight_kg: number; // weight_kg + (自重種目なら記録時の体重)
+  volume: number; // reps * effective_weight_kg
+}
+
+export interface ExerciseLog {
+  id: string;
+  menu_id: string;
+  performed_at: string; // ISO8601 UTC
+  category: ExerciseCategory;
+  menu_name: string; // スナップショット
+  note: string | null;
+  is_bodyweight: boolean; // スナップショット
+  duration_min: number | null; // cardio
+  mets: number | null; // cardio スナップショット
+  body_weight_kg: number | null; // スナップショット（cardio消費kcal / 自重ボリューム用）
+  calories: number | null; // cardio 消費kcal（算出結果）
+  created_at: string;
+  sets: ExerciseSet[]; // strengthのみ（cardioは空配列）
+  total_volume: number | null; // strengthのみ（Σ volume）
+}
+
+/** 運動の日次集計（消費kcalと筋トレ総ボリューム） */
+export interface DailyExercise {
+  d: string; // ローカル日付 YYYY-MM-DD
+  calories_burned: number | null; // cardioの消費kcal合計
+  strength_volume: number | null; // strengthの総ボリューム合計
+  cardio_count: number;
+  strength_count: number;
+}

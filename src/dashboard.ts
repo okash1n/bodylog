@@ -13,6 +13,7 @@ import {
 import { getDailySeries, getImportStatus, getRawMeasurements, getSummary } from './queries';
 import { llmsTxt, openapiSpec } from './ai';
 import { serveMealsDaily, serveMealsList, serveMenus } from './meals-api';
+import { serveExerciseDaily, serveExerciseLogs, serveExerciseMenus } from './exercise-api';
 import { OG_RENDERER_VERSION, renderOgPng } from './og';
 import indexHtmlTpl from './dashboard/index.html';
 import stylesCss from './dashboard/styles.css';
@@ -206,6 +207,9 @@ export function createDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/:slug/api/menus', guarded(serveMenus));
   app.get('/:slug/api/meals/daily', guarded(serveMealsDaily));
   app.get('/:slug/api/meals', guarded(serveMealsList));
+  app.get('/:slug/api/exercise/menus', guarded(serveExerciseMenus));
+  app.get('/:slug/api/exercise/daily', guarded(serveExerciseDaily));
+  app.get('/:slug/api/exercise/logs', guarded(serveExerciseLogs));
   app.get('/:slug/llms.txt', guarded(serveLlmsTxt));
   app.get('/:slug/openapi.json', guarded(serveOpenapi));
   app.get('/:slug/og.png', guarded(serveOg));
@@ -233,6 +237,9 @@ export function createRootDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/api/menus', guarded(serveMenus));
   app.get('/api/meals/daily', guarded(serveMealsDaily));
   app.get('/api/meals', guarded(serveMealsList));
+  app.get('/api/exercise/menus', guarded(serveExerciseMenus));
+  app.get('/api/exercise/daily', guarded(serveExerciseDaily));
+  app.get('/api/exercise/logs', guarded(serveExerciseLogs));
   app.get('/llms.txt', guarded(serveLlmsTxt));
   app.get('/openapi.json', guarded(serveOpenapi));
   app.get('/og.png', guarded(serveOg));

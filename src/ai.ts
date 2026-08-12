@@ -33,6 +33,9 @@ export function llmsTxt(origin: string, base: string, tzOffsetHours: number): st
 - GET ${root}/api/menus?q= — 食事メニュー（マスタ）一覧・検索
 - GET ${root}/api/meals?days=7 — 食事記録（メニュー名・倍率・実効kcal/PFC付き）
 - GET ${root}/api/meals/daily?days=30 — 日次の摂取カロリー・PFC合計
+- GET ${root}/api/exercise/menus?q=&category= — 運動種目（マスタ）一覧・検索。category=cardio|strengthで絞れる
+- GET ${root}/api/exercise/logs?days=30 — 運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）
+- GET ${root}/api/exercise/daily?days=30 — 日次の消費カロリー（有酸素）と総ボリューム（筋トレ）
 - GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（ChatGPTカスタムGPTのActionsにはこれを登録する）
 - POST ${root}/rw/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール
 
@@ -304,6 +307,96 @@ export function openapiSpec(
           },
         },
       },
+      '/api/exercise/menus': {
+        get: {
+          operationId: 'getExerciseMenus',
+          summary: '運動種目（マスタ）一覧・検索',
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              required: false,
+              description: '種目名の部分一致検索',
+              schema: { type: 'string' },
+            },
+            {
+              name: 'category',
+              in: 'query',
+              required: false,
+              description: 'cardio=有酸素 / strength=筋トレ で絞る',
+              schema: { type: 'string', enum: ['cardio', 'strength'] },
+            },
+            {
+              name: 'archived',
+              in: 'query',
+              required: false,
+              description: '1を指定するとアーカイブ済みも含める（既定は除外）',
+              schema: { type: 'string', enum: ['0', '1'] },
+            },
+          ],
+          responses: {
+            '200': {
+              description: '種目一覧（最大500件）',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      menus: { type: 'array', items: { $ref: '#/components/schemas/ExerciseMenu' } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/api/exercise/logs': {
+        get: {
+          operationId: 'getExerciseLogs',
+          summary: '運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き、新しい順、最大2000件）',
+          parameters: rangeParams,
+          responses: {
+            '200': {
+              description: '運動記録一覧',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      logs: { type: 'array', items: { $ref: '#/components/schemas/ExerciseLog' } },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+          },
+        },
+      },
+      '/api/exercise/daily': {
+        get: {
+          operationId: 'getDailyExercise',
+          summary: '日次の消費カロリー（有酸素）と総ボリューム（筋トレ）',
+          parameters: rangeParams,
+          responses: {
+            '200': {
+              description: '日次運動量の時系列',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      days: { type: 'array', items: { $ref: '#/components/schemas/DailyExercise' } },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+          },
+        },
+      },
     },
     components: {
       schemas: {
@@ -383,6 +476,68 @@ export function openapiSpec(
             protein_g: { type: ['number', 'null'] },
             fat_g: { type: ['number', 'null'] },
             carbs_g: { type: ['number', 'null'] },
+          },
+        },
+        ExerciseMenu: {
+          type: 'object',
+          description: '運動種目（マスタ）。cardioはmets、strengthはmuscle_group/is_bodyweightを持つ',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            category: { type: 'string', enum: ['cardio', 'strength'] },
+            mets: { type: ['number', 'null'], description: '有酸素の運動強度（安静時比）' },
+            muscle_group: { type: ['string', 'null'] },
+            is_bodyweight: { type: 'boolean' },
+            note: { type: ['string', 'null'] },
+            archived: { type: 'boolean' },
+            created_at: { type: 'string', format: 'date-time' },
+            updated_at: { type: 'string', format: 'date-time' },
+          },
+        },
+        ExerciseSet: {
+          type: 'object',
+          description:
+            '筋トレ1セット。effective_weight_kgは自重種目なら記録時の体重を加算した実効重量、volume=reps×実効重量',
+          properties: {
+            set_index: { type: 'integer' },
+            reps: { type: 'integer' },
+            weight_kg: { type: ['number', 'null'] },
+            effective_weight_kg: { type: 'number' },
+            volume: { type: 'number' },
+          },
+        },
+        ExerciseLog: {
+          type: 'object',
+          description:
+            '運動記録1件。menu_name等は記録時点のスナップショット。cardioはduration_min/mets/caloriesを持ち、' +
+            'strengthはsets（明細）とtotal_volume（総ボリューム）を持つ。caloriesは METs×体重×時間 の推定消費kcal',
+          properties: {
+            id: { type: 'string' },
+            menu_id: { type: 'string' },
+            performed_at: { type: 'string', format: 'date-time' },
+            category: { type: 'string', enum: ['cardio', 'strength'] },
+            menu_name: { type: 'string' },
+            note: { type: ['string', 'null'] },
+            is_bodyweight: { type: 'boolean' },
+            duration_min: { type: ['number', 'null'] },
+            mets: { type: ['number', 'null'] },
+            body_weight_kg: { type: ['number', 'null'] },
+            calories: { type: ['number', 'null'] },
+            created_at: { type: 'string', format: 'date-time' },
+            sets: { type: 'array', items: { $ref: '#/components/schemas/ExerciseSet' } },
+            total_volume: { type: ['number', 'null'] },
+          },
+        },
+        DailyExercise: {
+          type: 'object',
+          description:
+            '1日分の運動量。calories_burnedは有酸素の消費kcal合計、strength_volumeは筋トレの総ボリューム合計（該当なしはnull）',
+          properties: {
+            d: { type: 'string', format: 'date' },
+            calories_burned: { type: ['number', 'null'] },
+            strength_volume: { type: ['number', 'null'] },
+            cardio_count: { type: 'integer' },
+            strength_count: { type: 'integer' },
           },
         },
       },

@@ -8,6 +8,10 @@ import {
   createMenu, deleteMealLog, logMeal, parseMealFields, parseMenuInput, parseMenuPatch, setMenuArchived,
   updateMealLog, updateMenu,
 } from './meals';
+import {
+  createExerciseMenu, deleteExerciseLog, logExercise, parseExerciseLogFields,
+  parseExerciseMenuInput, parseExerciseMenuPatch, setExerciseMenuArchived, updateExerciseMenu,
+} from './exercise';
 import { handleMcpRequest } from './mcp';
 import { noindexHeaders } from './util';
 
@@ -62,6 +66,45 @@ export function createRwApp(): Hono<{ Bindings: Env }> {
     (await deleteMealLog(c.env, c.req.param('id')))
       ? c.json({ ok: true }, 200, headers())
       : c.json({ error: 'meal log not found' }, 404, headers()));
+
+  // ---- 運動 ----
+  app.post('/rw/exercise/menus', async (c) => {
+    const parsed = parseExerciseMenuInput(await readJson(c));
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400, headers());
+    return c.json(await createExerciseMenu(c.env, parsed.value), 201, headers());
+  });
+
+  app.patch('/rw/exercise/menus/:id', async (c) => {
+    const parsed = parseExerciseMenuPatch(await readJson(c));
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400, headers());
+    const menu = await updateExerciseMenu(c.env, c.req.param('id'), parsed.value);
+    return menu ? c.json(menu, 200, headers()) : c.json({ error: 'menu not found' }, 404, headers());
+  });
+
+  app.post('/rw/exercise/menus/:id/archive', async (c) =>
+    (await setExerciseMenuArchived(c.env, c.req.param('id'), true))
+      ? c.json({ ok: true }, 200, headers())
+      : c.json({ error: 'menu not found' }, 404, headers()));
+
+  app.post('/rw/exercise/menus/:id/unarchive', async (c) =>
+    (await setExerciseMenuArchived(c.env, c.req.param('id'), false))
+      ? c.json({ ok: true }, 200, headers())
+      : c.json({ error: 'menu not found' }, 404, headers()));
+
+  app.post('/rw/exercise/logs', async (c) => {
+    const body = (await readJson(c)) ?? {};
+    if (typeof body.menu_id !== 'string') return c.json({ error: 'menu_id is required' }, 400, headers());
+    const fields = parseExerciseLogFields(body);
+    if (!fields.ok) return c.json({ error: fields.error }, 400, headers());
+    const log = await logExercise(c.env, { menu_id: body.menu_id, ...fields.value });
+    if ('error' in log) return c.json({ error: log.error }, 400, headers());
+    return c.json(log, 201, headers());
+  });
+
+  app.delete('/rw/exercise/logs/:id', async (c) =>
+    (await deleteExerciseLog(c.env, c.req.param('id')))
+      ? c.json({ ok: true }, 200, headers())
+      : c.json({ error: 'exercise log not found' }, 404, headers()));
 
   app.all('/rw/mcp', (c) => handleMcpRequest(c, { write: true }));
 

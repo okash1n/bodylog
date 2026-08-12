@@ -1,7 +1,7 @@
 /**
- * MCP（Model Context Protocol）サーバー。公開エンドポイント（/mcp）では読み取り専用
- * ツール5つを、認証済みエンドポイント（/rw/mcp）では書き込みツール2つ（log_meal /
- * create_menu）を追加で公開する。
+ * MCP（Model Context Protocol）サーバー。読み取り専用ツール7つ（体重3 / 食事2 / 運動2）を
+ * 公開し、認証済みエンドポイント（/rw/mcp）では書き込みツール4つ（log_meal / create_menu /
+ * log_exercise / create_exercise_menu）を追加で公開する。
  * リクエストごとにサーバー/トランスポートを生成するステートレス構成
  * （セッションを持たないため、Durable Objects等の追加インフラが不要）。
  */
@@ -15,6 +15,10 @@ import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { getDailySeries, getRawMeasurements, getSummary } from './queries';
 import { createMenu, listMealLogs, listMenus, logMeal, parseMealFields, parseMenuInput } from './meals';
+import {
+  createExerciseMenu, listExerciseLogs, listExerciseMenus, logExercise,
+  parseExerciseLogFields, parseExerciseMenuInput,
+} from './exercise';
 import type { Env } from './types';
 import { LIMITS, localToday, noindexHeaders, offsetHours, resolveRange } from './util';
 
@@ -28,6 +32,7 @@ function instructions(tzOffsetHours: number): string {
     `日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours}のローカル日付。`,
     'まず get_weight_summary で全体像を取り、詳細な推移が必要なときだけ get_daily_series / get_raw_measurements を使う。',
     '食事記録はsearch_menus / get_meal_logsで照会できる（記録・メニュー作成は認可済みエンドポイント/rw/mcpのみ）。',
+    '運動記録はsearch_exercise_menus / get_exercise_logsで照会できる（有酸素は消費kcal、筋トレはセット明細と総ボリューム。記録・種目作成は/rw/mcpのみ）。',
   ].join('\n');
 }
 
@@ -126,6 +131,33 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       return jsonResult({ meals: await listMealLogs(env, range.from, range.to) });
     }),
   );
+  server.registerTool(
+    'search_exercise_menus',
+    {
+      description: '登録済みの運動種目（マスタ）を名前の部分一致で検索する。categoryで有酸素/筋トレを絞れる',
+      inputSchema: {
+        q: z.string().optional().describe('検索語（省略時は全件、最大500件）'),
+        category: z.enum(['cardio', 'strength']).optional().describe('cardio=有酸素 / strength=筋トレ'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    (args) => guarded('search_exercise_menus', async () =>
+      jsonResult({ menus: await listExerciseMenus(env, { q: args.q, category: args.category }) })),
+  );
+  server.registerTool(
+    'get_exercise_logs',
+    {
+      description:
+        '運動記録を返す。有酸素は消費kcal（METs×体重×時間）、筋トレはセット明細と総ボリューム付き。daysまたはfrom/toで期間指定',
+      inputSchema: rangeShape,
+      annotations: { readOnlyHint: true },
+    },
+    (args) => guarded('get_exercise_logs', async () => {
+      const range = resolveRange(args, localToday(env));
+      if (!range.ok) return errorResult(range.error);
+      return jsonResult({ logs: await listExerciseLogs(env, range.from, range.to) });
+    }),
+  );
   if (opts.write) {
     server.registerTool(
       'log_meal',
@@ -180,6 +212,65 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
         const parsed = parseMenuInput(args);
         if (!parsed.ok) return errorResult(parsed.error);
         return jsonResult(await createMenu(env, parsed.value));
+      }),
+    );
+    server.registerTool(
+      'log_exercise',
+      {
+        description:
+          '運動を記録する。menu_id か menu_name で登録済み種目を指定する。有酸素は duration_min（分）、筋トレは sets（[{reps, weight_kg?}]）を渡す。種目にない運動は記録できない（無ければ確認の上create_exercise_menuで登録してから）',
+        inputSchema: {
+          menu_id: z.string().optional().describe('種目ID（search_exercise_menusで取得）'),
+          menu_name: z.string().optional().describe('種目名（完全一致→一意な部分一致の順で解決）'),
+          performed_at: z.string().optional().describe('実施日時 ISO8601（省略時は現在時刻）'),
+          note: z.string().optional(),
+          duration_min: z.number().positive().optional().describe('有酸素: 実施時間（分）'),
+          sets: z
+            .array(z.object({ reps: z.number().int().positive(), weight_kg: z.number().nonnegative().optional() }))
+            .optional()
+            .describe('筋トレ: セット明細。weight_kgは追加/バーの重量（自重種目は体重が自動算入される）'),
+        },
+      },
+      (args) => guarded('log_exercise', async () => {
+        let menuId = args.menu_id;
+        if (!menuId && args.menu_name) {
+          const all = await listExerciseMenus(env, { q: args.menu_name });
+          const exact = all.filter((m) => m.name === args.menu_name);
+          const candidates = exact.length > 0 ? exact : all;
+          if (candidates.length === 0) return errorResult(`menu not found: ${args.menu_name}`);
+          if (candidates.length > 1) {
+            return errorResult(
+              `menu name is ambiguous: ${candidates.slice(0, 5).map((m) => m.name).join(' / ')}`,
+            );
+          }
+          menuId = candidates[0].id;
+        }
+        if (!menuId) return errorResult('menu_id or menu_name is required');
+        const fields = parseExerciseLogFields(args as Record<string, unknown>);
+        if (!fields.ok) return errorResult(fields.error);
+        const log = await logExercise(env, { menu_id: menuId, ...fields.value });
+        if ('error' in log) return errorResult(log.error);
+        return jsonResult(log);
+      }),
+    );
+    server.registerTool(
+      'create_exercise_menu',
+      {
+        description:
+          '運動種目（マスタ）を新規登録する。ユーザーが明示的に種目登録を依頼したときだけ使うこと。有酸素はmets必須、筋トレは自重種目ならis_bodyweight=true',
+        inputSchema: {
+          name: z.string().describe('種目名'),
+          category: z.enum(['cardio', 'strength']).describe('cardio=有酸素 / strength=筋トレ'),
+          mets: z.number().positive().optional().describe('有酸素の運動強度（安静時比）。cardioで必須'),
+          muscle_group: z.string().optional().describe('筋トレの対象部位（任意）'),
+          is_bodyweight: z.boolean().optional().describe('筋トレの自重種目（懸垂・腕立て等）'),
+          note: z.string().optional(),
+        },
+      },
+      (args) => guarded('create_exercise_menu', async () => {
+        const parsed = parseExerciseMenuInput(args);
+        if (!parsed.ok) return errorResult(parsed.error);
+        return jsonResult(await createExerciseMenu(env, parsed.value));
       }),
     );
   }
