@@ -2,7 +2,7 @@
 (() => {
   const base = document.querySelector('script[src*="meals.js"]').src.replace(/meals\.js.*$/, '');
   const origin = location.origin;
-  const LS = { token: 'meals.token', refresh: 'meals.refresh', client: 'meals.client_id', verifier: 'meals.pkce' };
+  const LS = { token: 'meals.token', refresh: 'meals.refresh', client: 'meals.client_id', verifier: 'meals.pkce', state: 'meals.state' };
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
@@ -40,11 +40,13 @@
     const clientId = await ensureClient();
     const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
     localStorage.setItem(LS.verifier, verifier);
+    const state = b64url(crypto.getRandomValues(new Uint8Array(32)));
+    localStorage.setItem(LS.state, state);
     const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
     const url = new URL(`${origin}/authorize`);
     url.search = new URLSearchParams({
       response_type: 'code', client_id: clientId, redirect_uri: base,
-      code_challenge: challenge, code_challenge_method: 'S256', state: 'dash', scope: 'meals',
+      code_challenge: challenge, code_challenge_method: 'S256', state, scope: 'meals',
     }).toString();
     location.href = url.toString();
   }
@@ -63,10 +65,22 @@
   async function handleCallback() {
     const q = new URLSearchParams(location.search);
     if (!q.get('code')) return;
-    await exchangeToken({
-      grant_type: 'authorization_code', code: q.get('code'), redirect_uri: base,
-      client_id: localStorage.getItem(LS.client), code_verifier: localStorage.getItem(LS.verifier),
-    });
+    const savedState = localStorage.getItem(LS.state);
+    if (!savedState || q.get('state') !== savedState) {
+      localStorage.removeItem(LS.state);
+      localStorage.removeItem(LS.verifier);
+      history.replaceState(null, '', base);
+      return;
+    }
+    try {
+      await exchangeToken({
+        grant_type: 'authorization_code', code: q.get('code'), redirect_uri: base,
+        client_id: localStorage.getItem(LS.client), code_verifier: localStorage.getItem(LS.verifier),
+      });
+    } finally {
+      localStorage.removeItem(LS.verifier);
+      localStorage.removeItem(LS.state);
+    }
     history.replaceState(null, '', base);
     showTab('meals');
   }
