@@ -136,11 +136,17 @@ export async function listExerciseMenus(
 
 // ---- 体重スナップショット ----
 
-/** performed_at 以前で最も新しい実測体重。1件も無ければ null（cardio/自重筋トレの記録に必須） */
+/**
+ * 実施日のローカル日付「以前」で最も新しい実測体重。1件も無ければ null
+ * （cardio/自重筋トレの記録に必須）。
+ * 同日ローカル日付内の計測は時刻に関わらず含める（過去日をJST正午でbackfillしても、
+ * その日の夕方の計測を拾える）。未来日の計測は混入させない。
+ */
 export async function getBodyWeightAt(env: Env, performedAt: string): Promise<number | null> {
+  const tz = tzModifier(env);
   const row = await env.DB.prepare(
     `SELECT weight FROM measurements
-WHERE measured_at <= ?1 AND weight IS NOT NULL
+WHERE date(measured_at, '${tz}') <= date(?1, '${tz}') AND weight IS NOT NULL
 ORDER BY measured_at DESC LIMIT 1`,
   )
     .bind(performedAt)

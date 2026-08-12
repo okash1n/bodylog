@@ -69,6 +69,13 @@ describe('体重スナップショット', () => {
   it('計測が1件も無ければnull', async () => {
     expect(await getBodyWeightAt(testEnv, `${localYmdDaysAgo(0)}T00:00:00Z`)).toBeNull();
   });
+
+  it('同日ローカル日付内なら、実施時刻より後の計測でも拾う（過去日backfill対応）', async () => {
+    const d = localYmdDaysAgo(1);
+    // 実施はJST正午(03:00Z)想定。その日の夕方(13:00Z=JST22時)に計測 → 同日なので採用される
+    await insertMeasurement({ grpid: 55, measured_at: `${d}T13:00:00Z`, weight: 68 });
+    expect(await getBodyWeightAt(testEnv, `${d}T03:00:00Z`)).toBe(68);
+  });
 });
 
 describe('有酸素の記録', () => {
