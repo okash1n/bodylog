@@ -177,3 +177,72 @@ export async function getIntakeForDay(env: Env, ymd: string): Promise<DailyIntak
   const rows = await getDailyIntake(env, ymd, ymd);
   return rows[0] ?? null;
 }
+
+const MEAL_TYPES: readonly string[] = ['breakfast', 'lunch', 'dinner', 'snack'];
+const MAX_MULTIPLIER = 20;
+
+function isPositiveFinite(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0;
+}
+
+function optionalNutrient(v: unknown): number | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  return isPositiveFinite(v) ? v : undefined;
+}
+
+/** REST（/rw/menus）とMCP（create_menu、Task 8）の両方から使うメニュー入力バリデータ */
+export function parseMenuInput(body: unknown): { ok: true; value: MenuInput } | { ok: false; error: string } {
+  const b = (body ?? {}) as Record<string, unknown>;
+  if (typeof b.name !== 'string' || b.name.trim() === '') return { ok: false, error: 'name is required' };
+  if (!isPositiveFinite(b.calories)) return { ok: false, error: 'calories must be a positive number' };
+  for (const key of ['protein_g', 'fat_g', 'carbs_g'] as const) {
+    if (b[key] !== undefined && b[key] !== null && !isPositiveFinite(b[key])) {
+      return { ok: false, error: `${key} must be a positive number` };
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      name: b.name.trim(),
+      calories: b.calories,
+      protein_g: optionalNutrient(b.protein_g) ?? null,
+      fat_g: optionalNutrient(b.fat_g) ?? null,
+      carbs_g: optionalNutrient(b.carbs_g) ?? null,
+      note: typeof b.note === 'string' ? b.note : null,
+    },
+  };
+}
+
+export interface MealFields {
+  multiplier?: number;
+  eaten_at?: string;
+  meal_type?: MealType;
+}
+
+/** REST（/rw/meals）とMCP（log_meal、Task 8）の両方から使う記録フィールドバリデータ */
+export function parseMealFields(b: Record<string, unknown>): { ok: true; value: MealFields } | { ok: false; error: string } {
+  const out: MealFields = {};
+  if (b.multiplier !== undefined) {
+    if (!isPositiveFinite(b.multiplier) || (b.multiplier as number) > MAX_MULTIPLIER) {
+      return { ok: false, error: `multiplier must be a positive number <= ${MAX_MULTIPLIER}` };
+    }
+    out.multiplier = b.multiplier as number;
+  }
+  if (b.eaten_at !== undefined) {
+    if (typeof b.eaten_at !== 'string' || Number.isNaN(Date.parse(b.eaten_at))) {
+      return { ok: false, error: 'eaten_at must be ISO8601' };
+    }
+    if (Date.parse(b.eaten_at) > Date.parse(isoNow()) + 60_000) {
+      return { ok: false, error: 'eaten_at must not be in the future' };
+    }
+    out.eaten_at = b.eaten_at;
+  }
+  if (b.meal_type !== undefined && b.meal_type !== null) {
+    if (typeof b.meal_type !== 'string' || !MEAL_TYPES.includes(b.meal_type)) {
+      return { ok: false, error: `meal_type must be one of ${MEAL_TYPES.join(', ')}` };
+    }
+    out.meal_type = b.meal_type as MealType;
+  }
+  return { ok: true, value: out };
+}
