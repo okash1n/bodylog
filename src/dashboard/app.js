@@ -571,7 +571,7 @@
     afterDatasetsDraw: function (ch) {
       var total = 0;
       ch.data.datasets.forEach(function (ds, i) {
-        if (!ch.isDatasetVisible(i)) return;
+        if (ds.yAxisID === 'yKcal' || !ch.isDatasetVisible(i)) return; // カロリー棒は点ラベル対象外
         ds.data.forEach(function (v) {
           if (v != null) total++;
         });
@@ -583,7 +583,7 @@
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
       ch.data.datasets.forEach(function (ds, di) {
-        if (!ch.isDatasetVisible(di)) return;
+        if (ds.yAxisID === 'yKcal' || !ch.isDatasetVisible(di)) return; // カロリー棒は点ラベルを描かない
         var meta = ch.getDatasetMeta(di);
         var lastIdx = -1;
         if (!showAll) {
@@ -620,6 +620,11 @@
         ? sets.weight7.concat(sets.fat7, sets.ffm7)
         : sets.weight.concat(sets.fat, sets.ffm),
     );
+    // カロリー右軸の初期レンジ（applyAxisRangesと同じ 0〜可視最大×1.15）。以降の更新と一貫させる
+    var kcalVals = cals.cal.filter(function (v) {
+      return v != null;
+    });
+    var kcalMax = kcalVals.length ? Math.max.apply(null, kcalVals) * 1.15 : undefined;
     chart = new Chart(els.canvas, {
       type: 'line',
       data: { labels: labels, datasets: buildDatasets(sets, cals, density, t) },
@@ -632,7 +637,17 @@
         color: t.text,
         plugins: {
           legend: {
-            labels: { color: t.text, usePointStyle: true, boxWidth: 8, boxHeight: 8 },
+            // カロリー棒は専用トグルで制御するため凡例には出さない
+            // （凡例クリックでmeta.hiddenが確定するとトグルと二重管理になり壊れるのを防ぐ）
+            labels: {
+              color: t.text,
+              usePointStyle: true,
+              boxWidth: 8,
+              boxHeight: 8,
+              filter: function (item) {
+                return item.datasetIndex !== CALORIE_DATASET_INDEX;
+              },
+            },
             onClick: onLegendClick,
           },
           tooltip: {
@@ -653,10 +668,13 @@
                 var pfc = ctx.dataset._pfc;
                 if (!pfc) return undefined;
                 var i = ctx.dataIndex;
+                var round1 = function (n) {
+                  return Math.round(n * 10) / 10;
+                };
                 var parts = [];
-                if (pfc.p[i] != null) parts.push('P' + pfc.p[i]);
-                if (pfc.f[i] != null) parts.push('F' + pfc.f[i]);
-                if (pfc.c[i] != null) parts.push('C' + pfc.c[i]);
+                if (pfc.p[i] != null) parts.push('P' + round1(pfc.p[i]));
+                if (pfc.f[i] != null) parts.push('F' + round1(pfc.f[i]));
+                if (pfc.c[i] != null) parts.push('C' + round1(pfc.c[i]));
                 return parts.length ? '   ' + parts.join(' ') : undefined;
               },
             },
@@ -687,6 +705,8 @@
             type: 'linear',
             position: 'right',
             beginAtZero: true,
+            min: 0,
+            max: kcalMax,
             display: calorieOverlay,
             // カロリー軸のグリッドは体重グリッドと重なると煩いので描かない
             grid: { drawOnChartArea: false },
@@ -694,7 +714,7 @@
               color: t.muted,
               maxTicksLimit: limits.y,
               callback: function (v) {
-                return v + ' kcal';
+                return Math.round(v) + ' kcal';
               },
             },
             border: { display: false },
@@ -726,7 +746,7 @@
     if (d[CALORIE_DATASET_INDEX]) {
       d[CALORIE_DATASET_INDEX].data = cals.cal;
       d[CALORIE_DATASET_INDEX]._pfc = { p: cals.p, f: cals.f, c: cals.c };
-      d[CALORIE_DATASET_INDEX].hidden = !calorieOverlay;
+      chart.setDatasetVisibility(CALORIE_DATASET_INDEX, calorieOverlay);
       chart.options.scales.yKcal.display = calorieOverlay;
     }
     var pr = pointRadiusFor(density);
@@ -940,8 +960,8 @@
           localStorage.setItem('dash-calorie-overlay', calorieOverlay ? '1' : '0');
         } catch (e) { /* 保存不可でも表示は切り替わる */ }
         if (!chart) return;
-        var d = chart.data.datasets[CALORIE_DATASET_INDEX];
-        if (d) d.hidden = !calorieOverlay;
+        // setDatasetVisibilityで統一（meta.hiddenを確定させ、凡例クリック等と競合しない）
+        chart.setDatasetVisibility(CALORIE_DATASET_INDEX, calorieOverlay);
         chart.options.scales.yKcal.display = calorieOverlay;
         applyAxisRanges(chart);
         chart.update('none');
