@@ -239,7 +239,6 @@ npx wrangler d1 execute withings-weight --remote \
 | `GET {base}/api/meals/daily?from=&to=` または `?days=N` | 日次の摂取カロリー・PFC合計 JSON。認証不要 |
 | `GET {base}/llms.txt` | AI向けのAPI案内（プレーンテキスト） |
 | `GET {base}/openapi.json` | OpenAPI 3.1 定義（ChatGPT カスタムGPTの Actions 登録用） |
-| `POST {base}/mcp` | MCP（Model Context Protocol）エンドポイント。Streamable HTTP・ステートレス・認証不要・読み取り専用5ツール |
 | `GET {base}/og.png` | OGP 画像（直近30日の体重グラフを PNG 生成。依存ライブラリなしの自前エンコーダ） |
 | 上記以外 | 404（全レスポンスに `X-Robots-Tag: noindex` 付与） |
 
@@ -267,8 +266,7 @@ ChatGPT・Claude などのAIクライアントから体重推移・食事記録�
 
 - **URLを渡して読ませる**: `https://weight.example.com/llms.txt` にエンドポイント一覧と使い方が載っているので、「このURLを見て最近の体重推移を教えて」だけで動く。要約は `/api/summary`、時系列は `/api/measurements?days=90` のように相対期間で取れる。食事記録は `/api/menus` `/api/meals` `/api/meals/daily` で照会できる
 - **ChatGPT カスタムGPT（Actions）**: GPT編集画面の Actions で「URLからインポート」に `https://weight.example.com/openapi.json` を指定する。認証は「なし」（読み取り専用）
-- **MCP クライアント（読み取り専用）**: `https://weight.example.com/mcp` を Streamable HTTP のリモートMCPサーバーとして登録する（認証なし）。ツールは `get_weight_summary` / `get_daily_series` / `get_raw_measurements` / `search_menus` / `get_meal_logs` の5つ。ChatGPT の場合は開発者モードのコネクタとして追加する（通常コネクタが要求する `search`/`fetch` ツールは未実装）
-- **MCP クライアント（書き込み）**: `https://weight.example.com/rw/mcp` を OAuth 対応のコネクタとして登録する。ChatGPT はコネクタ作成時に認証方式で「OAuth」を選ぶ。Claude Code は `claude mcp add --transport http weight-rw https://weight.example.com/rw/mcp`（接続時にブラウザで Google ログイン画面が開く）。ツールは `log_meal`（記録）/ `create_menu`（メニュー登録）の2つ。**記録は必ず登録済みメニューから行うこと**（メニューにない食事は先に `create_menu` で登録してから `log_meal` する。AI が判断でメニューを新規作成しないよう、登録前にユーザーへ確認するのが安全）
+- **MCP クライアント**: `https://weight.example.com/rw/mcp` を OAuth 対応のコネクタとして登録する（無認証のMCPエンドポイントは廃止。MCPアクセスは OAuth のみ）。ChatGPT はコネクタ作成時に認証方式で「OAuth」を選ぶ。Claude Code は `claude mcp add --transport http weight-rw https://weight.example.com/rw/mcp`（接続時にブラウザで Google ログイン画面が開く）。ツールは読み取り5つ（`get_weight_summary` / `get_daily_series` / `get_raw_measurements` / `search_menus` / `get_meal_logs`）＋書き込み2つ（`log_meal` 記録 / `create_menu` メニュー登録）。**記録は必ず登録済みメニューから行うこと**（メニューにない食事は先に `create_menu` で登録してから `log_meal` する。AI が判断でメニューを新規作成しないよう、登録前にユーザーへ確認するのが安全）
 
 単位は kg（`fat_ratio` のみ %）、日付境界は `TZ_OFFSET_HOURS` のローカル日付。`fat_mass` は `weight - fat_free_mass` の導出値。食事記録の `calories` は kcal、`protein_g`/`fat_g`/`carbs_g` は g。日次の栄養素合計（`/api/meals/daily`）のうち `protein_g`/`fat_g`/`carbs_g` は栄養素が入力済みの記録のみの部分合計（未入力の記録は含まない）。`calories` は全記録の合計。
 

@@ -34,7 +34,7 @@ export function llmsTxt(origin: string, base: string, tzOffsetHours: number): st
 - GET ${root}/api/meals?days=7 — 食事記録（メニュー名・倍率・実効kcal/PFC付き）
 - GET ${root}/api/meals/daily?days=30 — 日次の摂取カロリー・PFC合計
 - GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（ChatGPTカスタムGPTのActionsにはこれを登録する）
-- POST ${root}/mcp — MCP（Model Context Protocol）エンドポイント。Streamable HTTP・認証なし
+- POST ${root}/rw/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール
 
 ## 例
 
