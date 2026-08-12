@@ -1,4 +1,5 @@
 import type {
+  DailyIntake,
   DayPoint,
   DigestTarget,
   Env,
@@ -9,6 +10,7 @@ import type {
 } from './types';
 import { LIMITS, assertSecret, dashboardBase, isoNow, offsetHours, ymdWithOffset } from './util';
 import { getDailySeries, getDayMeasurementCount, getLatestForBatch, getNotificationStats } from './queries';
+import { getIntakeForDay } from './meals';
 import { OG_RENDERER_VERSION } from './og';
 
 /** 日次ダイジェストのバッチID（notification_batchesのUNIQUE制約で同日二重送信を防ぐ） */
@@ -148,7 +150,26 @@ export function buildMessageBlocks(input: {
   return blocks;
 }
 
-/** 日次ダイジェスト（その日の平均3値 + 7日平均比 + 基準日比） */
+/** 小数第1位まで（整数はそのまま） */
+function r1(n: number): string {
+  return (Math.round(n * 10) / 10).toString();
+}
+
+/**
+ * ダイジェストの摂取行。記録なし(null)は行を出さない（省略）。
+ * PFCは入力済み分の部分合計（Phase 1仕様）。mrkdwn制約に従いコードスパンは使わず括弧は半角。
+ */
+export function formatIntakeLine(intake: DailyIntake | null): string | null {
+  if (!intake) return null;
+  const pfc: string[] = [];
+  if (intake.protein_g != null) pfc.push(`P${r1(intake.protein_g)}`);
+  if (intake.fat_g != null) pfc.push(`F${r1(intake.fat_g)}`);
+  if (intake.carbs_g != null) pfc.push(`C${r1(intake.carbs_g)}`);
+  const macros = pfc.length ? ` (${pfc.join(' ')})` : '';
+  return `*摂取* : ${Math.round(intake.calories)} kcal${macros}`;
+}
+
+/** 日次ダイジェスト（その日の平均3値 + 7日平均比 + 基準日比 + 当日摂取） */
 export function buildDigestBlocks(input: {
   date: string;
   count: number;
@@ -156,6 +177,7 @@ export function buildDigestBlocks(input: {
   stats: NotificationStats;
   dashboardUrl: string;
   ogImageUrl?: string;
+  intake?: DailyIntake | null;
 }): unknown[] {
   const { date, count, day, stats, dashboardUrl, ogImageUrl } = input;
 
@@ -184,6 +206,9 @@ export function buildDigestBlocks(input: {
     ].join(' | ');
     blocks.push(section(`*基準日（${stats.baselineDate}）からの変化*\n${baselineLine}`));
   }
+
+  const intakeLine = formatIntakeLine(input.intake ?? null);
+  if (intakeLine) blocks.push(section(intakeLine));
 
   blocks.push(section(`ダッシュボード: ${dashboardUrl}`));
   if (ogImageUrl) {
@@ -295,9 +320,10 @@ export async function runDailyDigest(env: Env, origin: string): Promise<{ queued
 async function buildDailyDigestMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
   try {
     const date = batchId.slice(DAILY_BATCH_PREFIX.length);
-    const [series, count] = await Promise.all([
+    const [series, count, intake] = await Promise.all([
       getDailySeries(env, date, date),
       getDayMeasurementCount(env, date),
+      getIntakeForDay(env, date),
     ]);
     const day = series[series.length - 1];
     if (!day) {
@@ -321,6 +347,7 @@ async function buildDailyDigestMessage(env: Env, origin: string, batchId: string
         count,
         day,
         stats,
+        intake,
         dashboardUrl: `${base}?v=${date}`,
         ogImageUrl: `${base}og.png?v=${v}`,
       }),

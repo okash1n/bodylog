@@ -25,6 +25,9 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     expect(html).toContain('href="/manifest.webmanifest"');
     expect(html).not.toContain('{{BASE}}');
     expect(html).not.toContain('{{SLUG}}');
+    // Phase 2: カロリーオーバーレイのトグルと日次表の摂取列
+    expect(html).toContain('id="calorie-toggle"');
+    expect(html).toContain('摂取 <span class="unit">kcal</span>');
   });
 
   it('manifestの start_url / scope が / になる', async () => {

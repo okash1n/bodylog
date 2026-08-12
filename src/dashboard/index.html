@@ -96,6 +96,7 @@
         <button type="button" class="segment-btn" data-period="custom" aria-pressed="false"><span class="label-long">カスタム</span><span class="label-short">C</span></button>
       </div>
       <div class="controls-right">
+        <label id="calorie-toggle-wrap" class="calorie-toggle"><input type="checkbox" id="calorie-toggle" checked> <span class="label-long">カロリーを重ねる</span><span class="label-short">カロリー</span></label>
         <div class="segment" role="group" aria-label="表示系列">
           <button type="button" class="segment-btn active" data-mode="raw" aria-pressed="true">実測</button>
           <button type="button" class="segment-btn" data-mode="avg" aria-pressed="false"><span class="label-long">7日平均</span><span class="label-short">平均</span></button>
@@ -131,6 +132,7 @@
             <th>体重 <span class="unit">kg</span></th>
             <th>脂肪量 <span class="unit">kg</span></th>
             <th>除脂肪体重 <span class="unit">kg</span></th>
+            <th>摂取 <span class="unit">kcal</span></th>
           </tr>
         </thead>
         <tbody id="table-body"></tbody>
