@@ -114,6 +114,7 @@ export interface WeightSummary {
   diff_vs_prev7: MetricTriple; // recent7 - その前の7暦日
   baseline: { date: string | null; diff: MetricTriple }; // 最新計測 - 基準日値
   last_sync_at: string | null;
+  intake_today: DailyIntake | null; // 今日のローカル日付の食事摂取量（記録がなければ null）
 }
 
 export interface ImportStatus {

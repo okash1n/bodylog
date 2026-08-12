@@ -22,13 +22,17 @@ export function llmsTxt(origin: string, base: string, tzOffsetHours: number): st
 - fat_mass（脂肪量）は weight - fat_free_mass から導出した値
 - 日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours} のローカル日付
 - 期間指定は days=N（今日を末尾とする直近N日、当日含む）か from/to=YYYY-MM-DD。併用不可、最大${LIMITS.API_MAX_RANGE_DAYS}日
+- 日次PFC合計（protein_g/fat_g/carbs_g）は栄養素が入力済みの記録のみの合計（未入力の記録は含まれない）。caloriesは全記録の合計
 
 ## エンドポイント
 
-- GET ${root}/api/summary — 最新計測・直近7日平均・前週比・基準日比の要約。まずこれを見る
+- GET ${root}/api/summary — 最新計測・直近7日平均・前週比・基準日比・今日の食事摂取量の要約。まずこれを見る
 - GET ${root}/api/measurements?days=90 — 日次平均と7日移動平均の時系列
 - GET ${root}/api/raw?days=30 — 計測1回ごとの明細（新しい順、最大2000件）
 - GET ${root}/api/status — データ同期状態（最終同期・最新計測日時）
+- GET ${root}/api/menus?q= — 食事メニュー（マスタ）一覧・検索
+- GET ${root}/api/meals?days=7 — 食事記録（メニュー名・倍率・実効kcal/PFC付き）
+- GET ${root}/api/meals/daily?days=30 — 日次の摂取カロリー・PFC合計
 - GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（ChatGPTカスタムGPTのActionsにはこれを登録する）
 - POST ${root}/mcp — MCP（Model Context Protocol）エンドポイント。Streamable HTTP・認証なし
 
@@ -105,7 +109,7 @@ export function openapiSpec(
       '/api/summary': {
         get: {
           operationId: 'getWeightSummary',
-          summary: '体重データの要約（最新計測・直近7日平均・前週比・基準日比）',
+          summary: '体重データの要約（最新計測・直近7日平均・前週比・基準日比・今日の食事摂取量）',
           responses: {
             '200': {
               description: '要約',
@@ -130,6 +134,9 @@ export function openapiSpec(
                         },
                       },
                       last_sync_at: { type: ['string', 'null'], format: 'date-time' },
+                      intake_today: {
+                        oneOf: [{ $ref: '#/components/schemas/DailyIntake' }, { type: 'null' }],
+                      },
                     },
                   },
                 },
@@ -214,6 +221,89 @@ export function openapiSpec(
           },
         },
       },
+      '/api/menus': {
+        get: {
+          operationId: 'getMenus',
+          summary: '食事メニュー（マスタ）一覧・検索',
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              required: false,
+              description: 'メニュー名の部分一致検索',
+              schema: { type: 'string' },
+            },
+            {
+              name: 'archived',
+              in: 'query',
+              required: false,
+              description: '1を指定するとアーカイブ済みメニューも含める（既定は除外）',
+              schema: { type: 'string', enum: ['0', '1'] },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'メニュー一覧（最大500件）',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      menus: { type: 'array', items: { $ref: '#/components/schemas/Menu' } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/api/meals': {
+        get: {
+          operationId: 'getMealLogs',
+          summary: '食事記録（メニュー名・倍率・実効kcal/PFC付き、新しい順、最大2000件）',
+          parameters: rangeParams,
+          responses: {
+            '200': {
+              description: '食事記録一覧',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      meals: { type: 'array', items: { $ref: '#/components/schemas/MealLog' } },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+          },
+        },
+      },
+      '/api/meals/daily': {
+        get: {
+          operationId: 'getDailyIntake',
+          summary: '日次の摂取カロリー・PFC合計',
+          parameters: rangeParams,
+          responses: {
+            '200': {
+              description: '日次摂取量の時系列',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      days: { type: 'array', items: { $ref: '#/components/schemas/DailyIntake' } },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+          },
+        },
+      },
     },
     components: {
       schemas: {
@@ -240,6 +330,59 @@ export function openapiSpec(
             fat_mass: { type: ['number', 'null'] },
             fat_free_mass: { type: ['number', 'null'] },
             fat_ratio: { type: ['number', 'null'] },
+          },
+        },
+        Menu: {
+          type: 'object',
+          description: '食事メニュー（マスタ）。1食分のカロリー・PFCを保持する',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            calories: { type: 'number' },
+            protein_g: { type: ['number', 'null'] },
+            fat_g: { type: ['number', 'null'] },
+            carbs_g: { type: ['number', 'null'] },
+            note: { type: ['string', 'null'] },
+            archived: { type: 'boolean' },
+            created_at: { type: 'string', format: 'date-time' },
+            updated_at: { type: 'string', format: 'date-time' },
+          },
+        },
+        MealLog: {
+          type: 'object',
+          description:
+            '食事記録1件。menu_name/calories/protein_g/fat_g/carbs_gは記録時点のメニュー値のスナップショット。' +
+            'effective_*はmultiplierを乗じた実効値',
+          properties: {
+            id: { type: 'string' },
+            menu_id: { type: 'string' },
+            eaten_at: { type: 'string', format: 'date-time' },
+            meal_type: { type: ['string', 'null'], enum: ['breakfast', 'lunch', 'dinner', 'snack', null] },
+            multiplier: { type: 'number' },
+            menu_name: { type: 'string' },
+            calories: { type: 'number' },
+            protein_g: { type: ['number', 'null'] },
+            fat_g: { type: ['number', 'null'] },
+            carbs_g: { type: ['number', 'null'] },
+            created_at: { type: 'string', format: 'date-time' },
+            effective_calories: { type: 'number' },
+            effective_protein_g: { type: ['number', 'null'] },
+            effective_fat_g: { type: ['number', 'null'] },
+            effective_carbs_g: { type: ['number', 'null'] },
+          },
+        },
+        DailyIntake: {
+          type: 'object',
+          description:
+            '1日分の食事摂取量の合計。caloriesは全記録の合計。' +
+            'protein_g/fat_g/carbs_gは栄養素が入力済みの記録のみの部分合計（未入力の記録は含まれない）',
+          properties: {
+            d: { type: 'string', format: 'date' },
+            count: { type: 'integer' },
+            calories: { type: 'number' },
+            protein_g: { type: ['number', 'null'] },
+            fat_g: { type: ['number', 'null'] },
+            carbs_g: { type: ['number', 'null'] },
           },
         },
       },

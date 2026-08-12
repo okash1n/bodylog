@@ -7,7 +7,8 @@ import type {
   NotificationStats,
   WeightSummary,
 } from './types';
-import { isoNow, offsetHours, tzModifier } from './util';
+import { getIntakeForDay } from './meals';
+import { isoNow, localToday, offsetHours, tzModifier } from './util';
 
 function diffTriple(a: MetricTriple, b: MetricTriple): MetricTriple {
   return {
@@ -215,6 +216,7 @@ export async function getSummary(env: Env): Promise<WeightSummary> {
   const stats = latest ? await getNotificationStats(env, latest) : null;
   const lastSync = await env.DB.prepare(`SELECT value FROM settings WHERE key = 'last_sync_at'`)
     .first<{ value: string | null }>();
+  const intakeToday = await getIntakeForDay(env, localToday(env));
   return {
     as_of: isoNow(),
     units: { mass: 'kg', fat_ratio: 'percent' },
@@ -224,6 +226,7 @@ export async function getSummary(env: Env): Promise<WeightSummary> {
     diff_vs_prev7: stats?.diff7 ?? nullTriple(),
     baseline: { date: stats?.baselineDate ?? null, diff: stats?.baselineDiff ?? nullTriple() },
     last_sync_at: lastSync?.value ?? null,
+    intake_today: intakeToday,
   };
 }
 
