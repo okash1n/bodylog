@@ -186,6 +186,14 @@
       return true;
     }
   })();
+  // 体重トレンドライン（既定オフ）。localStorageに保存
+  var trendOn = (function () {
+    try {
+      return localStorage.getItem('dash-trend') === '1';
+    } catch (e) {
+      return false;
+    }
+  })();
   var lastCals = null; // 直近のカロリー整列結果（テーマ/リサイズ再描画で参照）
   var period = '1m';
   var customFromValue = null;
@@ -220,6 +228,7 @@
       accent: v('--accent'),
       accent2: v('--accent-2'),
       accent3: v('--accent-3'),
+      cal: v('--accent-cal'),
     };
   }
 
@@ -487,18 +496,59 @@
         data: cals.cal,
         yAxisID: 'yKcal',
         unit: 'kcal',
-        backgroundColor: hexToRgba(t.accent2, 0.3),
+        backgroundColor: hexToRgba(t.cal, 0.35),
         borderWidth: 0,
         order: 99,
         hidden: !calorieOverlay,
         _pfc: { p: cals.p, f: cals.f, c: cals.c },
       },
+      // 体重の線形トレンドライン（最小二乗）。オンオフはトグルで。muted色の直線で系列色と衝突させない
+      {
+        label: '体重トレンド',
+        data: trendLine(sets.weight),
+        yAxisID: 'yKg',
+        unit: 'kg',
+        borderColor: t.muted,
+        borderWidth: 1.5,
+        borderDash: [10, 6],
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        spanGaps: true,
+        fill: false,
+        order: 50,
+        hidden: !trendOn,
+        _trend: true,
+      },
     ];
+  }
+
+  // 体重(index順)の非null点から最小二乗回帰の直線を全ラベル分算出。点が2未満ならnull配列
+  function trendLine(weights) {
+    var n = 0;
+    var sx = 0;
+    var sy = 0;
+    var sxx = 0;
+    var sxy = 0;
+    weights.forEach(function (y, x) {
+      if (y == null) return;
+      n++;
+      sx += x;
+      sy += y;
+      sxx += x * x;
+      sxy += x * y;
+    });
+    if (n < 2) return weights.map(function () { return null; });
+    var denom = n * sxx - sx * sx;
+    if (denom === 0) return weights.map(function () { return null; });
+    var slope = (n * sxy - sx * sy) / denom;
+    var intercept = (sy - slope * sx) / n;
+    return weights.map(function (_, x) { return slope * x + intercept; });
   }
 
   var RAW_DATASET_INDEXES = [0, 2, 4];
   var AVG_DATASET_INDEXES = [1, 3, 5];
   var CALORIE_DATASET_INDEX = 6;
+  var TREND_DATASET_INDEX = 7;
 
   function setActiveMode(mode) {
     modeButtons.forEach(function (btn) {
@@ -528,7 +578,8 @@
   function visibleValues(ch, axisId) {
     var vals = [];
     ch.data.datasets.forEach(function (ds, i) {
-      if (ds.yAxisID !== axisId || !ch.isDatasetVisible(i)) return;
+      // トレンド直線は回帰値なので体重軸のオートスケール母数から除外（実データで軸を決める）
+      if (ds._trend || ds.yAxisID !== axisId || !ch.isDatasetVisible(i)) return;
       ds.data.forEach(function (v) {
         if (v != null) vals.push(v);
       });
@@ -571,7 +622,7 @@
     afterDatasetsDraw: function (ch) {
       var total = 0;
       ch.data.datasets.forEach(function (ds, i) {
-        if (ds.yAxisID === 'yKcal' || !ch.isDatasetVisible(i)) return; // カロリー棒は点ラベル対象外
+        if (ds.yAxisID === 'yKcal' || ds._trend || !ch.isDatasetVisible(i)) return; // カロリー棒・トレンドは点ラベル対象外
         ds.data.forEach(function (v) {
           if (v != null) total++;
         });
@@ -583,7 +634,7 @@
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
       ch.data.datasets.forEach(function (ds, di) {
-        if (ds.yAxisID === 'yKcal' || !ch.isDatasetVisible(di)) return; // カロリー棒は点ラベルを描かない
+        if (ds.yAxisID === 'yKcal' || ds._trend || !ch.isDatasetVisible(di)) return; // カロリー棒・トレンドは点ラベルを描かない
         var meta = ch.getDatasetMeta(di);
         var lastIdx = -1;
         if (!showAll) {
@@ -645,7 +696,9 @@
               boxWidth: 8,
               boxHeight: 8,
               filter: function (item) {
-                return item.datasetIndex !== CALORIE_DATASET_INDEX;
+                return (
+                  item.datasetIndex !== CALORIE_DATASET_INDEX && item.datasetIndex !== TREND_DATASET_INDEX
+                );
               },
             },
             onClick: onLegendClick,
@@ -749,9 +802,14 @@
       chart.setDatasetVisibility(CALORIE_DATASET_INDEX, calorieOverlay);
       chart.options.scales.yKcal.display = calorieOverlay;
     }
+    if (d[TREND_DATASET_INDEX]) {
+      d[TREND_DATASET_INDEX].data = trendLine(sets.weight);
+      chart.setDatasetVisibility(TREND_DATASET_INDEX, trendOn);
+    }
     var pr = pointRadiusFor(density);
     var phr = pointHoverRadiusFor(density);
     d.forEach(function (ds) {
+      if (ds._trend) return; // トレンド直線は点なしの直線のまま
       ds.pointRadius = pr;
       ds.pointHoverRadius = phr;
     });
@@ -901,8 +959,13 @@
     var colors = [t.accent, t.accent, t.accent2, t.accent2, t.accent3, t.accent3];
     chart.data.datasets.forEach(function (ds, i) {
       if (ds.yAxisID === 'yKcal') {
-        // カロリー棒はテーマ変更時も半透明accent2で塗り直す（色配列の対象外）
-        ds.backgroundColor = hexToRgba(t.accent2, 0.3);
+        // カロリー棒はテーマ変更時も半透明の緑で塗り直す（色配列の対象外）
+        ds.backgroundColor = hexToRgba(t.cal, 0.35);
+        return;
+      }
+      if (ds._trend) {
+        // トレンド直線はmuted色（系列色と別）
+        ds.borderColor = t.muted;
         return;
       }
       ds.borderColor = colors[i];
@@ -964,6 +1027,20 @@
         chart.setDatasetVisibility(CALORIE_DATASET_INDEX, calorieOverlay);
         chart.options.scales.yKcal.display = calorieOverlay;
         applyAxisRanges(chart);
+        chart.update('none');
+      });
+    }
+
+    var trendToggle = document.getElementById('trend-toggle');
+    if (trendToggle) {
+      trendToggle.checked = trendOn;
+      trendToggle.addEventListener('change', function () {
+        trendOn = trendToggle.checked;
+        try {
+          localStorage.setItem('dash-trend', trendOn ? '1' : '0');
+        } catch (e) { /* 保存不可でも表示は切り替わる */ }
+        if (!chart) return;
+        chart.setDatasetVisibility(TREND_DATASET_INDEX, trendOn);
         chart.update('none');
       });
     }
