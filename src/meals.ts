@@ -68,6 +68,11 @@ export async function setMenuArchived(env: Env, id: string, archived: boolean): 
   return (res.meta.changes ?? 0) > 0;
 }
 
+/** LIKE句のワイルドカード（%, _）とエスケープ文字自身（\）をリテラル一致させるためエスケープする */
+function escapeLikeValue(q: string): string {
+  return q.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
 export async function listMenus(
   env: Env,
   opts: { q?: string; includeArchived?: boolean },
@@ -76,8 +81,8 @@ export async function listMenus(
   const binds: unknown[] = [];
   if (!opts.includeArchived) conds.push('archived = 0');
   if (opts.q) {
-    binds.push(`%${opts.q}%`);
-    conds.push(`name LIKE ?${binds.length}`);
+    binds.push(`%${escapeLikeValue(opts.q)}%`);
+    conds.push(`name LIKE ?${binds.length} ESCAPE '\\'`);
   }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const res = await env.DB.prepare(

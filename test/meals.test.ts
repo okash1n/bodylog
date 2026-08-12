@@ -31,6 +31,16 @@ describe('メニューCRUD', () => {
     expect((await listMenus(testEnv, { q: 'ラダ' })).map((m) => m.name)).toEqual(['サラダ']);
   });
 
+  it('listMenusのqはLIKEワイルドカード（%, _）をリテラル文字として扱う', async () => {
+    await createMenu(testEnv, { name: 'off50%', calories: 100 });
+    await createMenu(testEnv, { name: 'off50X', calories: 100 });
+    expect((await listMenus(testEnv, { q: '50%' })).map((m) => m.name)).toEqual(['off50%']);
+
+    await createMenu(testEnv, { name: 'a_b', calories: 100 });
+    await createMenu(testEnv, { name: 'aXb', calories: 100 });
+    expect((await listMenus(testEnv, { q: 'a_b' })).map((m) => m.name)).toEqual(['a_b']);
+  });
+
   it('存在しないIDの更新はnull、archive切替はfalseを返す', async () => {
     expect(await updateMenu(testEnv, 'nope', { name: 'x', calories: 1 })).toBeNull();
     expect(await setMenuArchived(testEnv, 'nope', true)).toBe(false);
