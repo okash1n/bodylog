@@ -18,12 +18,13 @@ import { OG_RENDERER_VERSION, renderOgPng } from './og';
 import indexHtmlTpl from './dashboard/index.html';
 import stylesCss from './dashboard/styles.css';
 import appJs from './dashboard/app.js';
+import mealsJs from './dashboard/meals.js';
 import swJsTpl from './dashboard/sw.js';
 import manifestTpl from './dashboard/manifest.webmanifest';
 import chartVendorJs from './dashboard/vendor/chart.umd.js';
 
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
-export const ASSET_VERSION = '2026-08-07-1';
+export const ASSET_VERSION = '2026-08-13-1';
 
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';
 const JS_CONTENT_TYPE = 'text/javascript; charset=utf-8';
@@ -67,6 +68,9 @@ const serveStyles: Handler = (c) =>
 
 const serveAppJs: Handler = (c) =>
   c.body(appJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': STATIC_CACHE_CONTROL }));
+
+const serveMealsJs: Handler = (c) =>
+  c.body(mealsJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': STATIC_CACHE_CONTROL }));
 
 const serveVendor: Handler = (c) =>
   c.body(
@@ -194,6 +198,7 @@ export function createDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/:slug/', guarded(serveIndex));
   app.get('/:slug/styles.css', guarded(serveStyles));
   app.get('/:slug/app.js', guarded(serveAppJs));
+  app.get('/:slug/meals.js', guarded(serveMealsJs));
   app.get('/:slug/vendor/chart.umd.js', guarded(serveVendor));
   app.get('/:slug/manifest.webmanifest', guarded(serveManifest));
   app.get('/:slug/sw.js', guarded(serveSw));
@@ -221,6 +226,7 @@ export function createRootDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/', guarded(serveIndex));
   app.get('/styles.css', guarded(serveStyles));
   app.get('/app.js', guarded(serveAppJs));
+  app.get('/meals.js', guarded(serveMealsJs));
   app.get('/vendor/chart.umd.js', guarded(serveVendor));
   app.get('/manifest.webmanifest', guarded(serveManifest));
   app.get('/sw.js', guarded(serveSw));

@@ -45,4 +45,13 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     expect((await request('/', testEnv)).status).toBe(404);
     expect((await request('/api/status', testEnv)).status).toBe(404);
   });
+
+  it('/meals.js が配信され、HTMLに食事タブが含まれる', async () => {
+    const js = await request('/meals.js', rootEnv);
+    expect(js.status).toBe(200);
+    expect(js.headers.get('Content-Type')).toContain('javascript');
+    const html = await (await request('/', rootEnv)).text();
+    expect(html).toContain('id="tab-meals"');
+    expect(html).toContain('meals.js');
+  });
 });
