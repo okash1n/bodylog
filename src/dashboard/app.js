@@ -392,15 +392,6 @@
     };
   }
 
-  function weightGradient(ctx) {
-    var area = ctx.chart.chartArea;
-    if (!area) return 'rgba(0,0,0,0)';
-    var g = ctx.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
-    g.addColorStop(0, hexToRgba(themeCache.accent, 0.25));
-    g.addColorStop(1, hexToRgba(themeCache.accent, 0));
-    return g;
-  }
-
   function xTickCallback(value, index) {
     var idx = typeof value === 'number' ? value : index;
     var ymd = currentLabels[idx];
@@ -480,8 +471,7 @@
     var hideRaw = seriesMode === 'avg';
     return [
       measured('体重', sets.weight, t.accent, 'yKg', 'kg', {
-        fill: density === 'sparse' ? false : 'origin',
-        backgroundColor: weightGradient,
+        fill: false, // 体重線下の青いエリア塗りは無し（線のみ）
         hidden: hideRaw,
       }),
       avg('体重 7日平均', sets.weight7, t.accent, 'yKg', 'kg', !hideRaw),
@@ -502,24 +492,32 @@
         hidden: !calorieOverlay,
         _pfc: { p: cals.p, f: cals.f, c: cals.c },
       },
-      // 体重の線形トレンドライン（最小二乗）。オンオフはトグルで。muted色の直線で系列色と衝突させない
-      {
-        label: '体重トレンド',
-        data: trendLine(sets.weight),
-        yAxisID: 'yKg',
-        unit: 'kg',
-        borderColor: t.muted,
-        borderWidth: 1.5,
-        borderDash: [10, 6],
-        pointRadius: 0,
-        pointHoverRadius: 0,
-        spanGaps: true,
-        fill: false,
-        order: 50,
-        hidden: !trendOn,
-        _trend: true,
-      },
+      // 各系列の線形トレンドライン（最小二乗）。オンオフはトグルで。系列色の直線（長い破線）
+      trend('体重トレンド', sets.weight, 'accent', t.accent),
+      trend('脂肪量トレンド', sets.fat, 'accent2', t.accent2),
+      trend('除脂肪体重トレンド', sets.ffm, 'accent3', t.accent3),
     ];
+  }
+
+  // トレンド系列の定義。_trendColor はテーマ変更時の再着色キー
+  function trend(label, values, colorKey, color) {
+    return {
+      label: label,
+      data: trendLine(values),
+      yAxisID: 'yKg',
+      unit: 'kg',
+      borderColor: color,
+      borderWidth: 1.5,
+      borderDash: [12, 6],
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      spanGaps: true,
+      fill: false,
+      order: 50,
+      hidden: !trendOn,
+      _trend: true,
+      _trendColor: colorKey,
+    };
   }
 
   // 体重(index順)の非null点から最小二乗回帰の直線を全ラベル分算出。点が2未満ならnull配列
@@ -548,7 +546,9 @@
   var RAW_DATASET_INDEXES = [0, 2, 4];
   var AVG_DATASET_INDEXES = [1, 3, 5];
   var CALORIE_DATASET_INDEX = 6;
-  var TREND_DATASET_INDEX = 7;
+  // 体重・脂肪量・除脂肪体重のトレンド直線（buildDatasetsの並び順）
+  var TREND_DATASET_INDEXES = [7, 8, 9];
+  var TREND_SERIES_KEYS = ['weight', 'fat', 'ffm'];
 
   function setActiveMode(mode) {
     modeButtons.forEach(function (btn) {
@@ -697,7 +697,8 @@
               boxHeight: 8,
               filter: function (item) {
                 return (
-                  item.datasetIndex !== CALORIE_DATASET_INDEX && item.datasetIndex !== TREND_DATASET_INDEX
+                  item.datasetIndex !== CALORIE_DATASET_INDEX &&
+                  TREND_DATASET_INDEXES.indexOf(item.datasetIndex) === -1
                 );
               },
             },
@@ -802,10 +803,11 @@
       chart.setDatasetVisibility(CALORIE_DATASET_INDEX, calorieOverlay);
       chart.options.scales.yKcal.display = calorieOverlay;
     }
-    if (d[TREND_DATASET_INDEX]) {
-      d[TREND_DATASET_INDEX].data = trendLine(sets.weight);
-      chart.setDatasetVisibility(TREND_DATASET_INDEX, trendOn);
-    }
+    TREND_DATASET_INDEXES.forEach(function (idx, k) {
+      if (!d[idx]) return;
+      d[idx].data = trendLine(sets[TREND_SERIES_KEYS[k]]);
+      chart.setDatasetVisibility(idx, trendOn);
+    });
     var pr = pointRadiusFor(density);
     var phr = pointHoverRadiusFor(density);
     d.forEach(function (ds) {
@@ -813,7 +815,6 @@
       ds.pointRadius = pr;
       ds.pointHoverRadius = phr;
     });
-    d[0].fill = density === 'sparse' ? false : 'origin';
     var limits = tickLimitsFor(currentBp);
     chart.options.scales.x.ticks.autoSkip = density !== 'sparse';
     chart.options.scales.x.ticks.maxTicksLimit = limits.x;
@@ -964,8 +965,8 @@
         return;
       }
       if (ds._trend) {
-        // トレンド直線はmuted色（系列色と別）
-        ds.borderColor = t.muted;
+        // トレンド直線は各系列色で再着色
+        ds.borderColor = t[ds._trendColor] || t.muted;
         return;
       }
       ds.borderColor = colors[i];
@@ -1040,7 +1041,9 @@
           localStorage.setItem('dash-trend', trendOn ? '1' : '0');
         } catch (e) { /* 保存不可でも表示は切り替わる */ }
         if (!chart) return;
-        chart.setDatasetVisibility(TREND_DATASET_INDEX, trendOn);
+        TREND_DATASET_INDEXES.forEach(function (idx) {
+          chart.setDatasetVisibility(idx, trendOn);
+        });
         chart.update('none');
       });
     }
