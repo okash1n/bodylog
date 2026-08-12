@@ -5,7 +5,8 @@
 import { Hono, type Context } from 'hono';
 import type { Env } from './types';
 import {
-  createMenu, deleteMealLog, logMeal, parseMealFields, parseMenuInput, setMenuArchived, updateMealLog, updateMenu,
+  createMenu, deleteMealLog, logMeal, parseMealFields, parseMenuInput, parseMenuPatch, setMenuArchived,
+  updateMealLog, updateMenu,
 } from './meals';
 import { noindexHeaders } from './util';
 
@@ -22,7 +23,7 @@ export function createRwApp(): Hono<{ Bindings: Env }> {
   });
 
   app.patch('/rw/menus/:id', async (c) => {
-    const parsed = parseMenuInput(await readJson(c));
+    const parsed = parseMenuPatch(await readJson(c));
     if (!parsed.ok) return c.json({ error: parsed.error }, 400, headers());
     const menu = await updateMenu(c.env, c.req.param('id'), parsed.value);
     return menu ? c.json(menu, 200, headers()) : c.json({ error: 'menu not found' }, 404, headers());

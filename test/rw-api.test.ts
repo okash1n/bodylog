@@ -41,9 +41,49 @@ describe('/rw/ 書き込みAPI', () => {
 
     const patched = await rw(`/rw/menus/${menu.id}`, token, 'PATCH', { name: '牛丼大盛', calories: 900 });
     expect(patched.status).toBe(200);
+    const patchedMenu = (await patched.json()) as { name: string; calories: number; protein_g: number | null };
+    expect(patchedMenu.name).toBe('牛丼大盛');
+    expect(patchedMenu.calories).toBe(900);
+    // PATCHで送らなかったフィールドは保持される（部分更新。フルリプレイスでnull消去する回帰を防ぐ）
+    expect(patchedMenu.protein_g).toBe(20);
 
     expect((await rw(`/rw/menus/${menu.id}/archive`, token, 'POST')).status).toBe(200);
     expect((await rw(`/rw/menus/${menu.id}/unarchive`, token, 'POST')).status).toBe(200);
+  });
+
+  it('メニューPATCHは真の部分更新: 未指定は保持、明示nullはクリア、空パッチは400', async () => {
+    const created = await rw('/rw/menus', token, 'POST', {
+      name: '定食', calories: 800, protein_g: 25, fat_g: 15, carbs_g: 90, note: 'メモ',
+    });
+    const menu = (await created.json()) as { id: string };
+
+    // nameだけ送る → calories/protein_g/fat_g/carbs_g/noteは保持される
+    const onlyName = await rw(`/rw/menus/${menu.id}`, token, 'PATCH', { name: '定食大盛' });
+    expect(onlyName.status).toBe(200);
+    const afterOnlyName = (await onlyName.json()) as {
+      name: string; calories: number; protein_g: number | null; fat_g: number | null;
+      carbs_g: number | null; note: string | null;
+    };
+    expect(afterOnlyName.name).toBe('定食大盛');
+    expect(afterOnlyName.calories).toBe(800);
+    expect(afterOnlyName.protein_g).toBe(25);
+    expect(afterOnlyName.fat_g).toBe(15);
+    expect(afterOnlyName.carbs_g).toBe(90);
+    expect(afterOnlyName.note).toBe('メモ');
+
+    // protein_g: null を明示送信 → protein_gだけクリアされ、他は保持される
+    const cleared = await rw(`/rw/menus/${menu.id}`, token, 'PATCH', { protein_g: null });
+    expect(cleared.status).toBe(200);
+    const afterCleared = (await cleared.json()) as {
+      name: string; protein_g: number | null; fat_g: number | null; carbs_g: number | null;
+    };
+    expect(afterCleared.protein_g).toBeNull();
+    expect(afterCleared.fat_g).toBe(15);
+    expect(afterCleared.carbs_g).toBe(90);
+    expect(afterCleared.name).toBe('定食大盛');
+
+    // 有効フィールドが1つも無い空パッチは400
+    expect((await rw(`/rw/menus/${menu.id}`, token, 'PATCH', {})).status).toBe(400);
   });
 
   it('バリデーション: caloriesが負・multiplier過大・不正meal_typeは400', async () => {

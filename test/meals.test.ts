@@ -18,7 +18,7 @@ describe('メニューCRUD', () => {
 
     const updated = await updateMenu(testEnv, menu.id, { name: 'ラーメン大', calories: 1000 });
     expect(updated?.calories).toBe(1000);
-    expect(updated?.protein_g).toBeNull(); // 全項目置き換え
+    expect(updated?.protein_g).toBe(20); // 部分更新: patchに含まれないフィールドは現状維持
   });
 
   it('listMenusは部分一致検索でき、archivedは既定で除外', async () => {

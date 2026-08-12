@@ -36,13 +36,26 @@ export async function getMenu(env: Env, id: string): Promise<Menu | null> {
   return row ? toMenu(row) : null;
 }
 
-export async function updateMenu(env: Env, id: string, input: MenuInput): Promise<Menu | null> {
-  const res = await env.DB.prepare(
-    `UPDATE menus SET name = ?2, calories = ?3, protein_g = ?4, fat_g = ?5, carbs_g = ?6, note = ?7, updated_at = ?8
-WHERE id = ?1`,
-  )
-    .bind(id, input.name, input.calories, input.protein_g ?? null, input.fat_g ?? null,
-          input.carbs_g ?? null, input.note ?? null, isoNow())
+/** 更新可能な列の固定リスト（列名はここからのみ組み立て、ユーザー入力を列名に使わない） */
+const MENU_PATCHABLE_COLS = ['name', 'calories', 'protein_g', 'fat_g', 'carbs_g', 'note'] as const;
+
+/**
+ * patchに含まれるキーのみをSETする真の部分更新。キーが存在しないフィールドは現状維持、
+ * 値がnullのフィールドはクリアする（呼び出し元でこの区別を作っておくこと。parseMenuPatch参照）。
+ */
+export async function updateMenu(env: Env, id: string, patch: Partial<MenuInput>): Promise<Menu | null> {
+  const binds: unknown[] = [id];
+  const sets: string[] = [];
+  for (const col of MENU_PATCHABLE_COLS) {
+    if (col in patch) {
+      binds.push(patch[col] ?? null);
+      sets.push(`${col} = ?${binds.length}`);
+    }
+  }
+  binds.push(isoNow());
+  sets.push(`updated_at = ?${binds.length}`);
+  const res = await env.DB.prepare(`UPDATE menus SET ${sets.join(', ')} WHERE id = ?1`)
+    .bind(...binds)
     .run();
   if ((res.meta.changes ?? 0) === 0) return null;
   return getMenu(env, id);
@@ -212,6 +225,46 @@ export function parseMenuInput(body: unknown): { ok: true; value: MenuInput } | 
       note: typeof b.note === 'string' ? b.note : null,
     },
   };
+}
+
+/**
+ * PATCH /rw/menus/:id 用の部分更新バリデータ。parseMenuInputと異なり、キーの有無
+ * （送信されたか否か）と値のnullを区別する: キー無し=現状維持、null=クリア、値あり=検証してセット。
+ * name/calories はDB上NOT NULLのためnullクリアを許可しない（送るなら有効値必須）。
+ */
+export function parseMenuPatch(body: unknown): { ok: true; value: Partial<MenuInput> } | { ok: false; error: string } {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const out: Partial<MenuInput> = {};
+  if ('name' in b) {
+    if (typeof b.name !== 'string' || b.name.trim() === '') return { ok: false, error: 'name is required' };
+    out.name = b.name.trim();
+  }
+  if ('calories' in b) {
+    if (!isPositiveFinite(b.calories)) return { ok: false, error: 'calories must be a positive number' };
+    out.calories = b.calories;
+  }
+  for (const key of ['protein_g', 'fat_g', 'carbs_g'] as const) {
+    if (key in b) {
+      if (b[key] === null) {
+        out[key] = null;
+      } else if (isPositiveFinite(b[key])) {
+        out[key] = b[key] as number;
+      } else {
+        return { ok: false, error: `${key} must be a positive number` };
+      }
+    }
+  }
+  if ('note' in b) {
+    if (b.note === null) {
+      out.note = null;
+    } else if (typeof b.note === 'string') {
+      out.note = b.note;
+    } else {
+      return { ok: false, error: 'note must be a string or null' };
+    }
+  }
+  if (Object.keys(out).length === 0) return { ok: false, error: 'no fields to update' };
+  return { ok: true, value: out };
 }
 
 export interface MealFields {
