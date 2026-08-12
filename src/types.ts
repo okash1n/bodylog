@@ -148,3 +148,30 @@ export interface MenuInput {
   carbs_g?: number | null;
   note?: string | null;
 }
+
+export interface MealLog {
+  id: string;
+  menu_id: string;
+  eaten_at: string; // ISO8601 UTC
+  meal_type: MealType | null;
+  multiplier: number;
+  menu_name: string;
+  calories: number; // 1食分スナップショット
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+  created_at: string;
+  effective_calories: number; // calories * multiplier（読み取り時に計算）
+  effective_protein_g: number | null;
+  effective_fat_g: number | null;
+  effective_carbs_g: number | null;
+}
+
+export interface DailyIntake {
+  d: string; // ローカル日付 YYYY-MM-DD
+  count: number;
+  calories: number;
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+}
