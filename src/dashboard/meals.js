@@ -6,6 +6,10 @@
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+  // サーバーの日付境界（TZ_OFFSET_HOURS=9 / JST）に合わせた「今日」。日付セレクタの初期値・上限に使う
+  const todayJst = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  // 表示・記録の対象日（空なら今日）
+  const selectedDate = () => $('meal-date').value || todayJst();
   // 小数第1位まで（整数はそのまま）
   const r1 = (n) => (Math.round(n * 10) / 10).toString();
   // P/F/C を「 · P9.3 F6.4 C60」の形に。全て未入力なら空文字（栄養素はnull可）
@@ -140,8 +144,9 @@
   let selectedMenu = null;
   async function refresh() {
     updateAuthUi();
+    const day = selectedDate();
     const [mealsRes, menusRes] = await Promise.all([
-      fetch(`${base}api/meals?days=1`),
+      fetch(`${base}api/meals?from=${day}&to=${day}`),
       fetch(`${base}api/menus`),
     ]);
     const meals = (await mealsRes.json()).meals ?? [];
@@ -180,29 +185,128 @@
     }
   });
 
-  // ---- 記録フォーム ----
-  $('meal-menu-search').addEventListener('input', () => {
+  // ---- 記録フォーム（fzf風メニューピッカー） ----
+  const CAND_LIMIT = 10;
+  let candList = []; // 現在表示中の候補 [{ m, score, matched }]
+  let activeIdx = -1; // キーボードで選択中の候補インデックス
+
+  // あいまい一致（部分列マッチ）。q の各文字が name に順番に現れれば候補。
+  // 連続一致・先頭一致を高評価。matched は一致文字のインデックス（ハイライト用）。
+  // 絵文字（サロゲートペア）対応のためコードポイント配列で処理する。
+  const fuzzyMatch = (name, q) => {
+    const chars = [...name];
+    if (!q) return { score: 0, matched: [] };
+    const lc = chars.map((c) => c.toLowerCase());
+    const lq = [...q.toLowerCase()];
+    const matched = [];
+    let qi = 0;
+    let score = 0;
+    let prev = -2;
+    for (let i = 0; i < lc.length && qi < lq.length; i++) {
+      if (lc[i] === lq[qi]) {
+        matched.push(i);
+        score += (prev === i - 1 ? 3 : 1) + (i === 0 ? 2 : 0);
+        prev = i;
+        qi++;
+      }
+    }
+    if (qi < lq.length) return null; // 全文字はマッチしなかった
+    return { score: score - chars.length * 0.01, matched }; // 短い名前をわずかに優遇
+  };
+
+  const computeCandidates = () => {
     const q = $('meal-menu-search').value.trim();
-    const hits = q ? menus.filter((m) => m.name.includes(q)) : menus;
-    $('meal-menu-candidates').innerHTML = hits
-      .slice(0, 8)
-      .map((m) => `<li data-pick="${m.id}">${esc(m.name)}（${m.calories} kcal${pfc(m.protein_g, m.fat_g, m.carbs_g)}）</li>`)
+    const scored = [];
+    for (const m of menus) {
+      const r = fuzzyMatch(m.name, q);
+      if (r) scored.push({ m, ...r });
+    }
+    scored.sort(
+      q
+        ? (a, b) => b.score - a.score || [...a.m.name].length - [...b.m.name].length
+        : (a, b) => a.m.name.localeCompare(b.m.name, 'ja'),
+    );
+    return scored.slice(0, CAND_LIMIT);
+  };
+
+  // 名前を1文字ずつエスケープし、一致文字を <mark> で強調（XSS防止のため必ずエスケープ）
+  const highlight = (name, matched) => {
+    const set = new Set(matched);
+    return [...name].map((ch, i) => (set.has(i) ? `<mark>${esc(ch)}</mark>` : esc(ch))).join('');
+  };
+
+  const drawCandidates = () => {
+    $('meal-menu-candidates').innerHTML = candList
+      .map(
+        (c, i) =>
+          `<li data-pick="${c.m.id}" class="${i === activeIdx ? 'active' : ''}">${highlight(c.m.name, c.matched)}（${c.m.calories} kcal${pfc(c.m.protein_g, c.m.fat_g, c.m.carbs_g)}）</li>`,
+      )
       .join('');
-  });
-  $('meal-menu-candidates').addEventListener('click', (e) => {
-    const id = e.target.dataset?.pick;
-    if (!id) return;
-    selectedMenu = menus.find((m) => m.id === id);
-    $('meal-menu-search').value = selectedMenu.name;
+  };
+
+  const showCandidates = () => {
+    candList = computeCandidates();
+    activeIdx = candList.length ? 0 : -1;
+    drawCandidates();
+  };
+
+  const hideCandidates = () => {
+    candList = [];
+    activeIdx = -1;
     $('meal-menu-candidates').innerHTML = '';
+  };
+
+  const pickMenu = (m) => {
+    if (!m) return;
+    selectedMenu = m;
+    $('meal-menu-search').value = m.name;
+    hideCandidates();
+  };
+
+  // 入力なしでも候補を出す（フォーカスで全件、入力であいまい絞り込み）
+  $('meal-menu-search').addEventListener('focus', showCandidates);
+  $('meal-menu-search').addEventListener('input', () => {
+    selectedMenu = null; // 手入力し直したら選択解除
+    showCandidates();
+  });
+  $('meal-menu-search').addEventListener('keydown', (e) => {
+    if (!candList.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      activeIdx = (activeIdx + 1) % candList.length;
+      drawCandidates();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeIdx = (activeIdx - 1 + candList.length) % candList.length;
+      drawCandidates();
+    } else if (e.key === 'Enter') {
+      e.preventDefault(); // フォーム送信を止めて候補確定
+      if (activeIdx >= 0) pickMenu(candList[activeIdx].m);
+    } else if (e.key === 'Escape') {
+      hideCandidates();
+    }
+  });
+  // blur時は少し遅らせて閉じる（候補クリックを先に成立させる）
+  $('meal-menu-search').addEventListener('blur', () => setTimeout(hideCandidates, 150));
+  // mousedownで拾う（blurより先に発火させ、<mark>クリックでもliを辿る）
+  $('meal-menu-candidates').addEventListener('mousedown', (e) => {
+    const id = e.target.closest('li')?.dataset?.pick;
+    if (!id) return;
+    e.preventDefault();
+    pickMenu(menus.find((m) => m.id === id));
   });
   $('meal-add-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!selectedMenu) return alert('メニューを選択してください');
+    // 過去日を選択中ならその日のJST正午(03:00Z)で記録（未来時刻回避＋日付境界で当該日に入る）。
+    // 今日なら eaten_at を省略してサーバーの現在時刻を使う
+    const day = selectedDate();
+    const eaten_at = day < todayJst() ? `${day}T03:00:00Z` : undefined;
     const res = await rw('meals', 'POST', {
       menu_id: selectedMenu.id,
       multiplier: Number($('meal-multiplier').value) || 1,
       meal_type: $('meal-type').value || undefined,
+      eaten_at,
     });
     if (!res.ok) alert(`記録に失敗: ${(await res.json()).error ?? res.status}`);
     selectedMenu = null;
@@ -219,6 +323,14 @@
     });
     if (!res.ok) alert(`メニュー追加に失敗: ${(await res.json()).error ?? res.status}`);
     e.target.reset();
+    refresh();
+  });
+
+  // 日付セレクタ初期化（初期値=今日・上限=今日）。変更でその日を表示＆記録対象にする
+  $('meal-date').value = todayJst();
+  $('meal-date').max = todayJst();
+  $('meal-date').addEventListener('change', () => {
+    if (!$('meal-date').value || $('meal-date').value > todayJst()) $('meal-date').value = todayJst();
     refresh();
   });
 
