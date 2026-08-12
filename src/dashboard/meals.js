@@ -37,18 +37,17 @@
   const localDateOf = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10);
   const HISTORY_DAYS = 50;
 
-  // ---- タブ切替 ----
-  const panels = { weight: $('panel-weight'), meals: $('panel-meals') };
-  const tabs = { weight: $('tab-weight'), meals: $('tab-meals') };
+  // ---- タブ切替（体重/食事/運動を汎用的に扱う。運動タブはexercise.jsがtabshownを購読する） ----
+  const tabButtons = Array.from(document.querySelectorAll('nav.tabs .tab'));
   function showTab(name) {
-    for (const key of Object.keys(panels)) {
-      panels[key].hidden = key !== name;
-      tabs[key].classList.toggle('active', key === name);
-    }
+    document.querySelectorAll('[id^="panel-"]').forEach((p) => {
+      p.hidden = p.id !== `panel-${name}`;
+    });
+    tabButtons.forEach((b) => b.classList.toggle('active', b.dataset.panel === name));
+    document.dispatchEvent(new CustomEvent('tabshown', { detail: name }));
     if (name === 'meals') refresh();
   }
-  tabs.weight.addEventListener('click', () => showTab('weight'));
-  tabs.meals.addEventListener('click', () => showTab('meals'));
+  tabButtons.forEach((b) => b.addEventListener('click', () => showTab(b.dataset.panel)));
 
   // ---- OAuth (PKCE) ----
   function b64url(bytes) {
@@ -369,6 +368,10 @@
   $('meal-date').addEventListener('change', () => {
     if (!$('meal-date').value || $('meal-date').value > todayJst()) $('meal-date').value = todayJst();
   });
+
+  // OAuth(PKCE)一式を運動タブ(exercise.js)と共有する。トークンはlocalStorageの同じキーを
+  // 使うため、どちらのタブでログインしても両方で有効。コールバック処理はmeals.jsが受け持つ。
+  window.__dashAuth = { rw, login, loggedIn };
 
   handleCallback();
   updateAuthUi();

@@ -10,6 +10,7 @@
   --accent-2: #ca8a04;
   --accent-3: #dc2626;
   --accent-cal: #15803d;
+  --accent-burn: #7c3aed;
   --warn: #dc2626;
   --skeleton: #e2e8f0;
 }
@@ -22,8 +23,10 @@
     --border: #334155;
     --grid: rgba(148, 163, 184, 0.18);
     --accent: #38bdf8;
-    --accent-2: #fbbf24;
-    --accent-3: #34d399;
+    --accent-2: #facc15;
+    --accent-3: #f87171;
+    --accent-cal: #34d399;
+    --accent-burn: #a78bfa;
     --warn: #f87171;
     --skeleton: #334155;
   }
@@ -39,6 +42,7 @@
   --accent-2: #ca8a04;
   --accent-3: #dc2626;
   --accent-cal: #15803d;
+  --accent-burn: #7c3aed;
   --warn: #dc2626;
   --skeleton: #e2e8f0;
 }
@@ -53,6 +57,7 @@
   --accent-2: #facc15;
   --accent-3: #f87171;
   --accent-cal: #34d399;
+  --accent-burn: #a78bfa;
   --warn: #f87171;
   --skeleton: #334155;
 }
@@ -394,3 +399,23 @@ body {
 .meals-history-table .mh-macro { color: var(--text-muted, #64748b); white-space: nowrap; }
 .meals-history-table .mh-del { font-size: .8rem; padding: .1rem .4rem; }
 .meals-empty { color: var(--text-muted, #64748b); }
+
+/* 運動タブ（食事タブのスタイルを踏襲） */
+#panel-exercise ul { list-style: none; padding: 0; }
+#panel-exercise li { padding: .3rem 0; border-bottom: 1px solid var(--border, #eee); }
+#exercise-menu-candidates { max-height: 14rem; overflow-y: auto; border: 1px solid var(--border, #ccc); border-radius: 6px; }
+#exercise-menu-candidates:empty { border: none; }
+#exercise-menu-candidates li { cursor: pointer; padding: .3rem .5rem; border-bottom: 1px solid var(--border, #eee); }
+#exercise-menu-candidates li:last-child { border-bottom: none; }
+#exercise-menu-candidates li.active { background: var(--accent, #3b82f6); color: #fff; }
+#exercise-menu-candidates mark { background: transparent; color: var(--accent-2, #d97706); font-weight: 700; }
+#exercise-menu-candidates li.active mark { color: #fff; text-decoration: underline; }
+#exercise-add-form, #exercise-menu-form { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; align-items: center; }
+#exercise-cardio-fields, #exercise-strength-fields { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; width: 100%; }
+#exercise-sets { display: flex; flex-direction: column; gap: .3rem; width: 100%; }
+.set-row { display: flex; gap: .5rem; align-items: center; }
+.set-row input { width: 6rem; }
+.hint { color: var(--text-muted, #64748b); font-size: .85rem; }
+#exercise-history-section { margin-top: 1.5rem; }
+#exercise-history { overflow-x: auto; }
+#exercise-volume-wrap { position: relative; height: 220px; margin: .5rem 0 1rem; }

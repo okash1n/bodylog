@@ -229,6 +229,7 @@
       accent2: v('--accent-2'),
       accent3: v('--accent-3'),
       cal: v('--accent-cal'),
+      burn: v('--accent-burn'),
     };
   }
 
@@ -276,26 +277,32 @@
     var r = rangeForPeriod();
     var url = BASE + 'api/measurements?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
     var mealsUrl = BASE + 'api/meals/daily?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
+    var exUrl = BASE + 'api/exercise/daily?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
+    // カロリー系の日次は取得失敗しても体重表示を壊さない（空扱い）
+    var tolerantDays = function (u, label) {
+      return fetch(u)
+        .then(function (res) {
+          return res.ok ? res.json() : { days: [] };
+        })
+        .catch(function (err) {
+          console.error('[dashboard] ' + label + ' fetch failed', err);
+          return { days: [] };
+        });
+    };
     Promise.all([
       fetch(url).then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
       }),
-      // カロリー日次は取得失敗しても体重表示を壊さない（空扱い）
-      fetch(mealsUrl)
-        .then(function (res) {
-          return res.ok ? res.json() : { days: [] };
-        })
-        .catch(function (err) {
-          console.error('[dashboard] meals/daily fetch failed', err);
-          return { days: [] };
-        }),
+      tolerantDays(mealsUrl, 'meals/daily'),
+      tolerantDays(exUrl, 'exercise/daily'),
       fetchStatus(),
     ])
       .then(function (results) {
         var days = (results[0] && results[0].days) || [];
         var mealsDays = (results[1] && results[1].days) || [];
-        var status = results[2];
+        var exDays = (results[2] && results[2].days) || [];
+        var status = results[3];
         rawRows = null; // 期間が変わった可能性があるので明細キャッシュを破棄
         renderHeader(days, status);
         if (days.length === 0) {
@@ -303,7 +310,7 @@
           return;
         }
         showState('ready');
-        renderAll(days, mealsDays, r.from, r.to);
+        renderAll(days, mealsDays, exDays, r.from, r.to);
       })
       .catch(function (err) {
         console.error('[dashboard] load failed', err);
@@ -479,18 +486,50 @@
       avg('脂肪量 7日平均', sets.fat7, t.accent2, 'yKg', 'kg', !hideRaw),
       measured('除脂肪体重', sets.ffm, t.accent3, 'yKg', 'kg', { hidden: hideRaw }),
       avg('除脂肪体重 7日平均', sets.ffm7, t.accent3, 'yKg', 'kg', !hideRaw),
-      // 総カロリー棒（右軸 yKcal, 折れ線の背面 order:99, kg系列とは独立）
+      // カロリー系（右軸 yKcal, kg系列とは独立）。摂取=緑棒 / 消費=紫棒 / ネット=灰線。
+      // カロリートグルで3つまとめて表示切替する
       {
         type: 'bar',
-        label: '摂取カロリー',
+        label: '摂取',
         data: cals.cal,
         yAxisID: 'yKcal',
         unit: 'kcal',
-        backgroundColor: hexToRgba(t.cal, 0.35),
+        backgroundColor: hexToRgba(t.cal, 0.45),
         borderWidth: 0,
         order: 99,
         hidden: !calorieOverlay,
+        _energy: 'intake',
         _pfc: { p: cals.p, f: cals.f, c: cals.c },
+      },
+      {
+        type: 'bar',
+        label: '消費(有酸素)',
+        data: cals.burn,
+        yAxisID: 'yKcal',
+        unit: 'kcal',
+        backgroundColor: hexToRgba(t.burn, 0.5),
+        borderWidth: 0,
+        order: 98,
+        hidden: !calorieOverlay,
+        _energy: 'burn',
+      },
+      {
+        type: 'line',
+        label: 'ネット(摂取−運動消費)',
+        data: cals.net,
+        yAxisID: 'yKcal',
+        unit: 'kcal',
+        borderColor: t.muted,
+        backgroundColor: t.muted,
+        borderWidth: 1.5,
+        borderDash: [3, 3],
+        tension: 0.2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        spanGaps: true,
+        order: 97,
+        hidden: !calorieOverlay,
+        _energy: 'net',
       },
       // 各系列の線形トレンドライン（最小二乗）。オンオフはトグルで。系列色の直線（長い破線）
       trend('体重トレンド', sets.weight, 'accent', t.accent),
@@ -545,9 +584,11 @@
 
   var RAW_DATASET_INDEXES = [0, 2, 4];
   var AVG_DATASET_INDEXES = [1, 3, 5];
-  var CALORIE_DATASET_INDEX = 6;
+  // カロリー系（摂取=6 / 消費=7 / ネット=8）。カロリートグルで一括制御する
+  var CALORIE_DATASET_INDEX = 6; // 摂取（_pfcツールチップ・テーブル結合の基準）
+  var ENERGY_DATASET_INDEXES = [6, 7, 8];
   // 体重・脂肪量・除脂肪体重のトレンド直線（buildDatasetsの並び順）
-  var TREND_DATASET_INDEXES = [7, 8, 9];
+  var TREND_DATASET_INDEXES = [9, 10, 11];
   var TREND_SERIES_KEYS = ['weight', 'fat', 'ffm'];
 
   function setActiveMode(mode) {
@@ -671,8 +712,9 @@
         ? sets.weight7.concat(sets.fat7, sets.ffm7)
         : sets.weight.concat(sets.fat, sets.ffm),
     );
-    // カロリー右軸の初期レンジ（applyAxisRangesと同じ 0〜可視最大×1.15）。以降の更新と一貫させる
-    var kcalVals = cals.cal.filter(function (v) {
+    // カロリー右軸の初期レンジ（applyAxisRangesと同じ 0〜可視最大×1.15）。以降の更新と一貫させる。
+    // 摂取・消費・ネットの全カロリー系から最大を取る
+    var kcalVals = cals.cal.concat(cals.burn || [], cals.net || []).filter(function (v) {
       return v != null;
     });
     var kcalMax = kcalVals.length ? Math.max.apply(null, kcalVals) * 1.15 : undefined;
@@ -697,7 +739,7 @@
               boxHeight: 8,
               filter: function (item) {
                 return (
-                  item.datasetIndex !== CALORIE_DATASET_INDEX &&
+                  ENERGY_DATASET_INDEXES.indexOf(item.datasetIndex) === -1 &&
                   TREND_DATASET_INDEXES.indexOf(item.datasetIndex) === -1
                 );
               },
@@ -800,9 +842,13 @@
     if (d[CALORIE_DATASET_INDEX]) {
       d[CALORIE_DATASET_INDEX].data = cals.cal;
       d[CALORIE_DATASET_INDEX]._pfc = { p: cals.p, f: cals.f, c: cals.c };
-      chart.setDatasetVisibility(CALORIE_DATASET_INDEX, calorieOverlay);
-      chart.options.scales.yKcal.display = calorieOverlay;
     }
+    if (d[ENERGY_DATASET_INDEXES[1]]) d[ENERGY_DATASET_INDEXES[1]].data = cals.burn;
+    if (d[ENERGY_DATASET_INDEXES[2]]) d[ENERGY_DATASET_INDEXES[2]].data = cals.net;
+    ENERGY_DATASET_INDEXES.forEach(function (idx) {
+      if (d[idx]) chart.setDatasetVisibility(idx, calorieOverlay);
+    });
+    chart.options.scales.yKcal.display = calorieOverlay;
     TREND_DATASET_INDEXES.forEach(function (idx, k) {
       if (!d[idx]) return;
       d[idx].data = trendLine(sets[TREND_SERIES_KEYS[k]]);
@@ -822,12 +868,33 @@
     chart.update('none');
   }
 
-  function renderAll(days, mealsDays, from, to) {
+  // 運動の日次消費kcalをラベルへ整列し、ネット（摂取−運動消費）を計算してcalsに足す。
+  // ネットは基礎代謝を含まない。摂取と消費の両方がある日だけ描く（消費0の日は摂取と重なり冗長なため）
+  function addBurnNet(cals, exDays, labels) {
+    var byDate = Object.create(null);
+    (exDays || []).forEach(function (row) {
+      byDate[row.d] = row;
+    });
+    cals.burn = labels.map(function (l) {
+      var r = byDate[l];
+      return r && r.calories_burned != null ? r.calories_burned : null;
+    });
+    cals.net = labels.map(function (l, i) {
+      var intake = cals.cal[i];
+      var burn = cals.burn[i];
+      if (intake == null || burn == null || burn <= 0) return null;
+      return intake - burn;
+    });
+    cals.exRaw = byDate;
+  }
+
+  function renderAll(days, mealsDays, exDays, from, to) {
     lastDays = days;
     var labels = buildDateLabels(from, to);
     var density = densityFor(labels.length);
     var sets = seriesFrom(days, labels);
     var cals = calorieSeriesFrom(mealsDays, labels);
+    addBurnNet(cals, exDays, labels);
     lastCals = cals;
     renderChart(labels, sets, cals, density);
     renderCards(days);
@@ -868,11 +935,18 @@
   function renderDailyTable(days) {
     els.tableColDate.textContent = '日付';
     var byDate = (lastCals && lastCals.raw) || Object.create(null);
+    var exBy = (lastCals && lastCals.exRaw) || Object.create(null);
     var frag = document.createDocumentFragment();
     for (var i = days.length - 1; i >= 0; i--) {
       var d = days[i];
-      var cal = byDate[d.d] && byDate[d.d].calories != null ? Math.round(byDate[d.d].calories) + '' : '—';
-      appendRow(frag, [d.d, fmt(d.weight), fmt(d.fat_mass), fmt(d.fat_free_mass), cal]);
+      var mealRow = byDate[d.d];
+      var exRow = exBy[d.d];
+      var intake = mealRow && mealRow.calories != null ? mealRow.calories : null;
+      var burn = exRow && exRow.calories_burned != null ? exRow.calories_burned : null;
+      var calCell = intake != null ? Math.round(intake) + '' : '—';
+      var burnCell = burn != null ? Math.round(burn) + '' : '—';
+      var netCell = intake != null && burn != null ? Math.round(intake - burn) + '' : '—';
+      appendRow(frag, [d.d, fmt(d.weight), fmt(d.fat_mass), fmt(d.fat_free_mass), calCell, burnCell, netCell]);
     }
     els.tableBody.replaceChildren(frag);
   }
@@ -882,12 +956,14 @@
     var frag = document.createDocumentFragment();
     rows.forEach(function (m) {
       var ms = parseUtcMs(m.measured_at);
-      // 計測明細は1計測=1行で日次カロリーとは粒度が違うため摂取列は空
+      // 計測明細は1計測=1行で日次カロリーとは粒度が違うため摂取/消費/ネット列は空
       appendRow(frag, [
         ms == null ? '—' : formatLocalDateTime(ms),
         fmt(m.weight),
         fmt(m.fat_mass),
         fmt(m.fat_free_mass),
+        '—',
+        '—',
         '—',
       ]);
     });
@@ -959,9 +1035,15 @@
     var t = themeCache;
     var colors = [t.accent, t.accent, t.accent2, t.accent2, t.accent3, t.accent3];
     chart.data.datasets.forEach(function (ds, i) {
-      if (ds.yAxisID === 'yKcal') {
-        // カロリー棒はテーマ変更時も半透明の緑で塗り直す（色配列の対象外）
-        ds.backgroundColor = hexToRgba(t.cal, 0.35);
+      if (ds._energy) {
+        // 摂取=緑棒 / 消費=紫棒 / ネット=灰線。テーマ変更時に各々塗り直す
+        if (ds._energy === 'intake') ds.backgroundColor = hexToRgba(t.cal, 0.45);
+        else if (ds._energy === 'burn') ds.backgroundColor = hexToRgba(t.burn, 0.5);
+        else {
+          ds.borderColor = t.muted;
+          ds.backgroundColor = t.muted;
+          ds.pointBackgroundColor = t.muted;
+        }
         return;
       }
       if (ds._trend) {
@@ -1024,8 +1106,11 @@
           localStorage.setItem('dash-calorie-overlay', calorieOverlay ? '1' : '0');
         } catch (e) { /* 保存不可でも表示は切り替わる */ }
         if (!chart) return;
-        // setDatasetVisibilityで統一（meta.hiddenを確定させ、凡例クリック等と競合しない）
-        chart.setDatasetVisibility(CALORIE_DATASET_INDEX, calorieOverlay);
+        // setDatasetVisibilityで統一（meta.hiddenを確定させ、凡例クリック等と競合しない）。
+        // 摂取・消費・ネットを一括切替
+        ENERGY_DATASET_INDEXES.forEach(function (idx) {
+          chart.setDatasetVisibility(idx, calorieOverlay);
+        });
         chart.options.scales.yKcal.display = calorieOverlay;
         applyAxisRanges(chart);
         chart.update('none');

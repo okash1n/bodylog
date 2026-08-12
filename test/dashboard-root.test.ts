@@ -25,12 +25,18 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     expect(html).toContain('href="/manifest.webmanifest"');
     expect(html).not.toContain('{{BASE}}');
     expect(html).not.toContain('{{SLUG}}');
-    // Phase 2: カロリーオーバーレイのトグルと日次表の摂取列
+    // Phase 2: カロリーオーバーレイのトグルと日次表の摂取/消費/ネット列
     expect(html).toContain('id="calorie-toggle"');
     expect(html).toContain('摂取 <span class="unit">kcal</span>');
+    expect(html).toContain('消費 <span class="unit">kcal</span>');
+    expect(html).toContain('ネット <span class="unit">kcal</span>');
     // 食事履歴テーブル（直近50日）
     expect(html).toContain('id="meals-history"');
     expect(html).not.toContain('id="meals-list"');
+    // 運動タブ
+    expect(html).toContain('id="tab-exercise"');
+    expect(html).toContain('id="panel-exercise"');
+    expect(html).toContain('id="exercise-history"');
   });
 
   it('manifestの start_url / scope が / になる', async () => {
@@ -59,5 +65,13 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     const html = await (await request('/', rootEnv)).text();
     expect(html).toContain('id="tab-meals"');
     expect(html).toContain('meals.js');
+  });
+
+  it('/exercise.js が配信され、HTMLに運動タブスクリプトが含まれる', async () => {
+    const js = await request('/exercise.js', rootEnv);
+    expect(js.status).toBe(200);
+    expect(js.headers.get('Content-Type')).toContain('javascript');
+    const html = await (await request('/', rootEnv)).text();
+    expect(html).toContain('exercise.js');
   });
 });
