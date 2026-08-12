@@ -22,6 +22,7 @@ import {
 } from './ingest';
 import { processNotificationBatches, runDailyDigestIfDue } from './slack';
 import { createDashboardRouter, createRootDashboardRouter } from './dashboard';
+import { registerOauthRoutes } from './oauth';
 
 interface OauthStateEntry {
   state: string;
@@ -267,6 +268,7 @@ app.post('/webhook/:token', async (c) => {
   return c.text('ok', 200);
 });
 
+registerOauthRoutes(app);
 app.route('/d', createDashboardRouter());
 // DASHBOARD_SLUG が空文字（専用ドメイン運用）のときだけ有効になる
 app.route('/', createRootDashboardRouter());
