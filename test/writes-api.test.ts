@@ -1,26 +1,9 @@
-import { createExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Env } from '../src/types';
-import worker from '../src/index';
 import { createMenu, setMenuArchived } from '../src/meals';
-import { obtainAccessToken, resetTables, testEnv } from './helpers';
+import { apiFetch, obtainAccessToken, resetTables, rootTestEnv as rootEnv, testEnv } from './helpers';
 
-const rootEnv: Env = { ...testEnv, DASHBOARD_SLUG: '' };
-
-function rw(path: string, token: string | null, method: string, body?: unknown): Promise<Response> {
-  return worker.fetch(
-    new Request(`http://localhost${path}`, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    }),
-    rootEnv,
-    createExecutionContext(),
-  );
-}
+const rw = (path: string, token: string | null, method: string, body?: unknown): Promise<Response> =>
+  apiFetch(rootEnv, path, token, method, body);
 
 describe('/api/ 書き込みAPI', () => {
   let token: string;

@@ -2,29 +2,21 @@ import { createExecutionContext } from 'cloudflare:test';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../src/types';
-import worker from '../src/index';
 import { createRootDashboardRouter } from '../src/dashboard';
 import { createExerciseMenu, logExercise } from '../src/exercise';
-import { insertMeasurement, localYmdDaysAgo, obtainAccessToken, resetTables, testEnv } from './helpers';
+import {
+  apiFetch, insertMeasurement, localYmdDaysAgo, mcpRpc, obtainAccessToken, parseToolJson,
+  resetTables, rootTestEnv as rootEnv, testEnv,
+} from './helpers';
 
-const rootEnv: Env = { ...testEnv, DASHBOARD_SLUG: '' };
 const app = new Hono<{ Bindings: Env }>().route('/', createRootDashboardRouter());
 
 function request(path: string): Promise<Response> {
   return app.request(path, {}, rootEnv, createExecutionContext());
 }
 
-function rw(path: string, token: string | null, method: string, body?: unknown): Promise<Response> {
-  return worker.fetch(
-    new Request(`http://localhost${path}`, {
-      method,
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    }),
-    rootEnv,
-    createExecutionContext(),
-  );
-}
+const rw = (path: string, token: string | null, method: string, body?: unknown): Promise<Response> =>
+  apiFetch(rootEnv, path, token, method, body);
 
 // performed_at=now（実時刻）以前になるよう、体重は明確に過去（2日前）にseedする。
 // これで実行時のUTC時刻に関わらず getBodyWeightAt(now) が体重を拾える
@@ -121,6 +113,41 @@ describe('/api/ 書き込み（運動・OAuth必須）', () => {
     expect(log.sets).toHaveLength(2);
   });
 
+  it('種目のPATCHは真の部分更新: 未指定は保持、明示nullはクリア、空パッチは400', async () => {
+    const created = await rw('/api/exercise/menus', token, 'POST', {
+      name: 'ベンチ', category: 'strength', muscle_group: '胸', is_bodyweight: false, note: 'メモ',
+    });
+    const menu = (await created.json()) as { id: string };
+
+    const onlyName = await rw(`/api/exercise/menus/${menu.id}`, token, 'PATCH', { name: 'ベンチプレス' });
+    expect(onlyName.status).toBe(200);
+    const afterName = (await onlyName.json()) as { name: string; muscle_group: string | null; note: string | null };
+    expect(afterName.name).toBe('ベンチプレス');
+    expect(afterName.muscle_group).toBe('胸'); // 未指定は保持
+    expect(afterName.note).toBe('メモ');
+
+    const cleared = await rw(`/api/exercise/menus/${menu.id}`, token, 'PATCH', { muscle_group: null });
+    expect(cleared.status).toBe(200);
+    expect(((await cleared.json()) as { muscle_group: string | null }).muscle_group).toBeNull();
+
+    expect((await rw(`/api/exercise/menus/${menu.id}`, token, 'PATCH', {})).status).toBe(400);
+    expect((await rw('/api/exercise/menus/nope', token, 'PATCH', { name: 'x' })).status).toBe(404);
+  });
+
+  it('種目のarchive/unarchiveができ、archived種目は一覧から消える', async () => {
+    const created = await rw('/api/exercise/menus', token, 'POST', { name: 'ローイング', category: 'cardio', mets: 7 });
+    const menu = (await created.json()) as { id: string };
+
+    expect((await rw(`/api/exercise/menus/${menu.id}/archive`, token, 'POST')).status).toBe(200);
+    const listed = (await (await request('/api/exercise/menus')).json()) as { menus: { id: string }[] };
+    expect(listed.menus.some((m) => m.id === menu.id)).toBe(false);
+    const withArchived = (await (await request('/api/exercise/menus?archived=1')).json()) as { menus: { id: string }[] };
+    expect(withArchived.menus.some((m) => m.id === menu.id)).toBe(true);
+
+    expect((await rw(`/api/exercise/menus/${menu.id}/unarchive`, token, 'POST')).status).toBe(200);
+    expect((await rw('/api/exercise/menus/nope/archive', token, 'POST')).status).toBe(404);
+  });
+
   it('バリデーション: cardioでmets無し・categoryなしは400、cardioにduration無しは400', async () => {
     expect((await rw('/api/exercise/menus', token, 'POST', { name: 'x', category: 'cardio' })).status).toBe(400);
     expect((await rw('/api/exercise/menus', token, 'POST', { name: 'x' })).status).toBe(400);
@@ -131,7 +158,6 @@ describe('/api/ 書き込み（運動・OAuth必須）', () => {
 });
 
 describe('MCP 運動ツール（/mcp）', () => {
-  const RW_MCP = 'http://localhost/mcp';
   let token: string;
   beforeEach(async () => {
     await resetTables();
@@ -139,26 +165,8 @@ describe('MCP 運動ツール（/mcp）', () => {
     await seedWeight(70);
   });
 
-  function rpc(method: string, params?: unknown): Promise<Response> {
-    return worker.fetch(
-      new Request(RW_MCP, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json, text/event-stream',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: params ?? {} }),
-      }),
-      rootEnv,
-      createExecutionContext(),
-    );
-  }
-
-  function toolJson<T>(result: Record<string, unknown>): T {
-    const content = result.content as { type: string; text: string }[];
-    return JSON.parse(content[0].text) as T;
-  }
+  const rpc = (method: string, params?: unknown): Promise<Response> => mcpRpc(rootEnv, token, method, params);
+  const toolJson = parseToolJson;
 
   it('create_exercise_menu → log_exercise（menu_name解決）→ get_exercise_logs', async () => {
     const created = await rpc('tools/call', {

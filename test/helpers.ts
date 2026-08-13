@@ -6,6 +6,61 @@ import { offsetHours, ymdWithOffset } from '../src/util';
 
 export const testEnv = env as unknown as Env;
 
+/** ドメイン直下モードのEnv（DASHBOARD_SLUG=空文字）。大半のHTTPテストが使う */
+export const rootTestEnv: Env = { ...testEnv, DASHBOARD_SLUG: '' };
+
+/** 認証付き書き込みAPI呼び出し（/api/* の POST/PATCH/DELETE 検証用） */
+export function apiFetch(
+  env: Env,
+  path: string,
+  token: string | null,
+  method: string,
+  body?: unknown,
+): Promise<Response> {
+  return worker.fetch(
+    new Request(`http://localhost${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+    env,
+    createExecutionContext(),
+  );
+}
+
+/** 認証付きで /mcp にJSON-RPCを投げる */
+export function mcpRpc(
+  env: Env,
+  token: string,
+  method: string,
+  params?: unknown,
+  extraHeaders?: Record<string, string>,
+): Promise<Response> {
+  return worker.fetch(
+    new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${token}`,
+        ...extraHeaders,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: params ?? {} }),
+    }),
+    env,
+    createExecutionContext(),
+  );
+}
+
+/** MCPツール結果のtextコンテンツ（JSON文字列）をパースして返す */
+export function parseToolJson<T>(result: Record<string, unknown>): T {
+  const content = result.content as { type: string; text: string }[];
+  return JSON.parse(content[0].text) as T;
+}
+
 /** 各テスト前に呼び、関連テーブルを全て空にする */
 export async function resetTables(): Promise<void> {
   const tables = [

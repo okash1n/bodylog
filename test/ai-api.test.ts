@@ -2,7 +2,7 @@ import { createExecutionContext } from 'cloudflare:test';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../src/types';
-import { createDashboardRouter, createRootDashboardRouter } from '../src/dashboard';
+import { READ_ROUTES, createDashboardRouter, createRootDashboardRouter } from '../src/dashboard';
 import { insertMeasurement, localYmdDaysAgo, resetTables, setSetting, testEnv } from './helpers';
 
 const rootEnv: Env = { ...testEnv, DASHBOARD_SLUG: '' };
@@ -146,6 +146,26 @@ describe('AI向けREST拡張', () => {
       expect(text).toContain('http://localhost/mcp'); // MCPは /mcp（OAuth必須）
       expect(text).not.toContain('/rw/mcp'); // 旧 /rw/mcp は廃止
       expect(text).toContain('kg');
+    });
+
+    it('openapi.jsonの全pathが実ルータで200を返す（削除/改名ドリフトの検知）', async () => {
+      const spec = (await (await request('/openapi.json')).json()) as {
+        paths: Record<string, { get?: { parameters?: { name: string }[] } }>;
+      };
+      for (const [path, ops] of Object.entries(spec.paths)) {
+        const needsRange = ops.get?.parameters?.some((p) => p.name === 'days');
+        const res = await request(needsRange ? `${path}?days=1` : path);
+        expect(res.status, `documented path ${path} should be served`).toBe(200);
+      }
+    });
+
+    it('READ_ROUTESの/api GETルートがすべてopenapiに文書化されている（追加漏れドリフトの検知）', async () => {
+      const spec = (await (await request('/openapi.json')).json()) as { paths: Record<string, unknown> };
+      const documented = new Set(Object.keys(spec.paths));
+      for (const [path] of READ_ROUTES) {
+        if (!path.startsWith('api/')) continue;
+        expect(documented.has(`/${path}`), `route /${path} should be documented in openapi.json`).toBe(true);
+      }
     });
 
     it('openapi.json が4エンドポイントとオリジン由来のserversを持つ', async () => {

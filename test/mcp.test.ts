@@ -1,12 +1,13 @@
 import { createExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Env } from '../src/types';
 import worker from '../src/index';
-import { insertMeasurement, localYmdDaysAgo, obtainAccessToken, resetTables, testEnv } from './helpers';
+import {
+  insertMeasurement, localYmdDaysAgo, mcpRpc, obtainAccessToken, parseToolJson,
+  resetTables, rootTestEnv as rootEnv,
+} from './helpers';
 
 // MCPは OAuth 必須の /mcp のみ（旧 /rw/mcp は廃止）。
 // protocol層の挙動（handleMcpRequest）は /mcp 経由（=providerのapiHandler配下）で検証する。
-const rootEnv: Env = { ...testEnv, DASHBOARD_SLUG: '' };
 const RW_MCP = 'http://localhost/mcp';
 
 interface RpcResponse {
@@ -16,30 +17,9 @@ interface RpcResponse {
   error?: { code: number; message: string };
 }
 
-/** ツール結果のtextコンテンツ（JSON文字列）をパースして返す */
-function parseToolJson<T>(result: Record<string, unknown>): T {
-  const content = result.content as { type: string; text: string }[];
-  expect(content[0]?.type).toBe('text');
-  return JSON.parse(content[0].text) as T;
-}
-
 /** 認証付きで /mcp にJSON-RPCを投げる */
-function rwRpc(token: string, method: string, params?: unknown, extraHeaders?: Record<string, string>): Promise<Response> {
-  return worker.fetch(
-    new Request(RW_MCP, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json, text/event-stream',
-        Authorization: `Bearer ${token}`,
-        ...extraHeaders,
-      },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: params ?? {} }),
-    }),
-    rootEnv,
-    createExecutionContext(),
-  );
-}
+const rwRpc = (token: string, method: string, params?: unknown, extraHeaders?: Record<string, string>): Promise<Response> =>
+  mcpRpc(rootEnv, token, method, params, extraHeaders);
 
 /** 認証付きで /mcp に任意のボディ/メソッドで投げる（不正ボディ・非POSTの検証用） */
 function rwRaw(token: string, init: RequestInit): Promise<Response> {

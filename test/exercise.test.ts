@@ -212,6 +212,14 @@ describe('運動の日次集計', () => {
     expect(day?.bmr).toBeNull();
   });
 
+  it('範囲開始より前の計測がseedとしてcarry-forwardされる（範囲内に計測ゼロでもBMRが出る）', async () => {
+    await seedWeight(localYmdDaysAgo(5), 70); // ffm 56 → bmr 1579.6（範囲外・過去）
+    const daily = await getDailyExercise(testEnv, localYmdDaysAgo(1), localYmdDaysAgo(0));
+    expect(daily).toHaveLength(2);
+    expect(daily[0].bmr).toBeCloseTo(1579.6);
+    expect(daily[1].bmr).toBeCloseTo(1579.6);
+  });
+
   it('期間内の全日を返し、BMRは直近FFMをcarry-forwardする（運動なしの日も成立）', async () => {
     const d2 = localYmdDaysAgo(2);
     await seedWeight(d2, 70); // ffm 56 → bmr 1579.6

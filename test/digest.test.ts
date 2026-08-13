@@ -11,6 +11,8 @@ import {
   runDailyDigestIfDue,
 } from '../src/slack';
 import type { DailyExercise, DailyIntake } from '../src/types';
+import { createMenu, logMeal } from '../src/meals';
+import { createExerciseMenu, logExercise } from '../src/exercise';
 import { insertMeasurement, resetTables, setSetting, stubFetch, testEnv } from './helpers';
 
 const SLACK_HOST = 'hooks.slack.com';
@@ -77,6 +79,33 @@ describe('runDailyDigest', () => {
     const second = await runDailyDigest(DAILY_ENV, ORIGIN);
     expect(second.queued).toBe(0);
     expect(stub.requests({ host: SLACK_HOST })).toHaveLength(1);
+  });
+
+  it('当日の摂取・消費（基礎+運動）・ネットがダイジェスト本文に載る（E2E配線の検証）', async () => {
+    // FFM 62 → BMR = 370 + 21.6×62 = 1709.2
+    await insertMeasurement({
+      grpid: 9301,
+      measured_at: new Date().toISOString(),
+      weight: 80,
+      fat_free_mass: 62.0,
+    });
+    const menu = await createMenu(testEnv, { name: 'テスト定食', calories: 700 });
+    await logMeal(testEnv, { menu_id: menu.id });
+    const ex = await createExerciseMenu(testEnv, { name: 'ラン', category: 'cardio', mets: 8 });
+    await logExercise(testEnv, { menu_id: ex.id, duration_min: 30 }); // 8×80×0.5×1.05 = 336
+    const stub = stubFetch().on({
+      host: SLACK_HOST,
+      path: SLACK_PATH,
+      method: 'POST',
+      times: 1,
+      reply: () => new Response('ok'),
+    });
+
+    await runDailyDigest(DAILY_ENV, ORIGIN);
+    const body = stub.requests({ host: SLACK_HOST })[0].body;
+    expect(body).toContain('*摂取* : 700 kcal');
+    expect(body).toContain('*消費* : 2045 kcal (基礎 1709 + 運動 336)');
+    expect(body).toContain('*ネット* : -1345 kcal (摂取−消費)');
   });
 
   it('当日の計測がなければ何も送らない', async () => {

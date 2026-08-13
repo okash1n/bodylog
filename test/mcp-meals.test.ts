@@ -1,40 +1,17 @@
 import { createExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Env } from '../src/types';
 import { createMenu, logMeal } from '../src/meals';
 import worker from '../src/index';
-import { localYmdDaysAgo, obtainAccessToken, resetTables, testEnv } from './helpers';
-
-const rootEnv: Env = { ...testEnv, DASHBOARD_SLUG: '' };
+import {
+  mcpRpc as rwRpc, localYmdDaysAgo, obtainAccessToken, parseToolJson, resetTables,
+  rootTestEnv as rootEnv, testEnv,
+} from './helpers';
 
 interface RpcResponse {
   jsonrpc: string;
   id: number;
   result?: Record<string, unknown>;
   error?: { code: number; message: string };
-}
-
-/** ツール結果のtextコンテンツ（JSON文字列）をパースして返す */
-function parseToolJson<T>(result: Record<string, unknown>): T {
-  const content = result.content as { type: string; text: string }[];
-  expect(content[0]?.type).toBe('text');
-  return JSON.parse(content[0].text) as T;
-}
-
-async function rwRpc(env: Env, token: string, method: string, params?: unknown): Promise<Response> {
-  return worker.fetch(
-    new Request('http://localhost/mcp', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json, text/event-stream',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 99, method, params: params ?? {} }),
-    }),
-    env,
-    createExecutionContext(),
-  );
 }
 
 describe('/mcp 書き込みツール', () => {
