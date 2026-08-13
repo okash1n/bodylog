@@ -152,6 +152,32 @@
     return res;
   }
   const loggedIn = () => Boolean(localStorage.getItem(LS.token));
+
+  // ---- トースト（成功/失敗の非ブロッキング通知。exercise.jsとも共有） ----
+  let toastTimer = null;
+  function toast(msg, opts) {
+    let el = document.getElementById('toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    if (opts && opts.action) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = opts.action.label;
+      btn.addEventListener('click', () => {
+        el.classList.remove('show');
+        opts.action.onClick();
+      });
+      el.appendChild(btn);
+    }
+    requestAnimationFrame(() => el.classList.add('show'));
+    clearTimeout(toastTimer);
+    // アクション付き（元に戻す等）は押す猶予を長めに取る
+    toastTimer = setTimeout(() => el.classList.remove('show'), opts && opts.action ? 6000 : 3000);
+  }
   function updateAuthUi() {
     $('meals-auth').hidden = loggedIn();
     $('meal-add-form').hidden = !loggedIn();
@@ -166,18 +192,28 @@
   let selectedMenu = null;
   async function refresh() {
     updateAuthUi();
-    const [mealsRes, menusRes] = await Promise.all([
-      fetch(`${base}api/meals?days=${HISTORY_DAYS}`),
-      fetch(`${base}api/menus`),
-    ]);
-    const meals = (await mealsRes.json()).meals ?? [];
-    menus = (await menusRes.json()).menus ?? [];
-    renderHistory(meals);
-    $('menus-list').innerHTML = menus
-      .map(
-        (m) => `<li>${esc(m.name)}（${m.calories} kcal${pfc(m.protein_g, m.fat_g, m.carbs_g)}）<button data-arch="${m.id}" type="button">アーカイブ</button></li>`,
-      )
-      .join('');
+    const hist = $('meals-history');
+    if (!hist.innerHTML) hist.innerHTML = '<p class="meals-empty">読み込み中…</p>';
+    try {
+      const [mealsRes, menusRes] = await Promise.all([
+        fetch(`${base}api/meals?days=${HISTORY_DAYS}`),
+        fetch(`${base}api/menus`),
+      ]);
+      // 失敗を空データ扱いすると「まだ記録がありません」に化けて実データが消えたように見える
+      if (!mealsRes.ok || !menusRes.ok) throw new Error(`HTTP ${mealsRes.status}/${menusRes.status}`);
+      const meals = (await mealsRes.json()).meals ?? [];
+      menus = (await menusRes.json()).menus ?? [];
+      renderHistory(meals);
+      $('menus-list').innerHTML = menus
+        .map(
+          (m) => `<li>${esc(m.name)}（${m.calories} kcal${pfc(m.protein_g, m.fat_g, m.carbs_g)}）<button data-arch="${m.id}" type="button">アーカイブ</button></li>`,
+        )
+        .join('');
+    } catch (err) {
+      console.error('[meals] refresh failed', err);
+      hist.innerHTML =
+        '<div class="state-box"><p>データの取得に失敗しました。</p><button type="button" class="primary-btn" data-retry>再試行</button></div>';
+    }
   }
 
   // 直近50日の食事を日付ごとにグループ化して表示。各日の見出しに合計、各食事にPFC。
@@ -229,16 +265,33 @@
   }
 
   $('meals-history').addEventListener('click', async (e) => {
+    if (e.target.closest('[data-retry]')) return refresh();
     const btn = e.target.closest('button[data-del]');
     if (btn && confirm('この記録を削除しますか？')) {
-      await rw(`meals/${btn.dataset.del}`, 'DELETE');
+      const res = await rw(`meals/${btn.dataset.del}`, 'DELETE');
+      toast(res.ok ? '削除しました' : '削除に失敗しました');
       refresh();
     }
   });
   $('menus-list').addEventListener('click', async (e) => {
     const id = e.target.dataset?.arch;
     if (id) {
-      await rw(`menus/${id}/archive`, 'POST');
+      const res = await rw(`menus/${id}/archive`, 'POST');
+      if (res.ok) {
+        // 誤タップから戻せるよう、undo付きトーストにする（unarchive APIは既存）
+        toast('アーカイブしました', {
+          action: {
+            label: '元に戻す',
+            onClick: async () => {
+              await rw(`menus/${id}/unarchive`, 'POST');
+              toast('元に戻しました');
+              refresh();
+            },
+          },
+        });
+      } else {
+        toast('アーカイブに失敗しました');
+      }
       refresh();
     }
   });
@@ -317,6 +370,11 @@
     candList = computeCandidates();
     activeIdx = candList.length ? 0 : -1;
     drawCandidates();
+    // 初回（メニューゼロ）で空のドロップダウンだけ出ると行き止まりに見えるため、導線を出す
+    if (!candList.length && menus.length === 0) {
+      $('meal-menu-candidates').innerHTML =
+        '<li class="picker-hint">メニューがありません。下の「メニュー管理」から追加してください</li>';
+    }
   };
 
   const hideCandidates = () => {
@@ -379,6 +437,7 @@
     });
     // 失敗時にフォームをクリアすると入力（メニュー選択・倍率・区分）が消えるため、必ずreturnする
     if (!res.ok) return alert(`記録に失敗: ${(await res.json()).error ?? res.status}`);
+    toast('記録しました');
     selectedMenu = null;
     $('meal-menu-search').value = '';
     refresh();
@@ -393,6 +452,7 @@
     });
     // 失敗時にreset()すると入力済みの名前/kcal/PFCが消えるため、必ずreturnする
     if (!res.ok) return alert(`メニュー追加に失敗: ${(await res.json()).error ?? res.status}`);
+    toast('メニューを追加しました');
     e.target.reset();
     refresh();
   });
@@ -405,9 +465,9 @@
     if (!$('meal-date').value || $('meal-date').value > todayJst()) $('meal-date').value = todayJst();
   });
 
-  // OAuth(PKCE)一式を運動タブ(exercise.js)と共有する。トークンはlocalStorageの同じキーを
-  // 使うため、どちらのタブでログインしても両方で有効。コールバック処理はmeals.jsが受け持つ。
-  window.__dashAuth = { rw, login, loggedIn };
+  // OAuth(PKCE)一式とトースト表示を運動タブ(exercise.js)と共有する。トークンはlocalStorageの
+  // 同じキーを使うため、どちらのタブでログインしても両方で有効。コールバック処理はmeals.jsが受け持つ。
+  window.__dashAuth = { rw, login, loggedIn, toast };
 
   handleCallback();
   updateAuthUi();

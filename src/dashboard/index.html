@@ -156,10 +156,10 @@
     <div id="meals-today">
       <form id="meal-add-form" hidden>
         <label>記録する日 <input id="meal-date" type="date" aria-label="記録する日"></label>
-        <span class="menu-picker">
+        <div class="menu-picker">
           <input id="meal-menu-search" type="search" placeholder="メニューを検索" autocomplete="off">
           <ul id="meal-menu-candidates"></ul>
-        </span>
+        </div>
         <label>倍率 <input id="meal-multiplier" type="number" value="1" min="0.1" max="20" step="0.1"></label>
         <select id="meal-type">
           <option value="">区分なし</option>
@@ -195,10 +195,10 @@
     </div>
     <form id="exercise-add-form" hidden>
       <label>記録する日 <input id="exercise-date" type="date" aria-label="記録する日"></label>
-      <span class="menu-picker">
+      <div class="menu-picker">
         <input id="exercise-menu-search" type="search" placeholder="種目を検索" autocomplete="off">
         <ul id="exercise-menu-candidates"></ul>
-      </span>
+      </div>
       <div id="exercise-cardio-fields" hidden>
         <label>時間 <input id="exercise-duration" type="number" min="1" max="1440" step="1"><span class="unit">分</span></label>
         <span id="exercise-kcal-preview" class="hint"></span>

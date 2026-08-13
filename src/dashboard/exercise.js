@@ -9,10 +9,11 @@
   const localDateOf = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10);
   const HISTORY_DAYS = 50;
 
-  // 認証はmeals.js（先に読み込まれる）が公開する共有API。トークンは同一localStorageキーを使う
+  // 認証・トーストはmeals.js（先に読み込まれる）が公開する共有API。トークンは同一localStorageキーを使う
   const auth = () => window.__dashAuth;
   const loggedIn = () => Boolean(auth() && auth().loggedIn());
   const rw = (path, method, body) => auth().rw(path, method, body);
+  const toast = (msg, opts) => auth() && auth().toast(msg, opts);
 
   // ---- 小さなチャートユーティリティ（app.jsとは別インスタンスなので最小限を複製） ----
   const DAY_MS = 86400000;
@@ -54,20 +55,32 @@
   // ---- データ取得（タブ表示時） ----
   async function refresh() {
     updateAuthUi();
-    const [logsRes, menusRes, dailyRes, measRes] = await Promise.all([
-      fetch(`${base}api/exercise/logs?days=${HISTORY_DAYS}`),
-      fetch(`${base}api/exercise/menus`),
-      fetch(`${base}api/exercise/daily?days=${HISTORY_DAYS}`),
-      fetch(`${base}api/measurements?days=${HISTORY_DAYS}`),
-    ]);
-    const logs = (await logsRes.json()).logs ?? [];
-    menus = (await menusRes.json()).menus ?? [];
-    lastDaily = (await dailyRes.json()).days ?? [];
-    lastMeas = (await measRes.json()).days ?? [];
-    latestWeight = lastWeightOf(lastMeas);
-    renderHistory(logs);
-    renderMenus();
-    renderVolumeChart();
+    const hist = $('exercise-history');
+    if (!hist.innerHTML) hist.innerHTML = '<p class="meals-empty">読み込み中…</p>';
+    try {
+      const responses = await Promise.all([
+        fetch(`${base}api/exercise/logs?days=${HISTORY_DAYS}`),
+        fetch(`${base}api/exercise/menus`),
+        fetch(`${base}api/exercise/daily?days=${HISTORY_DAYS}`),
+        fetch(`${base}api/measurements?days=${HISTORY_DAYS}`),
+      ]);
+      // 失敗を空データ扱いすると「まだ記録がありません」に化けて実データが消えたように見える
+      if (responses.some((r) => !r.ok)) throw new Error(`HTTP ${responses.map((r) => r.status).join('/')}`);
+      const [logsRes, menusRes, dailyRes, measRes] = responses;
+      const logs = (await logsRes.json()).logs ?? [];
+      menus = (await menusRes.json()).menus ?? [];
+      lastDaily = (await dailyRes.json()).days ?? [];
+      lastMeas = (await measRes.json()).days ?? [];
+      latestWeight = lastWeightOf(lastMeas);
+      renderHistory(logs);
+      renderMenus();
+      renderVolumeChart();
+    } catch (err) {
+      console.error('[exercise] refresh failed', err);
+      $('exercise-volume-wrap').hidden = true;
+      hist.innerHTML =
+        '<div class="state-box"><p>データの取得に失敗しました。</p><button type="button" class="primary-btn" data-retry>再試行</button></div>';
+    }
   }
   document.addEventListener('tabshown', (e) => {
     if (e.detail === 'exercise') refresh();
@@ -96,7 +109,21 @@
   $('exercise-menus-list').addEventListener('click', async (e) => {
     const id = e.target.dataset?.arch;
     if (id) {
-      await rw(`exercise/menus/${id}/archive`, 'POST');
+      const res = await rw(`exercise/menus/${id}/archive`, 'POST');
+      if (res.ok) {
+        toast('アーカイブしました', {
+          action: {
+            label: '元に戻す',
+            onClick: async () => {
+              await rw(`exercise/menus/${id}/unarchive`, 'POST');
+              toast('元に戻しました');
+              refresh();
+            },
+          },
+        });
+      } else {
+        toast('アーカイブに失敗しました');
+      }
       refresh();
     }
   });
@@ -124,6 +151,7 @@
     }
     const res = await rw('exercise/menus', 'POST', body);
     if (!res.ok) return alert(`種目追加に失敗: ${(await res.json()).error ?? res.status}`);
+    toast('種目を追加しました');
     e.target.reset();
     syncMenuFormFields();
     refresh();
@@ -178,9 +206,11 @@
   const delCell = (id) => `<td><button class="mh-del" data-del="${id}" type="button">削除</button></td>`;
 
   $('exercise-history').addEventListener('click', async (e) => {
+    if (e.target.closest('[data-retry]')) return refresh();
     const btn = e.target.closest('button[data-del]');
     if (btn && confirm('この記録を削除しますか？')) {
-      await rw(`exercise/logs/${btn.dataset.del}`, 'DELETE');
+      const res = await rw(`exercise/logs/${btn.dataset.del}`, 'DELETE');
+      toast(res.ok ? '削除しました' : '削除に失敗しました');
       refresh();
     }
   });
@@ -359,6 +389,11 @@
     candList = computeCandidates();
     activeIdx = candList.length ? 0 : -1;
     drawCandidates();
+    // 初回（種目ゼロ）で空のドロップダウンだけ出ると行き止まりに見えるため、導線を出す
+    if (!candList.length && menus.length === 0) {
+      $('exercise-menu-candidates').innerHTML =
+        '<li class="picker-hint">種目がありません。下の「種目管理」から追加してください</li>';
+    }
   };
   const hideCandidates = () => {
     candList = [];
@@ -437,11 +472,25 @@
       `<button type="button" class="ghost-btn set-remove">×</button>`;
     $('exercise-sets').appendChild(div);
   }
-  $('exercise-add-set').addEventListener('click', () => addSetRow());
+  // ジムでは同重量×同回数の繰り返しが多いため、＋セットは直前行の値をプリフィルする
+  $('exercise-add-set').addEventListener('click', () => {
+    const last = $('exercise-sets').lastElementChild;
+    addSetRow(
+      last ? last.querySelector('.set-reps').value : undefined,
+      last ? last.querySelector('.set-weight').value : undefined,
+    );
+  });
   $('exercise-sets').addEventListener('click', (e) => {
     if (e.target.classList.contains('set-remove')) {
       const rows = $('exercise-sets').children;
-      if (rows.length > 1) e.target.closest('.set-row').remove();
+      const row = e.target.closest('.set-row');
+      if (rows.length > 1) {
+        row.remove();
+      } else {
+        // 最後の1行は消せない代わりに入力をクリアする（無反応に見えないように）
+        row.querySelector('.set-reps').value = '';
+        row.querySelector('.set-weight').value = '';
+      }
     }
   });
 
@@ -468,6 +517,7 @@
     }
     const res = await rw('exercise/logs', 'POST', body);
     if (!res.ok) return alert(`記録に失敗: ${(await res.json()).error ?? res.status}`);
+    toast('記録しました');
     selectedMenu = null;
     $('exercise-menu-search').value = '';
     $('exercise-duration').value = '';

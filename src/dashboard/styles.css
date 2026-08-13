@@ -1,5 +1,6 @@
 /* テーマ変数（真実源）。app.jsはgetComputedStyleでChart.jsへ反映する */
 :root {
+  color-scheme: light;
   --bg: #f6f8fa;
   --surface: #ffffff;
   --text: #1e293b;
@@ -16,6 +17,7 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
     --bg: #0f172a;
     --surface: #1e293b;
     --text: #e2e8f0;
@@ -32,6 +34,7 @@
   }
 }
 :root[data-theme='light'] {
+  color-scheme: light;
   --bg: #f6f8fa;
   --surface: #ffffff;
   --text: #1e293b;
@@ -47,6 +50,7 @@
   --skeleton: #e2e8f0;
 }
 :root[data-theme='dark'] {
+  color-scheme: dark;
   --bg: #0f172a;
   --surface: #1e293b;
   --text: #e2e8f0;
@@ -64,6 +68,8 @@
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
+/* 認証ゲート等はhidden属性に依存する。author側のdisplay:flexに負けないよう!importantで固定する */
+[hidden] { display: none !important; }
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
@@ -436,3 +442,106 @@ body {
 
 /* 計測明細モードでは日次粒度のカロリー3列（摂取/消費/ネット）を隠す（1計測=1行と粒度が合わないため） */
 .table-wrap.hide-kcal .kcal-col { display: none; }
+
+/* ---- 食事/運動タブのフォームコントロール（UA既定のままだとテーマから浮くため統一） ---- */
+#panel-meals input,
+#panel-meals select,
+#panel-exercise input,
+#panel-exercise select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 8px;
+}
+#panel-meals label,
+#panel-exercise label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+/* フォーム内ボタンはweightタブのボタン群と同じ見た目に */
+#meal-add-form button,
+#menu-form button,
+#exercise-add-form button,
+#exercise-menu-form button,
+#meals-auth button,
+#exercise-auth button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 5px 12px;
+}
+#meal-add-form button[type='submit'],
+#menu-form button[type='submit'],
+#exercise-add-form button[type='submit'],
+#exercise-menu-form button[type='submit'],
+#meals-auth button,
+#exercise-auth button {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+/* 一覧・履歴内の小ボタン（アーカイブ/削除）は小さめのまま統一 */
+#menus-list button,
+#exercise-menus-list button,
+.meals-history-table button {
+  font: inherit;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+#meal-multiplier { width: 4.5rem; }
+#exercise-duration { width: 5rem; }
+#meal-menu-search,
+#exercise-menu-search { min-width: 12rem; }
+/* 空メニュー時の案内行（クリック不可） */
+.picker-hint { color: var(--text-muted); cursor: default; }
+
+/* ---- トースト（記録・削除等の非ブロッキング結果通知） ---- */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  transform: translateX(-50%) translateY(8px);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 50;
+  max-width: calc(100vw - 2rem);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+#toast.show {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+#toast button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+  padding: 0;
+  white-space: nowrap;
+}
