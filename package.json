@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "sync-vendor": "node scripts/sync-vendor.mjs",
-    "check-dashboard": "node --check src/dashboard/app.js && node --check src/dashboard/meals.js && node --check src/dashboard/exercise.js && node --check src/dashboard/sw.js",
+    "check-dashboard": "node --check src/dashboard/app.js && node --check src/dashboard/shared.js && node --check src/dashboard/meals.js && node --check src/dashboard/exercise.js && node --check src/dashboard/sw.js",
     "dev": "npm run sync-vendor && wrangler dev",
     "deploy": "npm run sync-vendor && wrangler deploy",
     "test": "npm run sync-vendor && vitest run",

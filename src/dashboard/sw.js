@@ -8,6 +8,7 @@ var PRECACHE_URLS = [
   './',
   'styles.css?v=' + VERSION,
   'app.js?v=' + VERSION,
+  'shared.js?v=' + VERSION,
   'meals.js?v=' + VERSION,
   'exercise.js?v=' + VERSION,
   'vendor/chart.umd.js?v=' + VERSION,

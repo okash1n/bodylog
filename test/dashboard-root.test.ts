@@ -75,11 +75,21 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     expect(html).toContain('exercise.js');
   });
 
+  it('/shared.js が配信され、HTMLでmeals.jsより先に読み込まれる', async () => {
+    const js = await request('/shared.js', rootEnv);
+    expect(js.status).toBe(200);
+    expect(js.headers.get('Content-Type')).toContain('javascript');
+    const html = await (await request('/', rootEnv)).text();
+    // deferスクリプトは記述順に実行される。shared.jsがwindow.__dashを公開してからmeals.jsが動く前提
+    expect(html.indexOf('shared.js')).toBeGreaterThan(-1);
+    expect(html.indexOf('shared.js')).toBeLessThan(html.indexOf('meals.js'));
+  });
+
   it('sw.js のプリキャッシュにHTMLが読む全JSが含まれる（漏れるとオフラインでタブが壊れる）', async () => {
     const res = await request('/sw.js', rootEnv);
     expect(res.status).toBe(200);
     const sw = await res.text();
-    for (const asset of ['app.js?v=', 'meals.js?v=', 'exercise.js?v=', 'styles.css?v=', 'vendor/chart.umd.js?v=']) {
+    for (const asset of ['app.js?v=', 'shared.js?v=', 'meals.js?v=', 'exercise.js?v=', 'styles.css?v=', 'vendor/chart.umd.js?v=']) {
       expect(sw).toContain(`'${asset}' + VERSION`);
     }
   });

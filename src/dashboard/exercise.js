@@ -1,23 +1,12 @@
-/* 運動タブ: 公開READは無認証、書き込みはmeals.jsが用意した window.__dashAuth（OAuth PKCE）経由 */
+/* 運動タブ: 公開READは無認証、書き込みはOAuth(PKCE)のトークンで /api の POST/DELETE を呼ぶ。
+   タブ切替・OAuth・トースト・ピッカーは shared.js（window.__dash）を使う */
 (() => {
-  const base = document.querySelector('script[src*="exercise.js"]').src.replace(/exercise\.js.*$/, '');
-  const $ = (id) => document.getElementById(id);
-  const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
-  const todayJst = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const { base, $, esc, todayJst, localDateOf, HISTORY_DAYS, toast, rw, login, loggedIn, createPicker } = window.__dash;
+
   const selectedDate = () => $('exercise-date').value || todayJst();
-  const r1 = (n) => (Math.round(n * 10) / 10).toString();
-  const localDateOf = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10);
-  const HISTORY_DAYS = 50;
 
-  // 認証・トーストはmeals.js（先に読み込まれる）が公開する共有API。トークンは同一localStorageキーを使う
-  const auth = () => window.__dashAuth;
-  const loggedIn = () => Boolean(auth() && auth().loggedIn());
-  const rw = (path, method, body) => auth().rw(path, method, body);
-  const toast = (msg, opts) => auth() && auth().toast(msg, opts);
-
-  // ---- 小さなチャートユーティリティ（app.jsとは別インスタンスなので最小限を複製） ----
+  // ---- 小さなチャートユーティリティ（app.jsは同期スクリプトのため共有できず、最小限を複製） ----
   const DAY_MS = 86400000;
-  const pad2 = (n) => (n < 10 ? '0' : '') + n;
   const addDays = (ymd, d) => new Date(Date.parse(ymd + 'T00:00:00Z') + d * DAY_MS).toISOString().slice(0, 10);
   function buildDateLabels(from, to) {
     const out = [];
@@ -47,9 +36,9 @@
     $('exercise-add-form').hidden = !loggedIn();
     $('exercise-menus-manage').hidden = !loggedIn();
   }
+  document.addEventListener('authchanged', updateAuthUi);
   $('exercise-login').addEventListener('click', () => {
-    if (!auth()) return;
-    auth().login().catch((e) => alert(`ログインを開始できませんでした: ${e.message}`));
+    login().catch((e) => alert(`ログインを開始できませんでした: ${e.message}`));
   });
 
   // ---- データ取得（タブ表示時） ----
@@ -111,6 +100,7 @@
     if (id) {
       const res = await rw(`exercise/menus/${id}/archive`, 'POST');
       if (res.ok) {
+        // 誤タップから戻せるよう、undo付きトーストにする（unarchive APIは既存）
         toast('アーカイブしました', {
           action: {
             label: '元に戻す',
@@ -326,117 +316,21 @@
     });
   }
 
-  // ---- 記録フォーム（fzf風の種目ピッカー） ----
-  const CAND_LIMIT = 10;
-  let candList = [];
-  let activeIdx = -1;
-
-  const fuzzyMatch = (name, q) => {
-    const chars = [...name];
-    if (!q) return { score: 0, matched: [] };
-    const lc = chars.map((c) => c.toLowerCase());
-    const lq = [...q.toLowerCase()];
-    const matched = [];
-    let qi = 0;
-    let score = 0;
-    let prev = -2;
-    for (let i = 0; i < lc.length && qi < lq.length; i++) {
-      if (lc[i] === lq[qi]) {
-        matched.push(i);
-        score += (prev === i - 1 ? 3 : 1) + (i === 0 ? 2 : 0);
-        prev = i;
-        qi++;
-      }
-    }
-    if (qi < lq.length) return null;
-    return { score: score - chars.length * 0.01, matched };
-  };
-  const computeCandidates = () => {
-    const q = $('exercise-menu-search').value.trim();
-    const scored = [];
-    for (const m of menus) {
-      const r = fuzzyMatch(m.name, q);
-      if (r) scored.push({ m, ...r });
-    }
-    scored.sort(
-      q
-        ? (a, b) => b.score - a.score || [...a.m.name].length - [...b.m.name].length
-        : (a, b) => a.m.name.localeCompare(b.m.name, 'ja'),
-    );
-    return scored.slice(0, CAND_LIMIT);
-  };
-  const highlight = (name, matched) => {
-    const set = new Set(matched);
-    return [...name].map((ch, i) => (set.has(i) ? `<mark>${esc(ch)}</mark>` : esc(ch))).join('');
-  };
-  const drawCandidates = () => {
-    $('exercise-menu-candidates').innerHTML = candList
-      .map((c, i) => `<li data-pick="${c.m.id}" data-idx="${i}" class="${i === activeIdx ? 'active' : ''}">${highlight(c.m.name, c.matched)}（${esc(menuMeta(c.m))}）</li>`)
-      .join('');
-  };
-
-  // マウスオーバーでもactive（青ハイライト）を移動させ、キーボードと挙動を揃える
-  $('exercise-menu-candidates').addEventListener('mouseover', (e) => {
-    const li = e.target.closest('li');
-    if (!li) return;
-    const i = Number(li.dataset.idx);
-    if (Number.isInteger(i) && i !== activeIdx) {
-      activeIdx = i;
-      drawCandidates();
-    }
-  });
-  const showCandidates = () => {
-    candList = computeCandidates();
-    activeIdx = candList.length ? 0 : -1;
-    drawCandidates();
-    // 初回（種目ゼロ）で空のドロップダウンだけ出ると行き止まりに見えるため、導線を出す
-    if (!candList.length && menus.length === 0) {
-      $('exercise-menu-candidates').innerHTML =
-        '<li class="picker-hint">種目がありません。下の「種目管理」から追加してください</li>';
-    }
-  };
-  const hideCandidates = () => {
-    candList = [];
-    activeIdx = -1;
-    $('exercise-menu-candidates').innerHTML = '';
-  };
-  const pickMenu = (m) => {
-    if (!m) return;
-    selectedMenu = m;
-    $('exercise-menu-search').value = m.name;
-    hideCandidates();
-    syncRecordFields();
-  };
-
-  $('exercise-menu-search').addEventListener('focus', showCandidates);
-  $('exercise-menu-search').addEventListener('input', () => {
-    selectedMenu = null;
-    syncRecordFields();
-    showCandidates();
-  });
-  $('exercise-menu-search').addEventListener('keydown', (e) => {
-    if (!candList.length) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      activeIdx = (activeIdx + 1) % candList.length;
-      drawCandidates();
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      activeIdx = (activeIdx - 1 + candList.length) % candList.length;
-      drawCandidates();
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (activeIdx >= 0) pickMenu(candList[activeIdx].m);
-    } else if (e.key === 'Escape') {
-      hideCandidates();
-    }
-  });
-  $('exercise-menu-search').addEventListener('blur', () => setTimeout(hideCandidates, 150));
-  $('exercise-menu-candidates').addEventListener('mousedown', (e) => {
-    const id = e.target.closest('li')?.dataset?.pick;
-    if (!id) return;
-    e.preventDefault();
-    pickMenu(menus.find((m) => m.id === id));
+  // ---- 記録フォーム（fzf風の種目ピッカー。実装はshared.jsのcreatePicker） ----
+  createPicker({
+    input: $('exercise-menu-search'),
+    list: $('exercise-menu-candidates'),
+    getItems: () => menus,
+    renderMeta: (m) => `（${esc(menuMeta(m))}）`,
+    emptyHint: '種目がありません。下の「種目管理」から追加してください',
+    onInput: () => {
+      selectedMenu = null;
+      syncRecordFields();
+    },
+    onPick: (m) => {
+      selectedMenu = m;
+      syncRecordFields();
+    },
   });
 
   // 選択した種目のカテゴリで有酸素／筋トレの入力欄を出し分ける
@@ -533,4 +427,6 @@
   $('exercise-date').addEventListener('change', () => {
     if (!$('exercise-date').value || $('exercise-date').value > todayJst()) $('exercise-date').value = todayJst();
   });
+
+  updateAuthUi();
 })();

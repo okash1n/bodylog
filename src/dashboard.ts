@@ -19,6 +19,7 @@ import { OG_RENDERER_VERSION, renderOgPng } from './og';
 import indexHtmlTpl from './dashboard/index.html';
 import stylesCss from './dashboard/styles.css';
 import appJs from './dashboard/app.js';
+import sharedJs from './dashboard/shared.js';
 import mealsJs from './dashboard/meals.js';
 import exerciseJs from './dashboard/exercise.js';
 import swJsTpl from './dashboard/sw.js';
@@ -27,7 +28,7 @@ import chartVendorJs from './dashboard/vendor/chart.umd.js';
 import { appleTouchIconPng } from './dashboard/icon';
 
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
-export const ASSET_VERSION = '2026-08-13-19';
+export const ASSET_VERSION = '2026-08-13-20';
 
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';
 const JS_CONTENT_TYPE = 'text/javascript; charset=utf-8';
@@ -71,6 +72,9 @@ const serveStyles: Handler = (c) =>
 
 const serveAppJs: Handler = (c) =>
   c.body(appJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': STATIC_CACHE_CONTROL }));
+
+const serveSharedJs: Handler = (c) =>
+  c.body(sharedJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': STATIC_CACHE_CONTROL }));
 
 const serveMealsJs: Handler = (c) =>
   c.body(mealsJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': STATIC_CACHE_CONTROL }));
@@ -201,6 +205,7 @@ export const READ_ROUTES: ReadonlyArray<readonly [string, Handler]> = [
   ['', serveIndex],
   ['styles.css', serveStyles],
   ['app.js', serveAppJs],
+  ['shared.js', serveSharedJs],
   ['meals.js', serveMealsJs],
   ['exercise.js', serveExerciseJs],
   ['vendor/chart.umd.js', serveVendor],
