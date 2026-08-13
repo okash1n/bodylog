@@ -274,10 +274,21 @@
     $('meal-menu-candidates').innerHTML = candList
       .map(
         (c, i) =>
-          `<li data-pick="${c.m.id}" class="${i === activeIdx ? 'active' : ''}">${highlight(c.m.name, c.matched)}（${c.m.calories} kcal${pfc(c.m.protein_g, c.m.fat_g, c.m.carbs_g)}）</li>`,
+          `<li data-pick="${c.m.id}" data-idx="${i}" class="${i === activeIdx ? 'active' : ''}">${highlight(c.m.name, c.matched)}（${c.m.calories} kcal${pfc(c.m.protein_g, c.m.fat_g, c.m.carbs_g)}）</li>`,
       )
       .join('');
   };
+
+  // マウスオーバーでもactive（青ハイライト）を移動させ、キーボードと挙動を揃える
+  $('meal-menu-candidates').addEventListener('mouseover', (e) => {
+    const li = e.target.closest('li');
+    if (!li) return;
+    const i = Number(li.dataset.idx);
+    if (Number.isInteger(i) && i !== activeIdx) {
+      activeIdx = i;
+      drawCandidates();
+    }
+  });
 
   const showCandidates = () => {
     candList = computeCandidates();

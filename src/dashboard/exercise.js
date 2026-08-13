@@ -338,9 +338,20 @@
   };
   const drawCandidates = () => {
     $('exercise-menu-candidates').innerHTML = candList
-      .map((c, i) => `<li data-pick="${c.m.id}" class="${i === activeIdx ? 'active' : ''}">${highlight(c.m.name, c.matched)}（${esc(menuMeta(c.m))}）</li>`)
+      .map((c, i) => `<li data-pick="${c.m.id}" data-idx="${i}" class="${i === activeIdx ? 'active' : ''}">${highlight(c.m.name, c.matched)}（${esc(menuMeta(c.m))}）</li>`)
       .join('');
   };
+
+  // マウスオーバーでもactive（青ハイライト）を移動させ、キーボードと挙動を揃える
+  $('exercise-menu-candidates').addEventListener('mouseover', (e) => {
+    const li = e.target.closest('li');
+    if (!li) return;
+    const i = Number(li.dataset.idx);
+    if (Number.isInteger(i) && i !== activeIdx) {
+      activeIdx = i;
+      drawCandidates();
+    }
+  });
   const showCandidates = () => {
     candList = computeCandidates();
     activeIdx = candList.length ? 0 : -1;
