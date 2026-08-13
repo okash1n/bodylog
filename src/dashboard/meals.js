@@ -20,6 +20,19 @@
     if (c != null) parts.push(`C${r1(c)}`);
     return parts.length ? ` · ${parts.join(' ')}` : '';
   };
+  // PFC比率（%）。エネルギー換算（P4/F9/C4 kcal/g）して3者の中で正規化する。
+  // 登録kcalで割ると食物繊維等の差でずれる（100%を超えうる）ため、換算値同士で閉じる。
+  // 3つ揃っている場合のみ返す（部分入力の日に嘘の比率を出さない）
+  const pfcRatio = (p, f, c) => {
+    if (p == null || f == null || c == null) return '';
+    const pe = p * 4;
+    const fe = f * 9;
+    const ce = c * 4;
+    const t = pe + fe + ce;
+    if (t <= 0) return '';
+    const r = (x) => Math.round((x / t) * 100);
+    return ` (${r(pe)}:${r(fe)}:${r(ce)})`;
+  };
   // 実効PFCの合計（未入力=nullは加算しない。日次PFCの部分合計仕様に合わせる）
   const sumEff = (arr, key) => {
     let any = false;
@@ -185,12 +198,10 @@
         // 日は新しい順のまま、各日の中は時刻昇順（朝→昼→夜）で読みやすく
         g.items.sort((a, b) => String(a.eaten_at).localeCompare(String(b.eaten_at)));
         const total = g.items.reduce((a, m) => a + m.effective_calories, 0);
-        const totalPfc = pfc(
-          sumEff(g.items, 'effective_protein_g'),
-          sumEff(g.items, 'effective_fat_g'),
-          sumEff(g.items, 'effective_carbs_g'),
-        );
-        const head = `<tr class="mh-day"><td colspan="${span}">${g.d}　合計 ${Math.round(total)} kcal${totalPfc}</td></tr>`;
+        const dp = sumEff(g.items, 'effective_protein_g');
+        const df = sumEff(g.items, 'effective_fat_g');
+        const dc = sumEff(g.items, 'effective_carbs_g');
+        const head = `<tr class="mh-day"><td colspan="${span}">${g.d}　合計 ${Math.round(total)} kcal${pfc(dp, df, dc)}${pfcRatio(dp, df, dc)}</td></tr>`;
         const items = g.items
           .map((m) => {
             const t = MEAL_TYPE_LABEL[m.meal_type] || '—';

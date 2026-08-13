@@ -784,6 +784,19 @@
                 if (pfc.p[i] != null) parts.push('P' + round1(pfc.p[i]));
                 if (pfc.f[i] != null) parts.push('F' + round1(pfc.f[i]));
                 if (pfc.c[i] != null) parts.push('C' + round1(pfc.c[i]));
+                // PFC比率: エネルギー換算(4/9/4)して3者内で正規化（登録kcal割りは食物繊維等でずれるため）
+                if (pfc.p[i] != null && pfc.f[i] != null && pfc.c[i] != null) {
+                  var pe = pfc.p[i] * 4;
+                  var fe = pfc.f[i] * 9;
+                  var ce = pfc.c[i] * 4;
+                  var te = pe + fe + ce;
+                  if (te > 0) {
+                    var pct = function (x) {
+                      return Math.round((x / te) * 100);
+                    };
+                    parts.push('(' + pct(pe) + ':' + pct(fe) + ':' + pct(ce) + ')');
+                  }
+                }
                 return parts.length ? '   ' + parts.join(' ') : undefined;
               },
             },
