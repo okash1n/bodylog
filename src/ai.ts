@@ -35,7 +35,7 @@ export function llmsTxt(origin: string, base: string, tzOffsetHours: number): st
 - GET ${root}/api/meals/daily?days=30 — 日次の摂取カロリー・PFC合計
 - GET ${root}/api/exercise/menus?q=&category= — 運動種目（マスタ）一覧・検索。category=cardio|strengthで絞れる
 - GET ${root}/api/exercise/logs?days=30 — 運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）
-- GET ${root}/api/exercise/daily?days=30 — 日次の消費カロリー（有酸素）と総ボリューム（筋トレ）
+- GET ${root}/api/exercise/daily?days=30 — 日次の基礎代謝（Katch-McArdle推定）・運動消費kcal・総ボリューム。期間内の全日を返す
 - GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（ChatGPTカスタムGPTのActionsにはこれを登録する）
 - POST ${root}/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール
 
@@ -377,7 +377,7 @@ export function openapiSpec(
       '/api/exercise/daily': {
         get: {
           operationId: 'getDailyExercise',
-          summary: '日次の消費カロリー（有酸素）と総ボリューム（筋トレ）',
+          summary: '日次の基礎代謝（Katch-McArdle推定）・運動消費kcal・総ボリューム（期間内の全日を返す）',
           parameters: rangeParams,
           responses: {
             '200': {
@@ -531,9 +531,13 @@ export function openapiSpec(
         DailyExercise: {
           type: 'object',
           description:
-            '1日分の運動量。calories_burnedは有酸素の消費kcal合計、strength_volumeは筋トレの総ボリューム合計（該当なしはnull）',
+            '1日分のエネルギー・運動量。bmrはKatch-McArdle（370 + 21.6×除脂肪体重）による基礎代謝の推定kcal' +
+            '（その日以前で最新の実測FFMを使用。実測が無い期間はnull。日常活動・食事誘発熱産生は含まない）。' +
+            'calories_burnedは有酸素の消費kcal合計、strength_volumeは筋トレの総ボリューム合計（該当なしはnull）。' +
+            '総消費 = bmr + calories_burned',
           properties: {
             d: { type: 'string', format: 'date' },
+            bmr: { type: ['number', 'null'] },
             calories_burned: { type: ['number', 'null'] },
             strength_volume: { type: ['number', 'null'] },
             cardio_count: { type: 'integer' },

@@ -503,7 +503,7 @@
       },
       {
         type: 'bar',
-        label: '消費(有酸素)',
+        label: '消費(基礎+運動)',
         data: cals.burn,
         yAxisID: 'yKcal',
         unit: 'kcal',
@@ -512,10 +512,11 @@
         order: 98,
         hidden: !calorieOverlay,
         _energy: 'burn',
+        _burnParts: cals.burnParts,
       },
       {
         type: 'line',
-        label: 'ネット(摂取−運動消費)',
+        label: 'ネット(摂取−消費)',
         data: cals.net,
         yAxisID: 'yKcal',
         unit: 'kcal',
@@ -638,11 +639,13 @@
       delete s.yKg.min;
       delete s.yKg.max;
     }
-    // カロリー右軸は0基点・可視最大の1.15倍。棒が隠れているときは触らない
+    // カロリー右軸は0を含み可視最大の1.15倍まで。ネット（摂取−消費）が赤字の日は負側にも広げる
     var kcal = visibleValues(ch, 'yKcal');
     if (s.yKcal && kcal.length) {
-      s.yKcal.min = 0;
-      s.yKcal.max = Math.max.apply(null, kcal) * 1.15;
+      var kmax = Math.max.apply(null, kcal);
+      var kmin = Math.min.apply(null, kcal);
+      s.yKcal.max = kmax > 0 ? kmax * 1.15 : 0;
+      s.yKcal.min = kmin < 0 ? kmin * 1.15 : 0;
     }
   }
 
@@ -712,12 +715,14 @@
         ? sets.weight7.concat(sets.fat7, sets.ffm7)
         : sets.weight.concat(sets.fat, sets.ffm),
     );
-    // カロリー右軸の初期レンジ（applyAxisRangesと同じ 0〜可視最大×1.15）。以降の更新と一貫させる。
-    // 摂取・消費・ネットの全カロリー系から最大を取る
+    // カロリー右軸の初期レンジ（applyAxisRangesと同じ規則）。以降の更新と一貫させる。
+    // 摂取・消費・ネットの全カロリー系から最大/最小を取る（ネット赤字=負値も収める）
     var kcalVals = cals.cal.concat(cals.burn || [], cals.net || []).filter(function (v) {
       return v != null;
     });
     var kcalMax = kcalVals.length ? Math.max.apply(null, kcalVals) * 1.15 : undefined;
+    var kcalMinRaw = kcalVals.length ? Math.min.apply(null, kcalVals) : 0;
+    var kcalMin = kcalMinRaw < 0 ? kcalMinRaw * 1.15 : 0;
     chart = new Chart(els.canvas, {
       type: 'line',
       data: { labels: labels, datasets: buildDatasets(sets, cals, density, t) },
@@ -761,6 +766,14 @@
                 return ' ' + ctx.dataset.label + ': ' + (v == null ? '—' : v.toFixed(1) + ' ' + (ctx.dataset.unit || ''));
               },
               afterLabel: function (ctx) {
+                // 消費棒は内訳（基礎代謝の推定 + 運動）を添える
+                var parts = ctx.dataset._burnParts && ctx.dataset._burnParts[ctx.dataIndex];
+                if (parts && (parts.bmr != null || parts.ex != null)) {
+                  var seg = [];
+                  if (parts.bmr != null) seg.push('基礎 ' + Math.round(parts.bmr));
+                  if (parts.ex != null) seg.push('運動 ' + Math.round(parts.ex));
+                  return '   ' + seg.join(' + ');
+                }
                 var pfc = ctx.dataset._pfc;
                 if (!pfc) return undefined;
                 var i = ctx.dataIndex;
@@ -801,7 +814,7 @@
             type: 'linear',
             position: 'right',
             beginAtZero: true,
-            min: 0,
+            min: kcalMin,
             max: kcalMax,
             display: calorieOverlay,
             // カロリー軸のグリッドは体重グリッドと重なると煩いので描かない
@@ -843,7 +856,10 @@
       d[CALORIE_DATASET_INDEX].data = cals.cal;
       d[CALORIE_DATASET_INDEX]._pfc = { p: cals.p, f: cals.f, c: cals.c };
     }
-    if (d[ENERGY_DATASET_INDEXES[1]]) d[ENERGY_DATASET_INDEXES[1]].data = cals.burn;
+    if (d[ENERGY_DATASET_INDEXES[1]]) {
+      d[ENERGY_DATASET_INDEXES[1]].data = cals.burn;
+      d[ENERGY_DATASET_INDEXES[1]]._burnParts = cals.burnParts;
+    }
     if (d[ENERGY_DATASET_INDEXES[2]]) d[ENERGY_DATASET_INDEXES[2]].data = cals.net;
     ENERGY_DATASET_INDEXES.forEach(function (idx) {
       if (d[idx]) chart.setDatasetVisibility(idx, calorieOverlay);
@@ -868,8 +884,8 @@
     chart.update('none');
   }
 
-  // 運動の日次消費kcalをラベルへ整列し、ネット（摂取−運動消費）を計算してcalsに足す。
-  // ネットは基礎代謝を含まない。摂取と消費の両方がある日だけ描く（消費0の日は摂取と重なり冗長なため）
+  // 運動・基礎代謝の日次をラベルへ整列し、消費（基礎+運動）とネット（摂取−消費）をcalsに足す。
+  // 基礎代謝はKatch-McArdle推定（サーバー算出）。ネットは摂取がある日だけ描く（赤字=負値も出る）
   function addBurnNet(cals, exDays, labels) {
     var byDate = Object.create(null);
     (exDays || []).forEach(function (row) {
@@ -877,7 +893,14 @@
     });
     cals.burn = labels.map(function (l) {
       var r = byDate[l];
-      return r && r.calories_burned != null ? r.calories_burned : null;
+      if (!r) return null;
+      if (r.bmr == null && r.calories_burned == null) return null;
+      return (r.bmr || 0) + (r.calories_burned || 0);
+    });
+    // ツールチップ内訳用（基礎/運動）
+    cals.burnParts = labels.map(function (l) {
+      var r = byDate[l];
+      return r ? { bmr: r.bmr, ex: r.calories_burned } : null;
     });
     cals.net = labels.map(function (l, i) {
       var intake = cals.cal[i];
@@ -943,7 +966,11 @@
       var mealRow = byDate[d.d];
       var exRow = exBy[d.d];
       var intake = mealRow && mealRow.calories != null ? mealRow.calories : null;
-      var burn = exRow && exRow.calories_burned != null ? exRow.calories_burned : null;
+      // 消費 = 基礎代謝(推定) + 運動。どちらも無い日はnull
+      var burn = null;
+      if (exRow && (exRow.bmr != null || exRow.calories_burned != null)) {
+        burn = (exRow.bmr || 0) + (exRow.calories_burned || 0);
+      }
       var calCell = intake != null ? Math.round(intake) + '' : '—';
       var burnCell = burn != null ? Math.round(burn) + '' : '—';
       var netCell = intake != null && burn != null ? Math.round(intake - burn) + '' : '—';

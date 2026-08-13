@@ -12,7 +12,7 @@ import type {
   ExerciseMenuInput,
   ExerciseSet,
 } from './types';
-import { isoNow, newId, tzModifier } from './util';
+import { addDaysYmd, isoNow, newId, tzModifier } from './util';
 
 const MAX_METS = 30;
 const MAX_DURATION_MIN = 1440; // 24h
@@ -313,9 +313,14 @@ ORDER BY s.log_id, s.set_index`,
   return logs.results.map((l) => toLog(l, byLog.get(l.id) ?? []));
 }
 
+/** Katch-McArdle: 除脂肪体重(kg)からの基礎代謝推定 */
+export function estimateBmr(fatFreeMassKg: number): number {
+  return 370 + 21.6 * fatFreeMassKg;
+}
+
 export async function getDailyExercise(env: Env, from: string, to: string): Promise<DailyExercise[]> {
   const tz = tzModifier(env);
-  const [counts, volume] = await env.DB.batch<{ d: string } & Record<string, number>>([
+  const [counts, volume, ffmHist] = await env.DB.batch<{ d: string } & Record<string, number>>([
     env.DB.prepare(
       `SELECT date(performed_at, '${tz}') AS d,
        SUM(CASE WHEN category = 'cardio' THEN calories ELSE 0 END) AS calories_burned,
@@ -333,22 +338,47 @@ FROM exercise_logs l JOIN exercise_sets s ON s.log_id = l.id
 WHERE l.category = 'strength' AND date(l.performed_at, '${tz}') BETWEEN ?1 AND ?2
 GROUP BY 1`,
     ).bind(from, to),
+    // BMR用のFFM履歴（to以前の全計測、時系列順）。carry-forwardの種になる範囲前の計測も含める
+    env.DB.prepare(
+      `SELECT date(measured_at, '${tz}') AS d, fat_free_mass AS ffm
+FROM measurements
+WHERE fat_free_mass IS NOT NULL AND date(measured_at, '${tz}') <= ?1
+ORDER BY measured_at`,
+    ).bind(to),
   ]);
   const volByDate = new Map<string, number>();
   for (const r of volume.results) volByDate.set(r.d, r.strength_volume);
-  const byDate = new Map<string, DailyExercise>();
+  const countsByDate = new Map<string, { calories: number; cardio: number; strength: number }>();
   for (const r of counts.results) {
-    const cardioCount = Number(r.cardio_count ?? 0);
-    const strengthCount = Number(r.strength_count ?? 0);
-    byDate.set(r.d, {
-      d: r.d,
-      calories_burned: cardioCount > 0 ? Number(r.calories_burned ?? 0) : null,
-      strength_volume: volByDate.has(r.d) ? volByDate.get(r.d)! : null,
-      cardio_count: cardioCount,
-      strength_count: strengthCount,
+    countsByDate.set(r.d, {
+      calories: Number(r.calories_burned ?? 0),
+      cardio: Number(r.cardio_count ?? 0),
+      strength: Number(r.strength_count ?? 0),
     });
   }
-  return [...byDate.values()].sort((a, b) => a.d.localeCompare(b.d));
+  // 日ごとの最新FFM（同日複数計測は後勝ち=最新）。時系列順なのでMapが日付昇順の最新値になる
+  const ffmByDay = new Map<string, number>();
+  for (const r of ffmHist.results) ffmByDay.set(r.d, r.ffm);
+  // 範囲開始前の最新FFMをcarryの初期値にする
+  let carry: number | null = null;
+  for (const [d, v] of ffmByDay) {
+    if (d < from) carry = v;
+  }
+  // 期間内の全日を返す（BMRは運動の有無によらず毎日成立するため）
+  const out: DailyExercise[] = [];
+  for (let d = from; d <= to; d = addDaysYmd(d, 1)) {
+    if (ffmByDay.has(d)) carry = ffmByDay.get(d)!;
+    const c = countsByDate.get(d);
+    out.push({
+      d,
+      bmr: carry != null ? estimateBmr(carry) : null,
+      calories_burned: c && c.cardio > 0 ? c.calories : null,
+      strength_volume: volByDate.has(d) ? volByDate.get(d)! : null,
+      cardio_count: c?.cardio ?? 0,
+      strength_count: c?.strength ?? 0,
+    });
+  }
+  return out;
 }
 
 export async function getExerciseForDay(env: Env, ymd: string): Promise<DailyExercise | null> {

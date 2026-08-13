@@ -198,15 +198,31 @@ describe('運動の日次集計', () => {
     expect(daily[0].strength_volume).toBe(400);
     expect(daily[0].cardio_count).toBe(1);
     expect(daily[0].strength_count).toBe(1);
+    // BMR = Katch-McArdle。seedWeight(70)のffm = 70*0.8 = 56 → 370 + 21.6*56 = 1579.6
+    expect(daily[0].bmr).toBeCloseTo(1579.6);
   });
 
-  it('該当カテゴリが無い日はnull（0の棒を描かせない）', async () => {
+  it('該当カテゴリが無い日はnull（0の棒を描かせない）。FFM実測が無ければbmrもnull', async () => {
     const today = localYmdDaysAgo(0);
     const bench = await createExerciseMenu(testEnv, { name: 'ベンチ', category: 'strength' });
     await logExercise(testEnv, { menu_id: bench.id, performed_at: `${today}T03:00:00Z`, sets: [{ reps: 10, weight_kg: 40 }] });
     const day = await getExerciseForDay(testEnv, today);
     expect(day?.calories_burned).toBeNull();
     expect(day?.strength_volume).toBe(400);
+    expect(day?.bmr).toBeNull();
+  });
+
+  it('期間内の全日を返し、BMRは直近FFMをcarry-forwardする（運動なしの日も成立）', async () => {
+    const d2 = localYmdDaysAgo(2);
+    await seedWeight(d2, 70); // ffm 56 → bmr 1579.6
+    const daily = await getDailyExercise(testEnv, localYmdDaysAgo(3), localYmdDaysAgo(0));
+    expect(daily).toHaveLength(4);
+    expect(daily.map((r) => r.d)).toEqual([localYmdDaysAgo(3), d2, localYmdDaysAgo(1), localYmdDaysAgo(0)]);
+    expect(daily[0].bmr).toBeNull(); // 計測より前の日はnull
+    expect(daily[1].bmr).toBeCloseTo(1579.6); // 計測日
+    expect(daily[3].bmr).toBeCloseTo(1579.6); // 未計測日はcarry-forward
+    expect(daily[3].calories_burned).toBeNull(); // 運動なしの日
+    expect(daily[3].cardio_count).toBe(0);
   });
 });
 

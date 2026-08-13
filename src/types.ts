@@ -229,11 +229,16 @@ export interface ExerciseLog {
   total_volume: number | null; // strengthのみ（Σ volume）
 }
 
-/** 運動の日次集計（消費kcalと筋トレ総ボリューム） */
+/**
+ * 運動・エネルギーの日次集計。期間内の全日が返る（運動が無い日も、bmrが算出できれば意味を持つ）。
+ * bmr は Katch-McArdle（370 + 21.6 × 除脂肪体重）による推定。その日以前で最新の実測FFMを使い、
+ * 実測が一度も無い期間は null。総消費 = bmr + (calories_burned ?? 0)。
+ */
 export interface DailyExercise {
   d: string; // ローカル日付 YYYY-MM-DD
-  calories_burned: number | null; // cardioの消費kcal合計
-  strength_volume: number | null; // strengthの総ボリューム合計
+  bmr: number | null; // 基礎代謝の推定kcal（Katch-McArdle）
+  calories_burned: number | null; // cardioの消費kcal合計（運動なしはnull）
+  strength_volume: number | null; // strengthの総ボリューム合計（なしはnull）
   cardio_count: number;
   strength_count: number;
 }

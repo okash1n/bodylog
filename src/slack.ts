@@ -171,19 +171,37 @@ export function formatIntakeLine(intake: DailyIntake | null): string | null {
   return `*摂取* : ${Math.round(intake.calories)} kcal${macros}`;
 }
 
-/** ダイジェストの消費行（有酸素）。消費が無い/0の日は行を出さない */
-export function formatBurnLine(exercise: DailyExercise | null): string | null {
-  if (!exercise || exercise.calories_burned == null || exercise.calories_burned <= 0) return null;
-  return `*消費(有酸素)* : ${Math.round(exercise.calories_burned)} kcal`;
+/** 総消費 = 基礎代謝(推定) + 運動消費。どちらも無い日は null */
+function totalBurn(exercise: DailyExercise | null): number | null {
+  if (!exercise) return null;
+  const bmr = exercise.bmr;
+  const ex = exercise.calories_burned;
+  if (bmr == null && (ex == null || ex <= 0)) return null;
+  return (bmr ?? 0) + (ex ?? 0);
 }
 
 /**
- * ネット行 = 摂取 − 運動消費。摂取と消費の両方がある日だけ出す。
- * 基礎代謝は含まない（真のエネルギー収支ではないことを明記する）。
+ * ダイジェストの消費行。基礎代謝（Katch-McArdle推定）＋運動消費で、内訳を明示する。
+ * BMRは実測FFMがあれば毎日成立するため、原則毎日出る。
  */
+export function formatBurnLine(exercise: DailyExercise | null): string | null {
+  const total = totalBurn(exercise);
+  if (total == null) return null;
+  const bmr = exercise!.bmr;
+  const ex = exercise!.calories_burned;
+  let detail = '';
+  if (bmr != null && ex != null && ex > 0) detail = ` (基礎 ${Math.round(bmr)} + 運動 ${Math.round(ex)})`;
+  else if (bmr != null) detail = ' (基礎代謝)';
+  else detail = ' (運動)';
+  return `*消費* : ${Math.round(total)} kcal${detail}`;
+}
+
+/** ネット行 = 摂取 − 総消費（基礎代謝＋運動）。摂取と消費の両方がある日だけ出す */
 export function formatNetLine(intake: DailyIntake | null, exercise: DailyExercise | null): string | null {
-  if (!intake || exercise?.calories_burned == null || exercise.calories_burned <= 0) return null;
-  return `*ネット* : ${Math.round(intake.calories - exercise.calories_burned)} kcal (摂取−運動消費)`;
+  if (!intake) return null;
+  const total = totalBurn(exercise);
+  if (total == null) return null;
+  return `*ネット* : ${Math.round(intake.calories - total)} kcal (摂取−消費)`;
 }
 
 /** 日次ダイジェスト（その日の平均3値 + 7日平均比 + 基準日比 + 当日摂取） */

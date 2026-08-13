@@ -61,12 +61,19 @@ describe('公開REST（運動）', () => {
     expect(cardio?.calories).toBeCloseTo(294);
   });
 
-  it('GET /api/exercise/daily が消費kcalと総ボリュームの日次を返す', async () => {
+  it('GET /api/exercise/daily が全日分のBMR・消費kcal・総ボリュームを返す', async () => {
     const res = await request('/api/exercise/daily?days=7');
-    const body = (await res.json()) as { days: { d: string; calories_burned: number | null; strength_volume: number | null }[] };
-    expect(body.days).toHaveLength(1);
-    expect(body.days[0].calories_burned).toBeCloseTo(294);
-    expect(body.days[0].strength_volume).toBe(740);
+    const body = (await res.json()) as {
+      days: { d: string; bmr: number | null; calories_burned: number | null; strength_volume: number | null }[];
+    };
+    expect(body.days).toHaveLength(7); // 運動が無い日も返る（BMRは毎日成立）
+    const today = body.days.find((r) => r.d === localYmdDaysAgo(0));
+    expect(today?.calories_burned).toBeCloseTo(294);
+    expect(today?.strength_volume).toBe(740);
+    // seedWeight(70) → ffm 56 → Katch-McArdle 1579.6。計測日(2日前)以降はcarry-forwardで同値
+    expect(today?.bmr).toBeCloseTo(1579.6);
+    const beforeMeasure = body.days.find((r) => r.d === localYmdDaysAgo(5));
+    expect(beforeMeasure?.bmr).toBeNull();
   });
 
   it('期間バリデーションは既存規約（days+from併用は400）', async () => {

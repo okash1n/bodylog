@@ -190,26 +190,33 @@ describe('ダイジェストの摂取カロリー行', () => {
   });
 });
 
-describe('ダイジェストの運動（消費・ネット）行', () => {
+describe('ダイジェストの消費（基礎+運動）・ネット行', () => {
   const intake = (cal: number): DailyIntake => ({ d: '2026-08-12', count: 2, calories: cal, protein_g: null, fat_g: null, carbs_g: null });
-  const ex = (burned: number | null, volume: number | null): DailyExercise => ({
-    d: '2026-08-12', calories_burned: burned, strength_volume: volume, cardio_count: burned ? 1 : 0, strength_count: volume ? 1 : 0,
+  const ex = (bmr: number | null, burned: number | null, volume: number | null): DailyExercise => ({
+    d: '2026-08-12', bmr, calories_burned: burned, strength_volume: volume,
+    cardio_count: burned ? 1 : 0, strength_count: volume ? 1 : 0,
   });
 
-  it('消費(有酸素)を整形する', () => {
-    expect(formatBurnLine(ex(320.6, null))).toBe('*消費(有酸素)* : 321 kcal');
+  it('基礎代謝＋運動の合計と内訳を整形する', () => {
+    expect(formatBurnLine(ex(1750.4, 320.6, null))).toBe('*消費* : 2071 kcal (基礎 1750 + 運動 321)');
   });
-  it('消費が無い/0/筋トレのみは行を出さない', () => {
+  it('運動なしの日は基礎代謝のみで毎日出す', () => {
+    expect(formatBurnLine(ex(1750, null, null))).toBe('*消費* : 1750 kcal (基礎代謝)');
+    expect(formatBurnLine(ex(1750, null, 1200))).toBe('*消費* : 1750 kcal (基礎代謝)'); // 筋トレはkcal算入しない
+  });
+  it('FFM実測が無くbmrがnullなら運動分のみ。両方無ければ行を出さない', () => {
+    expect(formatBurnLine(ex(null, 320.6, null))).toBe('*消費* : 321 kcal (運動)');
     expect(formatBurnLine(null)).toBeNull();
-    expect(formatBurnLine(ex(0, null))).toBeNull();
-    expect(formatBurnLine(ex(null, 1200))).toBeNull(); // 筋トレのみ
+    expect(formatBurnLine(ex(null, 0, null))).toBeNull();
+    expect(formatBurnLine(ex(null, null, 1200))).toBeNull();
   });
-  it('ネットは摂取−運動消費（基礎代謝は含まない旨を明記）', () => {
-    expect(formatNetLine(intake(1850), ex(320, null))).toBe('*ネット* : 1530 kcal (摂取−運動消費)');
+  it('ネットは摂取−総消費（赤字は負値で出る）', () => {
+    expect(formatNetLine(intake(1850), ex(1750, 320, null))).toBe('*ネット* : -220 kcal (摂取−消費)');
+    expect(formatNetLine(intake(1850), ex(null, 320, null))).toBe('*ネット* : 1530 kcal (摂取−消費)');
   });
   it('ネットは摂取と消費の両方がある日だけ出す', () => {
-    expect(formatNetLine(null, ex(320, null))).toBeNull();
+    expect(formatNetLine(null, ex(1750, 320, null))).toBeNull();
     expect(formatNetLine(intake(1850), null)).toBeNull();
-    expect(formatNetLine(intake(1850), ex(0, null))).toBeNull();
+    expect(formatNetLine(intake(1850), ex(null, 0, null))).toBeNull();
   });
 });
