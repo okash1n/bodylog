@@ -103,18 +103,48 @@ body {
 }
 .title-actions { display: flex; align-items: center; gap: 8px; }
 
-/* テーマ切替ボタン: ライト表示中は月（→ダークへ）、ダーク表示中は太陽（→ライトへ）を出す */
-.theme-btn { display: inline-flex; align-items: center; justify-content: center; padding: 6px 8px; line-height: 0; }
-.theme-btn .icon-sun { display: none; }
-.theme-btn .icon-moon { display: inline; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) .theme-btn .icon-sun { display: inline; }
-  :root:not([data-theme='light']) .theme-btn .icon-moon { display: none; }
+/* テーマ切替スイッチ（Docusaurus風）: トラック左に太陽・右に月、ノブが現在モード側へスライド */
+.theme-switch {
+  position: relative;
+  width: 52px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--skeleton);
+  cursor: pointer;
+  padding: 0;
 }
-:root[data-theme='dark'] .theme-btn .icon-sun { display: inline; }
-:root[data-theme='dark'] .theme-btn .icon-moon { display: none; }
-:root[data-theme='light'] .theme-btn .icon-sun { display: none; }
-:root[data-theme='light'] .theme-btn .icon-moon { display: inline; }
+.theme-switch .icon-sun,
+.theme-switch .icon-moon {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.theme-switch .icon-sun { left: 6px; }
+.theme-switch .icon-moon { right: 6px; }
+.theme-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s ease;
+}
+/* ダーク時はノブが右（月側）へ。システム追従・明示指定の両方をカバー */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .theme-switch-knob { transform: translateX(26px); }
+}
+:root[data-theme='dark'] .theme-switch-knob { transform: translateX(26px); }
+:root[data-theme='light'] .theme-switch-knob { transform: translateX(0); }
 
 .offline-badge {
   font-size: 0.75rem;

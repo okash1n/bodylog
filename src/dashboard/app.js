@@ -497,7 +497,7 @@
       // 摂取/消費の内訳とPFCはツールチップに残す（_netParts）
       {
         type: 'bar',
-        label: 'ネット(摂取−消費)',
+        label: 'カロリー',
         data: cals.net,
         yAxisID: 'yKcal',
         unit: 'kcal',
@@ -514,8 +514,8 @@
       trend('体重トレンド', sets.weight, 'weight', 'accent', t.accent),
       trend('脂肪量トレンド', sets.fat, 'fat', 'accent2', t.accent2),
       trend('除脂肪体重トレンド', sets.ffm, 'ffm', 'accent3', t.accent3),
-      // ネットのトレンド（kcal右軸）。カロリー非表示時は軸ごと消えるため出さない
-      trend('ネット トレンド', cals.net, 'net', 'cal', t.cal, 'yKcal', !trendOn || !calorieOverlay),
+      // カロリー（ネット）のトレンド（kcal右軸）。カロリー非表示時は軸ごと消えるため出さない
+      trend('カロリー トレンド', cals.net, 'net', 'cal', t.cal, 'yKcal', !trendOn || !calorieOverlay),
     ];
   }
 
@@ -1197,9 +1197,11 @@
     });
     if (narrowMq.addEventListener) narrowMq.addEventListener('change', updateViewToggleLabel);
 
+    els.themeToggle.setAttribute('aria-checked', String(currentThemeName() === 'dark'));
     els.themeToggle.addEventListener('click', function () {
       var next = currentThemeName() === 'dark' ? 'light' : 'dark';
       document.documentElement.dataset.theme = next;
+      els.themeToggle.setAttribute('aria-checked', String(next === 'dark'));
       try {
         localStorage.setItem('dash-theme', next);
       } catch (e) { /* 保存不可でも表示は切り替わる */ }
