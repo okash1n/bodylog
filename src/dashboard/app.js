@@ -276,8 +276,12 @@
     showState('loading');
     var r = rangeForPeriod();
     var url = BASE + 'api/measurements?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
-    var mealsUrl = BASE + 'api/meals/daily?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
-    var exUrl = BASE + 'api/exercise/daily?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
+    // カロリーの7日平均を表示期間の先頭でも成立させるため、食事/運動は6日前から取る
+    // （APIの最大期間731日を超えないようにクランプ）
+    var calFrom = addDays(r.from, -6);
+    if (inclusiveDays(calFrom, r.to) > MAX_RANGE_DAYS) calFrom = addDays(r.to, -(MAX_RANGE_DAYS - 1));
+    var mealsUrl = BASE + 'api/meals/daily?from=' + encodeURIComponent(calFrom) + '&to=' + encodeURIComponent(r.to);
+    var exUrl = BASE + 'api/exercise/daily?from=' + encodeURIComponent(calFrom) + '&to=' + encodeURIComponent(r.to);
     // カロリー系の日次は取得失敗しても体重表示を壊さない（空扱い）
     var tolerantDays = function (u, label) {
       return fetch(u)
@@ -492,9 +496,9 @@
       avg('脂肪量 7日平均', sets.fat7, t.accent2, 'yKg', 'kg', !hideRaw, 'fat7'),
       measured('除脂肪体重', sets.ffm, t.accent3, 'yKg', 'kg', { hidden: hideRaw, _key: 'ffm', _role: 'raw' }),
       avg('除脂肪体重 7日平均', sets.ffm7, t.accent3, 'yKg', 'kg', !hideRaw, 'ffm7'),
-      // カロリーは「ネット=摂取−消費（基礎+運動）」の1本に集約（右軸 yKcal）。
-      // 摂取が未記録の日はnull=非表示。黒字は上向き・赤字（消費超過）は下向きの棒になる。
-      // 摂取/消費の内訳とPFCはツールチップに残す（_netParts）
+      // カロリーは「ネット=摂取−消費（基礎+運動）」に集約（右軸 yKcal）。
+      // 実測モード=日次の棒 / 7日平均モード=7日移動平均の破線（kg系列と同じ切替に連動）。
+      // 摂取が未記録の日はnull=非表示。摂取/消費の内訳とPFCはツールチップに残す（_netParts）
       {
         type: 'bar',
         label: 'カロリー',
@@ -504,18 +508,40 @@
         backgroundColor: hexToRgba(t.cal, 0.5),
         borderWidth: 0,
         order: 99,
-        hidden: !calorieOverlay,
+        hidden: !calorieOverlay || hideRaw,
         _key: 'net',
         _role: 'energy',
+        _mode: 'raw',
         _energy: 'net',
         _netParts: { intake: cals.cal, burn: cals.burn, parts: cals.burnParts, p: cals.p, f: cals.f, c: cals.c },
+      },
+      {
+        type: 'line',
+        label: 'カロリー 7日平均',
+        data: cals.net7,
+        yAxisID: 'yKcal',
+        unit: 'kcal',
+        borderColor: t.cal,
+        backgroundColor: t.cal,
+        pointBackgroundColor: t.cal,
+        borderWidth: 1.5,
+        borderDash: [6, 4],
+        tension: 0.3,
+        pointRadius: pr,
+        pointHoverRadius: phr,
+        spanGaps: true,
+        fill: false,
+        order: 98,
+        hidden: !calorieOverlay || !hideRaw,
+        _key: 'net7',
+        _role: 'energy',
+        _mode: 'avg',
+        _energy: 'net7',
       },
       // 各系列の線形トレンドライン（最小二乗）。オンオフはトグルで。系列色の直線（長い破線）
       trend('体重トレンド', sets.weight, 'weight', 'accent', t.accent),
       trend('脂肪量トレンド', sets.fat, 'fat', 'accent2', t.accent2),
       trend('除脂肪体重トレンド', sets.ffm, 'ffm', 'accent3', t.accent3),
-      // カロリー（ネット）のトレンド（kcal右軸）。カロリー非表示時は軸ごと消えるため出さない
-      trend('カロリー トレンド', cals.net, 'net', 'cal', t.cal, 'yKcal', !trendOn || !calorieOverlay),
     ];
   }
 
@@ -575,12 +601,12 @@
     });
   }
 
-  // トレンドの可視性: kg系はトレンドトグルのみ、kcal系（ネット）はカロリー表示中に限る
-  // （カロリーを消すと右軸ごと消えるため、ネットのトレンドだけ浮かせない）
-  function applyTrendVisibility(ch) {
+  // カロリー系の可視性: 凡例トグル（calorieOverlay）×実測/平均モードの積で決まる
+  // （実測モード=ネット棒、7日平均モード=ネット7日平均線）
+  function applyEnergyVisibility(ch) {
     ch.data.datasets.forEach(function (ds, i) {
-      if (ds._role !== 'trend') return;
-      ch.setDatasetVisibility(i, trendOn && (ds.yAxisID !== 'yKcal' || calorieOverlay));
+      if (ds._role !== 'energy') return;
+      ch.setDatasetVisibility(i, calorieOverlay && (!ds._mode || ds._mode === seriesMode));
     });
   }
 
@@ -601,6 +627,8 @@
     if (!chart) return;
     setRoleVisibility(chart, 'raw', mode === 'raw');
     setRoleVisibility(chart, 'avg', mode === 'avg');
+    // カロリー系も実測（棒）⇔7日平均（線）で連動して切り替える
+    applyEnergyVisibility(chart);
     applyAxisRanges(chart);
     chart.update('none');
   }
@@ -637,15 +665,14 @@
     }
   }
 
-  // カロリー表示の一括反映（凡例クリックから呼ぶ）。棒・右軸・ネットトレンドを同期して切り替え、
+  // カロリー表示の一括反映（凡例クリックから呼ぶ）。系列・右軸を同期して切り替え、
   // 状態はlocalStorageに保存する
   function applyCalorieOverlay() {
     try {
       localStorage.setItem('dash-calorie-overlay', calorieOverlay ? '1' : '0');
     } catch (e) { /* 保存不可でも表示は切り替わる */ }
     if (!chart) return;
-    setRoleVisibility(chart, 'energy', calorieOverlay);
-    applyTrendVisibility(chart);
+    applyEnergyVisibility(chart);
     chart.options.scales.yKcal.display = calorieOverlay;
     applyAxisRanges(chart);
     chart.update('none');
@@ -724,9 +751,10 @@
         : sets.weight.concat(sets.fat, sets.ffm),
     );
     // カロリー右軸の初期レンジ（applyAxisRangesと同じ規則）。以降の更新と一貫させる。
-    // 描くのはネットのみ。棒は0起点なので、全日赤字でも上端は必ず0を含める
+    // 表示モードで見えている系列（実測=net / 7日平均=net7）から取り、
+    // 棒は0起点なので全日赤字でも上端は必ず0を含める
     // （max×1.15をそのまま使うと全負のとき上端が負になり、浅い赤字の棒が画面外に消える）
-    var kcalVals = (cals.net || []).filter(function (v) {
+    var kcalVals = ((seriesMode === 'avg' ? cals.net7 : cals.net) || []).filter(function (v) {
       return v != null;
     });
     var kcalMaxRaw = kcalVals.length ? Math.max.apply(null, kcalVals) : 0;
@@ -879,16 +907,14 @@
       fat7: sets.fat7,
       ffm: sets.ffm,
       ffm7: sets.ffm7,
-      intake: cals.cal,
-      burn: cals.burn,
       net: cals.net,
+      net7: cals.net7,
     };
     var pr = pointRadiusFor(density);
     var phr = pointHoverRadiusFor(density);
     d.forEach(function (ds) {
       if (ds._role === 'trend') {
-        // トレンド直線は点なしの直線のまま。ネットのトレンドは元データがcals側にある
-        ds.data = trendLine(ds._series === 'net' ? cals.net : sets[ds._series]);
+        ds.data = trendLine(sets[ds._series]); // トレンド直線は点なしの直線のまま
         return;
       }
       if (dataByKey[ds._key]) ds.data = dataByKey[ds._key];
@@ -898,8 +924,8 @@
       ds.pointRadius = pr;
       ds.pointHoverRadius = phr;
     });
-    setRoleVisibility(chart, 'energy', calorieOverlay);
-    applyTrendVisibility(chart);
+    applyEnergyVisibility(chart);
+    setRoleVisibility(chart, 'trend', trendOn);
     chart.options.scales.yKcal.display = calorieOverlay;
     var limits = tickLimitsFor(currentBp);
     chart.options.scales.x.ticks.autoSkip = density !== 'sparse';
@@ -908,31 +934,48 @@
     chart.update('none');
   }
 
-  // 運動・基礎代謝の日次をラベルへ整列し、消費（基礎+運動）とネット（摂取−消費）をcalsに足す。
-  // 基礎代謝はKatch-McArdle推定（サーバー算出）。ネットは摂取がある日だけ描く（赤字=負値も出る）
+  // 運動・基礎代謝の日次をラベルへ整列し、ネット（摂取−消費）とその7日平均をcalsに足す。
+  // 基礎代謝はKatch-McArdle推定（サーバー算出）。ネットは摂取がある日だけ描く（赤字=負値も出る）。
+  // 食事/運動は表示期間の6日前から取得済みなので、7日平均は期間先頭でも成立する
   function addBurnNet(cals, exDays, labels) {
-    var byDate = Object.create(null);
+    var exBy = Object.create(null);
     (exDays || []).forEach(function (row) {
-      byDate[row.d] = row;
+      exBy[row.d] = row;
     });
-    cals.burn = labels.map(function (l) {
-      var r = byDate[l];
+    var mealBy = cals.raw; // 日付→食事日次（範囲前6日分も含む）
+    function burnOf(d) {
+      var r = exBy[d];
       if (!r) return null;
       if (r.bmr == null && r.calories_burned == null) return null;
       return (r.bmr || 0) + (r.calories_burned || 0);
-    });
-    // ツールチップ内訳用（基礎/運動）
-    cals.burnParts = labels.map(function (l) {
-      var r = byDate[l];
-      return r ? { bmr: r.bmr, ex: r.calories_burned } : null;
-    });
-    cals.net = labels.map(function (l, i) {
-      var intake = cals.cal[i];
-      var burn = cals.burn[i];
+    }
+    function netOf(d) {
+      var intake = mealBy[d] && mealBy[d].calories != null ? mealBy[d].calories : null;
+      var burn = burnOf(d);
       if (intake == null || burn == null || burn <= 0) return null;
       return intake - burn;
+    }
+    cals.burn = labels.map(burnOf);
+    // ツールチップ内訳用（基礎/運動）
+    cals.burnParts = labels.map(function (d) {
+      var r = exBy[d];
+      return r ? { bmr: r.bmr, ex: r.calories_burned } : null;
     });
-    cals.exRaw = byDate;
+    cals.net = labels.map(netOf);
+    // ネットの7日平均（暦日7日窓、記録がある日のみの平均）。kg系列の7日平均と同じ流儀
+    cals.net7 = labels.map(function (d) {
+      var s = 0;
+      var n = 0;
+      for (var k = 0; k < 7; k++) {
+        var v = netOf(addDays(d, -k));
+        if (v != null) {
+          s += v;
+          n++;
+        }
+      }
+      return n ? s / n : null;
+    });
+    cals.exRaw = exBy;
   }
 
   function renderAll(days, mealsDays, exDays, from, to) {
@@ -1093,9 +1136,15 @@
       ffm7: t.accent3,
     };
     chart.data.datasets.forEach(function (ds) {
-      if (ds._energy) {
-        // ネット棒（摂取−消費）はテーマの緑で塗り直す
-        ds.backgroundColor = hexToRgba(t.cal, 0.5);
+      if (ds._role === 'energy') {
+        // カロリー系はテーマの緑で塗り直す（実測=半透明の棒 / 7日平均=破線）
+        if (ds._key === 'net') {
+          ds.backgroundColor = hexToRgba(t.cal, 0.5);
+        } else {
+          ds.borderColor = t.cal;
+          ds.backgroundColor = t.cal;
+          ds.pointBackgroundColor = t.cal;
+        }
         return;
       }
       if (ds._trend) {
@@ -1159,7 +1208,7 @@
           localStorage.setItem('dash-trend', trendOn ? '1' : '0');
         } catch (e) { /* 保存不可でも表示は切り替わる */ }
         if (!chart) return;
-        applyTrendVisibility(chart);
+        setRoleVisibility(chart, 'trend', trendOn);
         chart.update('none');
       });
     }
