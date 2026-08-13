@@ -637,8 +637,30 @@
     }
   }
 
+  // カロリー表示の一括反映（チェックボックス・凡例クリックの両方から同じ経路で呼ぶ。
+  // 別経路で切り替えるとチェック状態・右軸表示・ネットトレンドがバラバラになるため）
+  function applyCalorieOverlay() {
+    var calToggle = document.getElementById('calorie-toggle');
+    if (calToggle) calToggle.checked = calorieOverlay;
+    try {
+      localStorage.setItem('dash-calorie-overlay', calorieOverlay ? '1' : '0');
+    } catch (e) { /* 保存不可でも表示は切り替わる */ }
+    if (!chart) return;
+    setRoleVisibility(chart, 'energy', calorieOverlay);
+    applyTrendVisibility(chart);
+    chart.options.scales.yKcal.display = calorieOverlay;
+    applyAxisRanges(chart);
+    chart.update('none');
+  }
+
   function onLegendClick(evt, item, legend) {
     var ch = legend.chart;
+    var ds = ch.data.datasets[item.datasetIndex];
+    if (ds && ds._role === 'energy') {
+      calorieOverlay = !ch.isDatasetVisible(item.datasetIndex);
+      applyCalorieOverlay();
+      return;
+    }
     ch.setDatasetVisibility(item.datasetIndex, !ch.isDatasetVisible(item.datasetIndex));
     applyAxisRanges(ch);
     ch.update();
@@ -704,11 +726,13 @@
         : sets.weight.concat(sets.fat, sets.ffm),
     );
     // カロリー右軸の初期レンジ（applyAxisRangesと同じ規則）。以降の更新と一貫させる。
-    // 描くのはネットのみなので、ネットの最大/最小から取る（赤字=負値も収める）
+    // 描くのはネットのみ。棒は0起点なので、全日赤字でも上端は必ず0を含める
+    // （max×1.15をそのまま使うと全負のとき上端が負になり、浅い赤字の棒が画面外に消える）
     var kcalVals = (cals.net || []).filter(function (v) {
       return v != null;
     });
-    var kcalMax = kcalVals.length ? Math.max.apply(null, kcalVals) * 1.15 : undefined;
+    var kcalMaxRaw = kcalVals.length ? Math.max.apply(null, kcalVals) : 0;
+    var kcalMax = kcalVals.length ? (kcalMaxRaw > 0 ? kcalMaxRaw * 1.15 : 0) : undefined;
     var kcalMinRaw = kcalVals.length ? Math.min.apply(null, kcalVals) : 0;
     var kcalMin = kcalMinRaw < 0 ? kcalMinRaw * 1.15 : 0;
     chart = new Chart(els.canvas, {
@@ -730,9 +754,10 @@
               usePointStyle: true,
               boxWidth: 8,
               boxHeight: 8,
+              // ネット棒は凡例に出す（クリックはカロリートグルと同じ経路で同期）。トレンドは出さない
               filter: function (item, data) {
                 var role = data.datasets[item.datasetIndex] && data.datasets[item.datasetIndex]._role;
-                return role !== 'energy' && role !== 'trend';
+                return role !== 'trend';
               },
             },
             onClick: onLegendClick,
@@ -1132,17 +1157,7 @@
       calToggle.checked = calorieOverlay;
       calToggle.addEventListener('change', function () {
         calorieOverlay = calToggle.checked;
-        try {
-          localStorage.setItem('dash-calorie-overlay', calorieOverlay ? '1' : '0');
-        } catch (e) { /* 保存不可でも表示は切り替わる */ }
-        if (!chart) return;
-        // setDatasetVisibilityで統一（meta.hiddenを確定させ、凡例クリック等と競合しない）。
-        // ネット棒＋（トレンドON時は）ネットのトレンドも連動して切り替わる
-        setRoleVisibility(chart, 'energy', calorieOverlay);
-        applyTrendVisibility(chart);
-        chart.options.scales.yKcal.display = calorieOverlay;
-        applyAxisRanges(chart);
-        chart.update('none');
+        applyCalorieOverlay();
       });
     }
 
