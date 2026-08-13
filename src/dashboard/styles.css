@@ -377,7 +377,21 @@ body {
 .tab.active { background: var(--accent, #3b82f6); color: #fff; border-color: transparent; }
 #panel-meals ul { list-style: none; padding: 0; }
 #panel-meals li { padding: .3rem 0; border-bottom: 1px solid var(--border, #eee); }
-/* fzf風メニュー候補リスト */
+/* fzf風メニュー候補リスト: 入力欄に重ねるドロップダウン（フロー内に置くと下の表示が押し下げられるため） */
+.menu-picker { position: relative; display: inline-block; }
+.menu-picker ul {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  margin: 0;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(32rem, calc(100vw - 2rem));
+  background: var(--surface, #fff);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+.menu-picker ul:empty { display: none; }
 #meal-menu-candidates { max-height: 14rem; overflow-y: auto; border: 1px solid var(--border, #ccc); border-radius: 6px; }
 #meal-menu-candidates:empty { border: none; }
 #meal-menu-candidates li { cursor: pointer; padding: .3rem .5rem; border-bottom: 1px solid var(--border, #eee); }
