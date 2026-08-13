@@ -32,6 +32,7 @@ function instructions(tzOffsetHours: number): string {
     `日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours}のローカル日付。`,
     'まず get_weight_summary で全体像を取り、詳細な推移が必要なときだけ get_daily_series / get_raw_measurements を使う。',
     '食事記録はsearch_menus / get_meal_logsで照会できる（記録・メニュー作成は認可済みエンドポイント/mcpのみ）。',
+    'PFC（protein_g/fat_g/carbs_g）はグラム数。比率を出すときはP×4/F×9/C×4kcalに換算し3者の合計を100%として正規化すること。登録カロリーで割ってはいけない（食物繊維等の差で換算合計と登録kcalは一致せず、100%を超えうる）。',
     '運動記録はsearch_exercise_menus / get_exercise_logsで照会できる（有酸素は消費kcal、筋トレはセット明細と総ボリューム。記録・種目作成は/mcpのみ）。',
   ].join('\n');
 }

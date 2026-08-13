@@ -23,6 +23,7 @@ export function llmsTxt(origin: string, base: string, tzOffsetHours: number): st
 - 日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours} のローカル日付
 - 期間指定は days=N（今日を末尾とする直近N日、当日含む）か from/to=YYYY-MM-DD。併用不可、最大${LIMITS.API_MAX_RANGE_DAYS}日
 - 日次PFC合計（protein_g/fat_g/carbs_g）は栄養素が入力済みの記録のみの合計（未入力の記録は含まれない）。caloriesは全記録の合計
+- PFCはグラム数。比率を出すときは P×4 / F×9 / C×4 kcal に換算し、3者の合計を100%として正規化する。登録カロリーで割らないこと（食物繊維等の差で換算合計と登録kcalは一致せず、100%を超えうる）
 
 ## エンドポイント
 
@@ -468,7 +469,8 @@ export function openapiSpec(
           type: 'object',
           description:
             '1日分の食事摂取量の合計。caloriesは全記録の合計。' +
-            'protein_g/fat_g/carbs_gは栄養素が入力済みの記録のみの部分合計（未入力の記録は含まれない）',
+            'protein_g/fat_g/carbs_gは栄養素が入力済みの記録のみの部分合計（未入力の記録は含まれない）。' +
+            'PFC比率はP×4/F×9/C×4kcalに換算し3者内で正規化して算出する（caloriesで割ると食物繊維等の差で100%を超えうるため不可）',
           properties: {
             d: { type: 'string', format: 'date' },
             count: { type: 'integer' },
