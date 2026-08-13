@@ -492,76 +492,44 @@
       avg('脂肪量 7日平均', sets.fat7, t.accent2, 'yKg', 'kg', !hideRaw, 'fat7'),
       measured('除脂肪体重', sets.ffm, t.accent3, 'yKg', 'kg', { hidden: hideRaw, _key: 'ffm', _role: 'raw' }),
       avg('除脂肪体重 7日平均', sets.ffm7, t.accent3, 'yKg', 'kg', !hideRaw, 'ffm7'),
-      // カロリー系（右軸 yKcal, kg系列とは独立）。摂取=緑棒 / 消費=紫棒 / ネット=灰線。
-      // カロリートグルで3つまとめて表示切替する
+      // カロリーは「ネット=摂取−消費（基礎+運動）」の1本に集約（右軸 yKcal）。
+      // 摂取が未記録の日はnull=非表示。黒字は上向き・赤字（消費超過）は下向きの棒になる。
+      // 摂取/消費の内訳とPFCはツールチップに残す（_netParts）
       {
         type: 'bar',
-        label: '摂取',
-        data: cals.cal,
-        yAxisID: 'yKcal',
-        unit: 'kcal',
-        backgroundColor: hexToRgba(t.cal, 0.45),
-        borderWidth: 0,
-        order: 99,
-        hidden: !calorieOverlay,
-        _key: 'intake',
-        _role: 'energy',
-        _energy: 'intake',
-        _pfc: { p: cals.p, f: cals.f, c: cals.c },
-      },
-      {
-        type: 'bar',
-        label: '消費(基礎+運動)',
-        data: cals.burn,
-        yAxisID: 'yKcal',
-        unit: 'kcal',
-        backgroundColor: hexToRgba(t.burn, 0.5),
-        borderWidth: 0,
-        order: 98,
-        hidden: !calorieOverlay,
-        _key: 'burn',
-        _role: 'energy',
-        _energy: 'burn',
-        _burnParts: cals.burnParts,
-      },
-      {
-        type: 'line',
         label: 'ネット(摂取−消費)',
         data: cals.net,
         yAxisID: 'yKcal',
         unit: 'kcal',
-        borderColor: t.muted,
-        backgroundColor: t.muted,
-        borderWidth: 1.5,
-        borderDash: [3, 3],
-        tension: 0.2,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        spanGaps: true,
-        order: 97,
+        backgroundColor: hexToRgba(t.cal, 0.5),
+        borderWidth: 0,
+        order: 99,
         hidden: !calorieOverlay,
         _key: 'net',
         _role: 'energy',
         _energy: 'net',
+        _netParts: { intake: cals.cal, burn: cals.burn, parts: cals.burnParts, p: cals.p, f: cals.f, c: cals.c },
       },
       // 各系列の線形トレンドライン（最小二乗）。オンオフはトグルで。系列色の直線（長い破線）
       trend('体重トレンド', sets.weight, 'weight', 'accent', t.accent),
       trend('脂肪量トレンド', sets.fat, 'fat', 'accent2', t.accent2),
       trend('除脂肪体重トレンド', sets.ffm, 'ffm', 'accent3', t.accent3),
+      // ネットのトレンド（kcal右軸）。カロリー非表示時は軸ごと消えるため出さない
+      trend('ネット トレンド', cals.net, 'net', 'cal', t.cal, 'yKcal', !trendOn || !calorieOverlay),
     ];
   }
 
   // トレンド系列の定義。_series は元データのキー（再描画時の回帰再計算用）、
-  // _trendColor はテーマ変更時の再着色キー
-  function trend(label, values, seriesKey, colorKey, color) {
+  // _trendColor はテーマ変更時の再着色キー。axis省略時はkg左軸
+  function trend(label, values, seriesKey, colorKey, color, axis, hidden) {
     return {
       _key: 'trend-' + seriesKey,
       _role: 'trend',
       _series: seriesKey,
       label: label,
       data: trendLine(values),
-      yAxisID: 'yKg',
-      unit: 'kg',
+      yAxisID: axis || 'yKg',
+      unit: axis === 'yKcal' ? 'kcal' : 'kg',
       borderColor: color,
       borderWidth: 1.5,
       borderDash: [12, 6],
@@ -570,7 +538,7 @@
       spanGaps: true,
       fill: false,
       order: 50,
-      hidden: !trendOn,
+      hidden: hidden === undefined ? !trendOn : hidden,
       _trend: true,
       _trendColor: colorKey,
     };
@@ -604,6 +572,15 @@
   function setRoleVisibility(ch, role, visible) {
     ch.data.datasets.forEach(function (ds, i) {
       if (ds._role === role) ch.setDatasetVisibility(i, visible);
+    });
+  }
+
+  // トレンドの可視性: kg系はトレンドトグルのみ、kcal系（ネット）はカロリー表示中に限る
+  // （カロリーを消すと右軸ごと消えるため、ネットのトレンドだけ浮かせない）
+  function applyTrendVisibility(ch) {
+    ch.data.datasets.forEach(function (ds, i) {
+      if (ds._role !== 'trend') return;
+      ch.setDatasetVisibility(i, trendOn && (ds.yAxisID !== 'yKcal' || calorieOverlay));
     });
   }
 
@@ -727,8 +704,8 @@
         : sets.weight.concat(sets.fat, sets.ffm),
     );
     // カロリー右軸の初期レンジ（applyAxisRangesと同じ規則）。以降の更新と一貫させる。
-    // 摂取・消費・ネットの全カロリー系から最大/最小を取る（ネット赤字=負値も収める）
-    var kcalVals = cals.cal.concat(cals.burn || [], cals.net || []).filter(function (v) {
+    // 描くのはネットのみなので、ネットの最大/最小から取る（赤字=負値も収める）
+    var kcalVals = (cals.net || []).filter(function (v) {
       return v != null;
     });
     var kcalMax = kcalVals.length ? Math.max.apply(null, kcalVals) * 1.15 : undefined;
@@ -775,29 +752,31 @@
                 return ' ' + ctx.dataset.label + ': ' + (v == null ? '—' : v.toFixed(1) + ' ' + (ctx.dataset.unit || ''));
               },
               afterLabel: function (ctx) {
-                // 消費棒は内訳（基礎代謝の推定 + 運動）を添える
-                var burnParts = ctx.dataset._burnParts && ctx.dataset._burnParts[ctx.dataIndex];
-                if (burnParts && (burnParts.bmr != null || burnParts.ex != null)) {
-                  var seg = [];
-                  if (burnParts.bmr != null) seg.push('基礎 ' + Math.round(burnParts.bmr));
-                  if (burnParts.ex != null) seg.push('運動 ' + Math.round(burnParts.ex));
-                  return '   ' + seg.join(' + ');
-                }
-                var pfc = ctx.dataset._pfc;
-                if (!pfc) return undefined;
+                // ネット棒に摂取/消費の内訳とPFCを添える（1本化しても情報は失わない）
+                var np = ctx.dataset._netParts;
+                if (!np) return undefined;
                 var i = ctx.dataIndex;
+                var lines = [];
+                if (np.intake[i] != null && np.burn[i] != null) {
+                  var seg = '摂取 ' + Math.round(np.intake[i]) + ' − 消費 ' + Math.round(np.burn[i]);
+                  var bp = np.parts && np.parts[i];
+                  if (bp && bp.bmr != null && bp.ex != null && bp.ex > 0) {
+                    seg += ' (基礎 ' + Math.round(bp.bmr) + ' + 運動 ' + Math.round(bp.ex) + ')';
+                  }
+                  lines.push('   ' + seg);
+                }
                 var round1 = function (n) {
                   return Math.round(n * 10) / 10;
                 };
                 var parts = [];
-                if (pfc.p[i] != null) parts.push('P' + round1(pfc.p[i]));
-                if (pfc.f[i] != null) parts.push('F' + round1(pfc.f[i]));
-                if (pfc.c[i] != null) parts.push('C' + round1(pfc.c[i]));
+                if (np.p[i] != null) parts.push('P' + round1(np.p[i]));
+                if (np.f[i] != null) parts.push('F' + round1(np.f[i]));
+                if (np.c[i] != null) parts.push('C' + round1(np.c[i]));
                 // PFC比率: エネルギー換算(4/9/4)して3者内で正規化（登録kcal割りは食物繊維等でずれるため）
-                if (pfc.p[i] != null && pfc.f[i] != null && pfc.c[i] != null) {
-                  var pe = pfc.p[i] * 4;
-                  var fe = pfc.f[i] * 9;
-                  var ce = pfc.c[i] * 4;
+                if (np.p[i] != null && np.f[i] != null && np.c[i] != null) {
+                  var pe = np.p[i] * 4;
+                  var fe = np.f[i] * 9;
+                  var ce = np.c[i] * 4;
                   var te = pe + fe + ce;
                   if (te > 0) {
                     var pct = function (x) {
@@ -806,7 +785,8 @@
                     parts.push('(' + pct(pe) + ':' + pct(fe) + ':' + pct(ce) + ')');
                   }
                 }
-                return parts.length ? '   ' + parts.join(' ') : undefined;
+                if (parts.length) lines.push('   ' + parts.join(' '));
+                return lines.length ? lines : undefined;
               },
             },
           },
@@ -884,17 +864,19 @@
     var phr = pointHoverRadiusFor(density);
     d.forEach(function (ds) {
       if (ds._role === 'trend') {
-        ds.data = trendLine(sets[ds._series]); // トレンド直線は点なしの直線のまま
+        // トレンド直線は点なしの直線のまま。ネットのトレンドは元データがcals側にある
+        ds.data = trendLine(ds._series === 'net' ? cals.net : sets[ds._series]);
         return;
       }
       if (dataByKey[ds._key]) ds.data = dataByKey[ds._key];
-      if (ds._key === 'intake') ds._pfc = { p: cals.p, f: cals.f, c: cals.c };
-      if (ds._key === 'burn') ds._burnParts = cals.burnParts;
+      if (ds._key === 'net') {
+        ds._netParts = { intake: cals.cal, burn: cals.burn, parts: cals.burnParts, p: cals.p, f: cals.f, c: cals.c };
+      }
       ds.pointRadius = pr;
       ds.pointHoverRadius = phr;
     });
     setRoleVisibility(chart, 'energy', calorieOverlay);
-    setRoleVisibility(chart, 'trend', trendOn);
+    applyTrendVisibility(chart);
     chart.options.scales.yKcal.display = calorieOverlay;
     var limits = tickLimitsFor(currentBp);
     chart.options.scales.x.ticks.autoSkip = density !== 'sparse';
@@ -1089,14 +1071,8 @@
     };
     chart.data.datasets.forEach(function (ds) {
       if (ds._energy) {
-        // 摂取=緑棒 / 消費=紫棒 / ネット=灰線。テーマ変更時に各々塗り直す
-        if (ds._energy === 'intake') ds.backgroundColor = hexToRgba(t.cal, 0.45);
-        else if (ds._energy === 'burn') ds.backgroundColor = hexToRgba(t.burn, 0.5);
-        else {
-          ds.borderColor = t.muted;
-          ds.backgroundColor = t.muted;
-          ds.pointBackgroundColor = t.muted;
-        }
+        // ネット棒（摂取−消費）はテーマの緑で塗り直す
+        ds.backgroundColor = hexToRgba(t.cal, 0.5);
         return;
       }
       if (ds._trend) {
@@ -1161,8 +1137,9 @@
         } catch (e) { /* 保存不可でも表示は切り替わる */ }
         if (!chart) return;
         // setDatasetVisibilityで統一（meta.hiddenを確定させ、凡例クリック等と競合しない）。
-        // 摂取・消費・ネットを一括切替
+        // ネット棒＋（トレンドON時は）ネットのトレンドも連動して切り替わる
         setRoleVisibility(chart, 'energy', calorieOverlay);
+        applyTrendVisibility(chart);
         chart.options.scales.yKcal.display = calorieOverlay;
         applyAxisRanges(chart);
         chart.update('none');
@@ -1178,7 +1155,7 @@
           localStorage.setItem('dash-trend', trendOn ? '1' : '0');
         } catch (e) { /* 保存不可でも表示は切り替わる */ }
         if (!chart) return;
-        setRoleVisibility(chart, 'trend', trendOn);
+        applyTrendVisibility(chart);
         chart.update('none');
       });
     }
