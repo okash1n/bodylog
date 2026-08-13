@@ -31,7 +31,7 @@
     const t = pe + fe + ce;
     if (t <= 0) return '';
     const r = (x) => Math.round((x / t) * 100);
-    return ` (${r(pe)}:${r(fe)}:${r(ce)})`;
+    return `${r(pe)}:${r(fe)}:${r(ce)}`;
   };
   // 実効PFCの合計（未入力=nullは加算しない。日次PFCの部分合計仕様に合わせる）
   const sumEff = (arr, key) => {
@@ -192,7 +192,6 @@
       }
       byDate[d].items.push(m);
     });
-    const span = canDel ? 6 : 5;
     const rows = groups
       .map((g) => {
         // 日は新しい順のまま、各日の中は時刻昇順（朝→昼→夜）で読みやすく
@@ -201,19 +200,26 @@
         const dp = sumEff(g.items, 'effective_protein_g');
         const df = sumEff(g.items, 'effective_fat_g');
         const dc = sumEff(g.items, 'effective_carbs_g');
-        const head = `<tr class="mh-day"><td colspan="${span}">${g.d}　合計 ${Math.round(total)} kcal${pfc(dp, df, dc)}${pfcRatio(dp, df, dc)}</td></tr>`;
+        // 合計行も明細と同じ列に値を揃える（区分+メニューをまたいで日付、倍率は空）
+        const head =
+          `<tr class="mh-day"><td colspan="2">${g.d}　合計</td><td></td>` +
+          `<td class="mh-num">${Math.round(total)} kcal</td>` +
+          `<td class="mh-macro">${pfc(dp, df, dc).replace(/^ · /, '') || '—'}</td>` +
+          `<td class="mh-macro">${pfcRatio(dp, df, dc) || '—'}</td>` +
+          `${canDel ? '<td></td>' : ''}</tr>`;
         const items = g.items
           .map((m) => {
             const t = MEAL_TYPE_LABEL[m.meal_type] || '—';
             const macro = pfc(m.effective_protein_g, m.effective_fat_g, m.effective_carbs_g).replace(/^ · /, '');
-            return `<tr><td class="mh-type">${t}</td><td>${esc(m.menu_name)}</td><td class="mh-num">×${m.multiplier}</td><td class="mh-num">${Math.round(m.effective_calories)} kcal</td><td class="mh-macro">${macro || '—'}</td>${canDel ? `<td><button class="mh-del" data-del="${m.id}" type="button">削除</button></td>` : ''}</tr>`;
+            const ratio = pfcRatio(m.effective_protein_g, m.effective_fat_g, m.effective_carbs_g);
+            return `<tr><td class="mh-type">${t}</td><td>${esc(m.menu_name)}</td><td class="mh-num">×${m.multiplier}</td><td class="mh-num">${Math.round(m.effective_calories)} kcal</td><td class="mh-macro">${macro || '—'}</td><td class="mh-macro">${ratio || '—'}</td>${canDel ? `<td><button class="mh-del" data-del="${m.id}" type="button">削除</button></td>` : ''}</tr>`;
           })
           .join('');
         return head + items;
       })
       .join('');
     $('meals-history').innerHTML =
-      `<table class="meals-history-table"><thead><tr><th>区分</th><th>メニュー</th><th>倍率</th><th>kcal</th><th>PFC</th>${canDel ? '<th></th>' : ''}</tr></thead><tbody>${rows}</tbody></table>`;
+      `<table class="meals-history-table"><thead><tr><th>区分</th><th>メニュー</th><th>倍率</th><th>kcal</th><th>PFC <span class="unit">g</span></th><th>PFC <span class="unit">%</span></th>${canDel ? '<th></th>' : ''}</tr></thead><tbody>${rows}</tbody></table>`;
   }
 
   $('meals-history').addEventListener('click', async (e) => {
