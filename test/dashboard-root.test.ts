@@ -74,4 +74,15 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     const html = await (await request('/', rootEnv)).text();
     expect(html).toContain('exercise.js');
   });
+
+  it('/apple-touch-icon.png がPNGとして配信され、HTMLから参照される', async () => {
+    const res = await request('/apple-touch-icon.png', rootEnv);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toBe('image/png');
+    const body = new Uint8Array(await res.arrayBuffer());
+    // PNGマジックナンバー（\x89PNG）で中身がPNGであることを確認
+    expect([...body.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    const html = await (await request('/', rootEnv)).text();
+    expect(html).toContain('rel="apple-touch-icon"');
+  });
 });

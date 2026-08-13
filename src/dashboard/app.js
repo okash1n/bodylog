@@ -934,6 +934,7 @@
 
   function renderDailyTable(days) {
     els.tableColDate.textContent = '日付';
+    els.tableWrap.classList.remove('hide-kcal');
     var byDate = (lastCals && lastCals.raw) || Object.create(null);
     var exBy = (lastCals && lastCals.exRaw) || Object.create(null);
     var frag = document.createDocumentFragment();
@@ -953,18 +954,16 @@
 
   function renderRawTable(rows) {
     els.tableColDate.textContent = '日時';
+    // 計測明細は1計測=1行で日次カロリーとは粒度が違うため摂取/消費/ネット列ごと隠す
+    els.tableWrap.classList.add('hide-kcal');
     var frag = document.createDocumentFragment();
     rows.forEach(function (m) {
       var ms = parseUtcMs(m.measured_at);
-      // 計測明細は1計測=1行で日次カロリーとは粒度が違うため摂取/消費/ネット列は空
       appendRow(frag, [
         ms == null ? '—' : formatLocalDateTime(ms),
         fmt(m.weight),
         fmt(m.fat_mass),
         fmt(m.fat_free_mass),
-        '—',
-        '—',
-        '—',
       ]);
     });
     els.tableBody.replaceChildren(frag);

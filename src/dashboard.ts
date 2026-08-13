@@ -24,9 +24,10 @@ import exerciseJs from './dashboard/exercise.js';
 import swJsTpl from './dashboard/sw.js';
 import manifestTpl from './dashboard/manifest.webmanifest';
 import chartVendorJs from './dashboard/vendor/chart.umd.js';
+import { appleTouchIconPng } from './dashboard/icon';
 
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
-export const ASSET_VERSION = '2026-08-13-10';
+export const ASSET_VERSION = '2026-08-13-11';
 
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';
 const JS_CONTENT_TYPE = 'text/javascript; charset=utf-8';
@@ -92,6 +93,14 @@ const serveManifest: Handler = (c) =>
       'Content-Type': 'application/manifest+json; charset=utf-8',
       'Cache-Control': STATIC_CACHE_CONTROL,
     }),
+  );
+
+// Safariのホーム画面追加用（manifestのdata URI SVGはSafariが使わないため実URLのPNGを配信）
+const serveAppleTouchIcon: Handler = (c) =>
+  c.body(
+    appleTouchIconPng(),
+    200,
+    noindexHeaders({ 'Content-Type': 'image/png', 'Cache-Control': STATIC_CACHE_CONTROL }),
   );
 
 // sw.jsは即時更新できるようno-cacheで配信する
@@ -205,6 +214,7 @@ export function createDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/:slug/exercise.js', guarded(serveExerciseJs));
   app.get('/:slug/vendor/chart.umd.js', guarded(serveVendor));
   app.get('/:slug/manifest.webmanifest', guarded(serveManifest));
+  app.get('/:slug/apple-touch-icon.png', guarded(serveAppleTouchIcon));
   app.get('/:slug/sw.js', guarded(serveSw));
   app.get('/:slug/api/measurements', guarded(serveMeasurements));
   app.get('/:slug/api/raw', guarded(serveRaw));
@@ -238,6 +248,7 @@ export function createRootDashboardRouter(): Hono<{ Bindings: Env }> {
   app.get('/exercise.js', guarded(serveExerciseJs));
   app.get('/vendor/chart.umd.js', guarded(serveVendor));
   app.get('/manifest.webmanifest', guarded(serveManifest));
+  app.get('/apple-touch-icon.png', guarded(serveAppleTouchIcon));
   app.get('/sw.js', guarded(serveSw));
   app.get('/api/measurements', guarded(serveMeasurements));
   app.get('/api/raw', guarded(serveRaw));

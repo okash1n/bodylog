@@ -419,3 +419,6 @@ body {
 #exercise-history-section { margin-top: 1.5rem; }
 #exercise-history { overflow-x: auto; }
 #exercise-volume-wrap { position: relative; height: 220px; margin: .5rem 0 1rem; }
+
+/* 計測明細モードでは日次粒度のカロリー3列（摂取/消費/ネット）を隠す（1計測=1行と粒度が合わないため） */
+.table-wrap.hide-kcal .kcal-col { display: none; }
