@@ -25,8 +25,12 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     expect(html).toContain('href="/manifest.webmanifest"');
     expect(html).not.toContain('{{BASE}}');
     expect(html).not.toContain('{{SLUG}}');
-    // Phase 2: カロリーオーバーレイのトグルと日次表の摂取/消費/ネット列
-    expect(html).toContain('id="calorie-toggle"');
+    // カロリー表示は専用チェックボックスを廃止し凡例クリックに統一（トレンドのトグルは残る）
+    expect(html).not.toContain('id="calorie-toggle"');
+    expect(html).toContain('id="trend-toggle"');
+    // テーマ切替は太陽/月アイコン
+    expect(html).toContain('icon-sun');
+    expect(html).toContain('icon-moon');
     expect(html).toContain('摂取 <span class="unit">kcal</span>');
     expect(html).toContain('消費 <span class="unit">kcal</span>');
     expect(html).toContain('ネット <span class="unit">kcal</span>');

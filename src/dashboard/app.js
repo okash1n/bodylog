@@ -637,11 +637,9 @@
     }
   }
 
-  // カロリー表示の一括反映（チェックボックス・凡例クリックの両方から同じ経路で呼ぶ。
-  // 別経路で切り替えるとチェック状態・右軸表示・ネットトレンドがバラバラになるため）
+  // カロリー表示の一括反映（凡例クリックから呼ぶ）。棒・右軸・ネットトレンドを同期して切り替え、
+  // 状態はlocalStorageに保存する
   function applyCalorieOverlay() {
-    var calToggle = document.getElementById('calorie-toggle');
-    if (calToggle) calToggle.checked = calorieOverlay;
     try {
       localStorage.setItem('dash-calorie-overlay', calorieOverlay ? '1' : '0');
     } catch (e) { /* 保存不可でも表示は切り替わる */ }
@@ -1151,15 +1149,6 @@
         applySeriesMode(btn.getAttribute('data-mode'));
       });
     });
-
-    var calToggle = document.getElementById('calorie-toggle');
-    if (calToggle) {
-      calToggle.checked = calorieOverlay;
-      calToggle.addEventListener('change', function () {
-        calorieOverlay = calToggle.checked;
-        applyCalorieOverlay();
-      });
-    }
 
     var trendToggle = document.getElementById('trend-toggle');
     if (trendToggle) {

@@ -103,6 +103,19 @@ body {
 }
 .title-actions { display: flex; align-items: center; gap: 8px; }
 
+/* テーマ切替ボタン: ライト表示中は月（→ダークへ）、ダーク表示中は太陽（→ライトへ）を出す */
+.theme-btn { display: inline-flex; align-items: center; justify-content: center; padding: 6px 8px; line-height: 0; }
+.theme-btn .icon-sun { display: none; }
+.theme-btn .icon-moon { display: inline; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .theme-btn .icon-sun { display: inline; }
+  :root:not([data-theme='light']) .theme-btn .icon-moon { display: none; }
+}
+:root[data-theme='dark'] .theme-btn .icon-sun { display: inline; }
+:root[data-theme='dark'] .theme-btn .icon-moon { display: none; }
+:root[data-theme='light'] .theme-btn .icon-sun { display: none; }
+:root[data-theme='light'] .theme-btn .icon-moon { display: inline; }
+
 .offline-badge {
   font-size: 0.75rem;
   padding: 2px 10px;
