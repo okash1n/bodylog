@@ -46,7 +46,10 @@
     $('exercise-add-form').hidden = !loggedIn();
     $('exercise-menus-manage').hidden = !loggedIn();
   }
-  $('exercise-login').addEventListener('click', () => auth() && auth().login());
+  $('exercise-login').addEventListener('click', () => {
+    if (!auth()) return;
+    auth().login().catch((e) => alert(`ログインを開始できませんでした: ${e.message}`));
+  });
 
   // ---- データ取得（タブ表示時） ----
   async function refresh() {

@@ -119,7 +119,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     const body = (await res.json()) as RpcResponse;
     expect(body.error).toBeUndefined();
     const serverInfo = (body.result as { serverInfo: { name: string } }).serverInfo;
-    expect(serverInfo.name).toBe('withings-weight-tracker');
+    expect(serverInfo.name).toBe('bodylog');
   });
 
   it('tools/list が読み取り7＋書き込み4ツールを返す', async () => {

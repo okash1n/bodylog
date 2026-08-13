@@ -26,7 +26,7 @@ const MCP_SERVER_VERSION = '1.0.0';
 
 function instructions(tzOffsetHours: number): string {
   return [
-    '個人の体重・体組成データ（Withings体重計、1ユーザー分）を照会する読み取り専用サーバー。',
+    '個人の体重・体組成（Withings体重計、1ユーザー分）・食事・運動を照会・記録するサーバー（bodylog）。',
     '単位: 質量（weight / fat_mass / fat_free_mass）はkg、fat_ratioのみ%。',
     'fat_mass（脂肪量）は weight - fat_free_mass から導出した値。',
     `日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours}のローカル日付。`,
@@ -69,7 +69,7 @@ const rangeShape = {
 
 function buildServer(env: Env, opts: { write: boolean }): McpServer {
   const server = new McpServer(
-    { name: 'withings-weight-tracker', version: MCP_SERVER_VERSION },
+    { name: 'bodylog', version: MCP_SERVER_VERSION },
     { instructions: instructions(offsetHours(env)) },
   );
   server.registerTool(

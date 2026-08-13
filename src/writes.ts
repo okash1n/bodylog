@@ -36,7 +36,16 @@ export function registerWriteRoutes(
   guarded: (h: Handler) => Handler,
   prefix: string,
 ): void {
-  const w = (h: Handler): Handler => guarded(withAuth(h));
+  // 500もJSON {error}で返す（フロントは res.json().error を読む契約。text/plainだとalertが出ず無言で失敗する）
+  const guardedErrors = (h: Handler): Handler => async (c) => {
+    try {
+      return await h(c);
+    } catch (err) {
+      console.error('[writes] unhandled error', err);
+      return c.json({ error: 'internal error' }, 500, headers());
+    }
+  };
+  const w = (h: Handler): Handler => guarded(withAuth(guardedErrors(h)));
   const p = (path: string): string => `${prefix}${path}`;
 
   // ---- 食事メニュー ----

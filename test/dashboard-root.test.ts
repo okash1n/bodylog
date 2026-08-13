@@ -75,6 +75,15 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     expect(html).toContain('exercise.js');
   });
 
+  it('sw.js のプリキャッシュにHTMLが読む全JSが含まれる（漏れるとオフラインでタブが壊れる）', async () => {
+    const res = await request('/sw.js', rootEnv);
+    expect(res.status).toBe(200);
+    const sw = await res.text();
+    for (const asset of ['app.js?v=', 'meals.js?v=', 'exercise.js?v=', 'styles.css?v=', 'vendor/chart.umd.js?v=']) {
+      expect(sw).toContain(`'${asset}' + VERSION`);
+    }
+  });
+
   it('/apple-touch-icon.png がPNGとして配信され、HTMLから参照される', async () => {
     const res = await request('/apple-touch-icon.png', rootEnv);
     expect(res.status).toBe(200);

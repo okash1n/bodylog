@@ -411,7 +411,7 @@ export async function sendAdminAlert(env: Env, text: string): Promise<void> {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: `[withings-weight-tracker] ${text}` }),
+      body: JSON.stringify({ text: `[bodylog] ${text}` }),
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) {

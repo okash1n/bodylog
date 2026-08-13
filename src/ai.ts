@@ -11,10 +11,10 @@ function apiRoot(origin: string, base: string): string {
 
 export function llmsTxt(origin: string, base: string, tzOffsetHours: number): string {
   const root = apiRoot(origin, base);
-  return `# Withings Weight Tracker
+  return `# bodylog
 
-個人の体重・体組成（Withings体重計、1ユーザー分）を記録・公開しているサービスのAPI。
-すべて読み取り専用・認証不要。
+個人の体重・体組成（Withings体重計、1ユーザー分）・食事・運動を記録しているサービスのAPI。
+REST（GET）はすべて読み取り専用・認証不要。書き込みは /mcp（OAuth 2.1）のみ。
 
 ## データの読み方
 
@@ -101,10 +101,10 @@ export function openapiSpec(
   return {
     openapi: '3.1.0',
     info: {
-      title: 'Withings Weight Tracker API',
+      title: 'bodylog API',
       version: '1.0.0',
       description:
-        `個人の体重・体組成（Withings体重計、1ユーザー分）の読み取り専用API。認証不要。` +
+        `個人の体重・体組成（Withings体重計、1ユーザー分）・食事・運動の読み取り専用API。認証不要。` +
         `質量の単位はkg（fat_ratioのみ%）。fat_massは weight - fat_free_mass の導出値。` +
         `日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours}のローカル日付。`,
     },

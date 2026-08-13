@@ -4,10 +4,11 @@
   "type": "module",
   "scripts": {
     "sync-vendor": "node scripts/sync-vendor.mjs",
+    "check-dashboard": "node --check src/dashboard/app.js && node --check src/dashboard/meals.js && node --check src/dashboard/exercise.js && node --check src/dashboard/sw.js",
     "dev": "npm run sync-vendor && wrangler dev",
     "deploy": "npm run sync-vendor && wrangler deploy",
     "test": "npm run sync-vendor && vitest run",
-    "typecheck": "npm run sync-vendor && tsc --noEmit"
+    "typecheck": "npm run sync-vendor && tsc --noEmit && npm run check-dashboard"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.10.3",
@@ -22,6 +23,6 @@
     "@cloudflare/workers-types": "^5.20260730.1",
     "typescript": "^5.7.0",
     "vitest": "^4.1.0",
-    "wrangler": "4.118.0"
+    "wrangler": "4.122.0"
   }
 }

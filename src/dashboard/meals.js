@@ -74,7 +74,11 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ client_name: 'weight-dashboard', redirect_uris: [base], token_endpoint_auth_method: 'none' }),
     });
+    // 失敗時に "undefined" をキャッシュするとログインが恒久故障する（localStorage手動クリアまで）ため、
+    // 成功して有効なclient_idが取れたときだけ保存する
+    if (!res.ok) throw new Error(`client registration failed: ${res.status}`);
     id = (await res.json()).client_id;
+    if (typeof id !== 'string' || !id) throw new Error('client registration returned no client_id');
     localStorage.setItem(LS.client, id);
     return id;
   }
@@ -153,7 +157,9 @@
     $('meal-add-form').hidden = !loggedIn();
     $('menus-manage').hidden = !loggedIn();
   }
-  $('meals-login').addEventListener('click', login);
+  $('meals-login').addEventListener('click', () => {
+    login().catch((e) => alert(`ログインを開始できませんでした: ${e.message}`));
+  });
 
   // ---- データ表示 ----
   let menus = [];
@@ -371,7 +377,8 @@
       meal_type: $('meal-type').value || undefined,
       eaten_at,
     });
-    if (!res.ok) alert(`記録に失敗: ${(await res.json()).error ?? res.status}`);
+    // 失敗時にフォームをクリアすると入力（メニュー選択・倍率・区分）が消えるため、必ずreturnする
+    if (!res.ok) return alert(`記録に失敗: ${(await res.json()).error ?? res.status}`);
     selectedMenu = null;
     $('meal-menu-search').value = '';
     refresh();
@@ -384,7 +391,8 @@
       calories: Number($('menu-calories').value),
       protein_g: num('menu-protein'), fat_g: num('menu-fat'), carbs_g: num('menu-carbs'),
     });
-    if (!res.ok) alert(`メニュー追加に失敗: ${(await res.json()).error ?? res.status}`);
+    // 失敗時にreset()すると入力済みの名前/kcal/PFCが消えるため、必ずreturnする
+    if (!res.ok) return alert(`メニュー追加に失敗: ${(await res.json()).error ?? res.status}`);
     e.target.reset();
     refresh();
   });

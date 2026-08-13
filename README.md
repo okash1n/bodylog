@@ -4,11 +4,12 @@ Withings 体重計の計測データ（体重・体組成）に加え、食事�
 
 Fork/clone して設定値を差し替えるだけで動く（コード変更不要）。Cloudflare 無料枠内で動作する。
 
-- 対象データ: 体重・体脂肪率・除脂肪体重、食事記録（登録済みメニューからのカロリー・PFC記録）、運動記録（有酸素の推定消費kcal・筋トレのセット/総ボリューム）
+- 対象データ: 体重・体脂肪率・除脂肪体重、食事記録（登録済みメニューからのカロリー・PFC記録）、運動記録（種目マスタは有酸素=METs / 筋トレ=セット明細 reps×weight、自重種目は記録時の体重を負荷に算入）
+- エネルギー収支: 消費 = 基礎代謝（BMR。Katch-McArdle: 370 + 21.6 × 実測除脂肪体重。その日以前で最新の実測FFMを carry-forward し、実測が一度も無い期間は算出しない） + 運動消費（有酸素のみ、METs×体重×時間×1.05。筋トレはkcalではなく総ボリュームで追跡し、ダッシュボードで除脂肪体重の推移と重ねて見られる）。ネット = 摂取 − 総消費（日常活動・食事誘発性熱産生は含まない推定値）
 - 通知: Slack Incoming Webhook（複数送信先対応）。最新計測値・7日間平均（前ターム比）・基準日からの変化に加え、**直近30日のグラフ画像を通知に直接埋め込む**
-- ダッシュボード: PWA 対応・noindex。実測⇔7日平均のワンクリック切替、期間プリセット（1M/3M/1Y/カスタム）、日次集計⇔計測明細の表、ライト/ダークテーマ、OGP 画像を Worker 内で生成。食事・運動タブから記録の閲覧・入力もでき、体重グラフには摂取/消費/ネット（摂取−運動消費）のカロリーを重ねられる
-- 食事記録: 登録済みメニュー（マスタ）からのみ記録する方式（自由入力ではない）。閲覧は公開API・認証不要、記録・メニュー登録はオーナーの Google アカウントによる OAuth 2.1 認可が必要
-- インフラ: Cloudflare Workers + D1 + KV（KV は食事記録の書き込みAPI用 OAuth の認可フロー・トークン保存にのみ使用。Queues / Durable Objects は不使用）。外部依存は Hono / Chart.js / `@cloudflare/workers-oauth-provider` / `@modelcontextprotocol/sdk` / `@hono/mcp` / zod
+- ダッシュボード: PWA 対応・noindex。実測⇔7日平均のワンクリック切替、期間プリセット（1M/3M/1Y/カスタム）、日次集計⇔計測明細の表、ライト/ダークテーマ、OGP 画像を Worker 内で生成。食事・運動タブから記録の閲覧・入力もでき、体重グラフには摂取/消費（基礎代謝＋運動）/ネットのカロリーを重ねられる
+- 食事記録: 登録済みメニュー（マスタ）からのみ記録する方式（自由入力ではない）。PFC比率はP×4/F×9/C×4kcal換算による3者内正規化で算出する（登録kcalでは割らない）。閲覧は公開API・認証不要、記録・メニュー登録はオーナーの Google アカウントによる OAuth 2.1 認可が必要
+- インフラ: Cloudflare Workers + D1 + KV（KV は食事・運動記録の書き込みAPI、および MCP の書き込みツール用 OAuth の認可フロー・トークン保存にのみ使用。Queues / Durable Objects は不使用）。外部依存は Hono / Chart.js / `@cloudflare/workers-oauth-provider` / `@modelcontextprotocol/sdk` / `@hono/mcp` / zod
 - 動作確認済みバージョン: Node.js 22+ / wrangler 4.118（大きく異なるバージョンでは手順が変わることがある）
 
 ## アーキテクチャ
@@ -40,7 +41,7 @@ Webhook は受信内容を即座に D1 の inbox テーブルへ永続化して 
 - Withings アカウント（体重計セットアップ済み）
 - Cloudflare アカウント（無料プランで OK）
 - 通知先 Slack ワークスペースで App 作成・Webhook 発行ができる権限
-- Google アカウントと Google Cloud プロジェクト（食事記録の書き込み機能で OAuth クライアントを作成する場合。読み取りのみなら不要）
+- Google アカウントと Google Cloud プロジェクト（食事・運動記録の書き込み機能で OAuth クライアントを作成する場合。読み取りのみなら不要）
 - Node.js（npm）とターミナル
 
 ## セットアップ
@@ -49,13 +50,13 @@ Webhook は受信内容を即座に D1 の inbox テーブルへ永続化して 
 
 ```sh
 git clone https://github.com/okash1n/bodylog.git   # または Fork
-cd withings
+cd bodylog
 npm install
 npx wrangler login
 cp wrangler.toml.example wrangler.toml
 ```
 
-`wrangler.toml` は実値を含むため `.gitignore` 済み（誤コミット防止）。以下の `[vars]` をランダム値で埋める。`database_id` は手順4で記入するため、この時点では空欄のままでよい。
+`wrangler.toml` は実値を含むため `.gitignore` 済み（誤コミット防止）。以下の `[vars]` をランダム値で埋める。`database_id`（D1）と `id`（KV）は手順4で作成後に記入するため、この時点では空欄（テンプレートのプレースホルダーのまま）でよい。
 
 ```sh
 openssl rand -hex 16   # → WEBHOOK_PATH_SECRET（Webhook 受信パスの秘匿部分）
@@ -93,16 +94,19 @@ D1 のバインディング名（`DB`）と `database_name` はコード側の�
 4. 発行された **Webhook URL** を控える
 5. 別のワークスペースにも通知したい場合は、そのワークスペースごとに繰り返す
 
-### 4. D1 データベースの作成とマイグレーション
+### 4. D1 と KV の作成
 
 ```sh
 npx wrangler d1 create withings-weight
 # 表示された database_id を wrangler.toml の [[d1_databases]] に記入
 
 npx wrangler d1 migrations apply withings-weight --remote
+
+npx wrangler kv namespace create OAUTH_KV
+# 表示された id を wrangler.toml の [[kv_namespaces]]（binding = "OAUTH_KV"）に記入
 ```
 
-この時点では KV は使わない（Withings トークンも D1 に保存される）。食事記録の書き込み機能で使う KV ネームスペースは手順9で作成する。
+`wrangler.toml.example` は KV バインディングを含んだ状態で配布されているため、食事・運動記録の書き込み機能を使う予定がなくても、ここで KV ネームスペースを作成して `id` を記入しておく必要がある（プレースホルダーの `id` のままデプロイすると Cloudflare 側で弾かれる）。Withings のトークンは D1 に保存される（KV は OAuth の認可フロー・トークン保存専用）。Google OAuth クライアントの作成や関連 Secrets の登録は手順9で行う。
 
 ### 5. Secrets の登録
 
@@ -169,32 +173,20 @@ npx wrangler d1 execute withings-weight --remote \
 
 日付は `YYYY-MM-DD`。変更したいときも同じコマンドでよい（再デプロイ不要）。
 
-### 9. 食事記録機能のセットアップ
+### 9. 食事・運動記録の書き込み機能のセットアップ
 
-メニュー・食事記録の**閲覧**（`/api/menus` `/api/meals` `/api/meals/daily`、ダッシュボードの食事タブ表示）は追加設定なしで動く。**記録の書き込み**（ダッシュボードでの入力、`/rw/` API、MCP の書き込みツール）は Google アカウントによる OAuth 2.1 認可が必要で、以下を設定しないと `/authorize` が実行時エラーになる。
+メニュー・食事記録・運動記録の**閲覧**（`/api/menus` `/api/meals` `/api/meals/daily` `/api/exercise/menus` `/api/exercise/logs` `/api/exercise/daily`、ダッシュボードの食事・運動タブ表示）は追加設定なしで動く。**記録の書き込み**（ダッシュボードでの入力、`{base}/api/*` の POST/PATCH/DELETE、MCP の書き込みツール）は Google アカウントによる OAuth 2.1 認可が必要で、以下を設定しないと `/authorize` が実行時エラーになる（KV ネームスペースは手順4で作成済み）。
 
-1. KV ネームスペースを作成し、表示された `id` を `wrangler.toml` の `[[kv_namespaces]]`（`binding = "OAUTH_KV"`）に記入する:
-
-   ```sh
-   npx wrangler kv namespace create OAUTH_KV
-   ```
-
-2. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) で OAuth クライアントを作成する（アプリケーションの種類は「ウェブ アプリケーション」）:
+1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) で OAuth クライアントを作成する（アプリケーションの種類は「ウェブ アプリケーション」）:
    - **承認済みのリダイレクト URI** に `https://<デプロイ先のドメイン>/authorize/callback` を追加する（例: `https://weight.example.com/authorize/callback`。ドメインは手順6でデプロイした Worker のもの、カスタムドメインを使う場合はそちら）
    - 発行された **クライアント ID** と **クライアント シークレット** を控える
 
-3. Secrets を登録する:
+2. Secrets を登録する:
 
    ```sh
-   npx wrangler secret put GOOGLE_OAUTH_CLIENT_ID      # 手順2のクライアントID
-   npx wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET  # 手順2のクライアントシークレット
+   npx wrangler secret put GOOGLE_OAUTH_CLIENT_ID      # 手順1のクライアントID
+   npx wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET  # 手順1のクライアントシークレット
    npx wrangler secret put OWNER_EMAILS                # 書き込みを許可するGoogleアカウントのメール（カンマ区切り。例: "me@example.com"）
-   ```
-
-4. `wrangler.toml` に KV バインディングを追記したので、再デプロイして反映する:
-
-   ```sh
-   npm run deploy
    ```
 
 `OWNER_EMAILS` に含まれないメールでログインした場合、Google 認証自体は成功しても 403 で拒否される（Google アカウントを持っているだけでは書き込めない）。CI（GitHub Actions）を使っている場合は、手順1・4で更新した `wrangler.toml` を `gh secret set WRANGLER_TOML < wrangler.toml` で反映すること（後述の「自動デプロイ」参照）。
@@ -218,17 +210,15 @@ npx wrangler d1 execute withings-weight --remote \
 
 ## エンドポイント一覧
 
-ダッシュボード配下のパスは、`DASHBOARD_SLUG` 設定時は `/d/{DASHBOARD_SLUG}/` 配下、空文字時はドメイン直下（`/`）になる。
+ダッシュボード配下のパスは、`DASHBOARD_SLUG` 設定時は `/d/{DASHBOARD_SLUG}/` 配下、空文字時はドメイン直下（`/`）になる。書き込み（POST/PATCH/DELETE）は読み取りと同じ `{base}/api/*` パスにメソッドで同居し、ハンドラごとに Bearer トークン（OAuth）を検証して個別に保護する。MCP（`/mcp`）と OAuth 認可フロー（`/authorize` `/token` `/register`）は `DASHBOARD_SLUG` の設定にかかわらず常にドメイン直下で動く。
 
 | ルート | 役割 |
 |---|---|
 | `GET /auth/start?key={SETUP_SECRET}` | Withings 認可の開始。key 不一致・未設定は 404 |
 | `GET /auth/callback` | 認可コールバック。トークン保存・購読登録・初期インポート投入 |
 | `GET/HEAD/POST /webhook/withings-{WEBHOOK_PATH_SECRET}` | Withings notify 受信。GET/HEAD は疎通確認用に即 200 |
-| `GET /authorize` / `POST /token` / `POST /register` | 食事記録の書き込みAPI用 OAuth 2.1（`@cloudflare/workers-oauth-provider`）。`/authorize` は Google ログインでオーナーのメールを確認する |
-| `POST /rw/menus` / `PATCH /rw/menus/:id` / `POST /rw/menus/:id/archive` / `POST /rw/menus/:id/unarchive` | 認証必須（OAuth）。メニュー（マスタ）の作成・更新・アーカイブ切替 |
-| `POST /rw/meals` / `PATCH /rw/meals/:id` / `DELETE /rw/meals/:id` | 認証必須。食事記録の作成・更新・削除 |
-| `POST /rw/mcp` | 認証必須の MCP エンドポイント。読み取り5ツール + 書き込み2ツール（`log_meal` `create_menu`） |
+| `GET /authorize` / `POST /token` / `POST /register` | 食事・運動記録の書き込みAPI、および MCP 用 OAuth 2.1（`@cloudflare/workers-oauth-provider`）。`/authorize` は Google ログインでオーナーのメールを確認する |
+| `POST /mcp` | MCP（Model Context Protocol）エンドポイント。OAuth 認証必須。読み取り7ツール + 書き込み4ツール（`log_meal` `create_menu` `log_exercise` `create_exercise_menu`） |
 | `GET {base}/` | ダッシュボード本体（PWA） |
 | `GET {base}/api/measurements?from=&to=` または `?days=N` | 日次系列 JSON（日平均 + 7日移動平均） |
 | `GET {base}/api/raw?from=&to=` または `?days=N` | 計測明細 JSON（1計測=1行、新しい順） |
@@ -237,6 +227,13 @@ npx wrangler d1 execute withings-weight --remote \
 | `GET {base}/api/menus?q=` | 食事メニュー（マスタ）一覧・検索。認証不要 |
 | `GET {base}/api/meals?from=&to=` または `?days=N` | 食事記録 JSON（メニュー名・倍率・実効kcal/PFC付き）。認証不要 |
 | `GET {base}/api/meals/daily?from=&to=` または `?days=N` | 日次の摂取カロリー・PFC合計 JSON。認証不要 |
+| `GET {base}/api/exercise/menus?q=&category=` | 運動種目（マスタ）一覧・検索。`category=cardio\|strength` で絞り込み。認証不要 |
+| `GET {base}/api/exercise/logs?from=&to=` または `?days=N` | 運動記録 JSON（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）。認証不要 |
+| `GET {base}/api/exercise/daily?from=&to=` または `?days=N` | 日次の基礎代謝（BMR推定）・運動消費kcal・総ボリューム JSON。期間内の全日を返す（運動が無い日も含む）。認証不要 |
+| `POST {base}/api/menus` / `PATCH {base}/api/menus/:id` / `POST {base}/api/menus/:id/archive` / `POST {base}/api/menus/:id/unarchive` | 認証必須（OAuth）。メニュー（マスタ）の作成・更新・アーカイブ切替 |
+| `POST {base}/api/meals` / `PATCH {base}/api/meals/:id` / `DELETE {base}/api/meals/:id` | 認証必須。食事記録の作成・更新・削除 |
+| `POST {base}/api/exercise/menus` / `PATCH {base}/api/exercise/menus/:id` / `POST {base}/api/exercise/menus/:id/archive` / `POST {base}/api/exercise/menus/:id/unarchive` | 認証必須。運動種目（マスタ）の作成・更新・アーカイブ切替 |
+| `POST {base}/api/exercise/logs` / `DELETE {base}/api/exercise/logs/:id` | 認証必須。運動記録の作成・削除 |
 | `GET {base}/llms.txt` | AI向けのAPI案内（プレーンテキスト） |
 | `GET {base}/openapi.json` | OpenAPI 3.1 定義（ChatGPT カスタムGPTの Actions 登録用） |
 | `GET {base}/og.png` | OGP 画像（直近30日の体重グラフを PNG 生成。依存ライブラリなしの自前エンコーダ） |
@@ -252,23 +249,24 @@ cron トリガー:
 
 - **実測⇔7日平均のワンクリック切替**: 3指標（体重・体脂肪率・除脂肪体重）を一括で切り替える。凡例タップで系列ごとの表示切替も可能。選択は localStorage に保存される
 - **期間プリセット**: 1M / 3M / 1Y / カスタム。点の値は近くに常時表示（点が多い期間は各系列の最新点のみ）
-- **カロリー統合ビュー**: 食事タブで記録した1日の総摂取カロリーを、体重グラフに棒（右軸）として重ねて表示する。「カロリーを重ねる」トグルで切替（既定オン）、ツールチップに PFC 内訳。日次ダイジェスト（Slack）にも当日の摂取カロリーが1行入る
-- **表で見る**: 日次集計（1日1行=日平均、摂取カロリー列つき）と計測明細（1計測=1行、時刻付き）を切替できる
+- **カロリー統合ビュー**: 体重グラフに、食事タブの摂取カロリー（棒・右軸）、消費カロリー（基礎代謝＋運動消費、棒）、ネット（摂取−消費、線）を重ねて表示する。「カロリーを重ねる」トグルで切替（既定オン）、ツールチップに PFC 内訳・消費の内訳（基礎代謝/運動）。日次ダイジェスト（Slack）にも当日の摂取カロリーが1行入る
+- **表で見る**: 日次集計（1日1行=日平均、摂取/消費/ネットのカロリー列つき）と計測明細（1計測=1行、時刻付き。カロリー列は日次集計とは粒度が違うため非表示）を切替できる
 - **PWA**: スマホで「ホーム画面に追加」するとスタンドアロンで起動する
 - **テーマ**: OS 設定に追従 + 手動トグル
 - **食事タブ**: メニュー検索・当日の記録一覧・記録入力ができる。記録入力には「ログイン」ボタンから Google アカウントで OAuth 2.1（PKCE）認可する（オーナーのメールが `OWNER_EMAILS` にある場合のみ許可）
+- **運動タブ**: 種目検索・当日の記録一覧・記録入力ができる（有酸素は時間、筋トレはセット明細 reps×weight。自重種目は記録時の体重を負荷に算入）。筋トレの総ボリュームは除脂肪体重の推移と重ねたグラフで確認できる。記録入力は食事タブと同じ Google アカウントでのログインが必要
 
 グラフ・表・通知の集計はすべて「日単位（`TZ_OFFSET_HOURS` のローカル日付境界）」で行う。1日に複数回計測した場合、日次系列はその日の平均になる。
 
 ## AI から使う
 
-ChatGPT・Claude などのAIクライアントから体重推移・食事記録を照会できる。**読み取りはすべて認証不要**（公開範囲はダッシュボードと同じ）。食事の**記録・メニュー登録**（書き込み）はオーナーの Google アカウントによる OAuth 2.1 認可が必要。
+ChatGPT・Claude などのAIクライアントから体重推移・食事記録・運動記録を照会できる。**読み取りはすべて認証不要**（公開範囲はダッシュボードと同じ）。食事・運動の**記録・メニュー/種目登録**（書き込み）はオーナーの Google アカウントによる OAuth 2.1 認可が必要。
 
-- **URLを渡して読ませる**: `https://weight.example.com/llms.txt` にエンドポイント一覧と使い方が載っているので、「このURLを見て最近の体重推移を教えて」だけで動く。要約は `/api/summary`、時系列は `/api/measurements?days=90` のように相対期間で取れる。食事記録は `/api/menus` `/api/meals` `/api/meals/daily` で照会できる
+- **URLを渡して読ませる**: `https://weight.example.com/llms.txt` にエンドポイント一覧と使い方が載っているので、「このURLを見て最近の体重推移を教えて」だけで動く。要約は `/api/summary`、時系列は `/api/measurements?days=90` のように相対期間で取れる。食事記録は `/api/menus` `/api/meals` `/api/meals/daily`、運動記録は `/api/exercise/menus` `/api/exercise/logs` `/api/exercise/daily` で照会できる
 - **ChatGPT カスタムGPT（Actions）**: GPT編集画面の Actions で「URLからインポート」に `https://weight.example.com/openapi.json` を指定する。認証は「なし」（読み取り専用）
-- **MCP クライアント**: `https://weight.example.com/rw/mcp` を OAuth 対応のコネクタとして登録する（無認証のMCPエンドポイントは廃止。MCPアクセスは OAuth のみ）。ChatGPT はコネクタ作成時に認証方式で「OAuth」を選ぶ。Claude Code は `claude mcp add --transport http weight-rw https://weight.example.com/rw/mcp`（接続時にブラウザで Google ログイン画面が開く）。ツールは読み取り5つ（`get_weight_summary` / `get_daily_series` / `get_raw_measurements` / `search_menus` / `get_meal_logs`）＋書き込み2つ（`log_meal` 記録 / `create_menu` メニュー登録）。**記録は必ず登録済みメニューから行うこと**（メニューにない食事は先に `create_menu` で登録してから `log_meal` する。AI が判断でメニューを新規作成しないよう、登録前にユーザーへ確認するのが安全）
+- **MCP クライアント**: `https://weight.example.com/mcp` を OAuth 対応のコネクタとして登録する（MCP はドメイン直下の単一エンドポイントで、`DASHBOARD_SLUG` の設定にかかわらずここに固定。OAuth 認可必須）。ChatGPT はコネクタ作成時に認証方式で「OAuth」を選ぶ。Claude Code は `claude mcp add --transport http bodylog https://weight.example.com/mcp`（接続時にブラウザで Google ログイン画面が開く）。ツールは読み取り7つ（体重: `get_weight_summary` / `get_daily_series` / `get_raw_measurements`、食事: `search_menus` / `get_meal_logs`、運動: `search_exercise_menus` / `get_exercise_logs`）＋書き込み4つ（`log_meal` 食事記録 / `create_menu` メニュー登録 / `log_exercise` 運動記録 / `create_exercise_menu` 種目登録）。**記録は必ず登録済みのメニュー/種目から行うこと**（無ければ先に `create_menu` / `create_exercise_menu` で登録してから記録する。AI が判断でメニュー・種目を新規作成しないよう、登録前にユーザーへ確認するのが安全）
 
-単位は kg（`fat_ratio` のみ %）、日付境界は `TZ_OFFSET_HOURS` のローカル日付。`fat_mass` は `weight - fat_free_mass` の導出値。食事記録の `calories` は kcal、`protein_g`/`fat_g`/`carbs_g` は g。日次の栄養素合計（`/api/meals/daily`）のうち `protein_g`/`fat_g`/`carbs_g` は栄養素が入力済みの記録のみの部分合計（未入力の記録は含まない）。`calories` は全記録の合計。
+単位は kg（`fat_ratio` のみ %）、日付境界は `TZ_OFFSET_HOURS` のローカル日付。`fat_mass` は `weight - fat_free_mass` の導出値。食事記録の `calories` は kcal、`protein_g`/`fat_g`/`carbs_g` は g。日次の栄養素合計（`/api/meals/daily`）のうち `protein_g`/`fat_g`/`carbs_g` は栄養素が入力済みの記録のみの部分合計（未入力の記録は含まない）。`calories` は全記録の合計。PFC比率を出す場合は P×4 / F×9 / C×4 kcal に換算し3者の合計を100%として正規化すること（登録カロリーで割ると食物繊維等の差で100%を超えうるため不可）。運動記録の消費kcal（`/api/exercise/logs` の `calories`）は有酸素のみ算出（METs×体重×時間×1.05）。`/api/exercise/daily` の `bmr` は Katch-McArdle推定の基礎代謝（実測除脂肪体重が一度も無い期間は null）で、総消費は `bmr + calories_burned`。
 
 ## Slack 通知
 
@@ -391,6 +389,10 @@ npx wrangler secret put SETUP_SECRET   # 新しい値を入力
 ```
 
 即時反映され、旧キーでのアクセスは 404 になる。既存のトークン・購読・データには影響しない（`SETUP_SECRET` は認可開始の入り口を守るだけで、認可済みの動作には使われない）。
+
+### レート制限（推奨）
+
+`/authorize` `/register` `/token`（OAuth 認可フロー）は総当たり・乱用の対象になりうるため、Cloudflare のゾーンのレート制限ルールを設定することを推奨する（無料プランでもゾーンごとに1ルールまで利用できる）。余裕があれば公開 GET API 全般にも広げるとよい。これはアプリのコードではなく Cloudflare ダッシュボード側（ゾーンの Security / WAF）で設定するもので、Fork したユーザーが自分のゾーンに対して個別に行う必要がある。しきい値は実際のトラフィックに合わせて調整すること。
 
 ## うまくいかないとき
 
