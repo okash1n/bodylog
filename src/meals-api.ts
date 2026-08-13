@@ -2,22 +2,12 @@
 import type { Context } from 'hono';
 import { getDailyIntake, listMealLogs, listMenus } from './meals';
 import type { Env } from './types';
-import { noindexHeaders, resolveRangeFromQuery } from './util';
+import { noindexHeaders, withRange } from './util';
 
 type MealsContext = Context<{ Bindings: Env }>;
 type Handler = (c: MealsContext) => Response | Promise<Response>;
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
-
-function withRange(
-  c: MealsContext,
-  fn: (from: string, to: string) => Promise<Response>,
-): Promise<Response> | Response {
-  const headers = noindexHeaders(NO_STORE);
-  const range = resolveRangeFromQuery(c, headers);
-  if (range instanceof Response) return range;
-  return fn(range.from, range.to);
-}
 
 export const serveMenus: Handler = async (c) => {
   const headers = noindexHeaders(NO_STORE);

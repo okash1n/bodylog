@@ -12,7 +12,7 @@ import type {
   ExerciseMenuInput,
   ExerciseSet,
 } from './types';
-import { addDaysYmd, isoNow, newId, tzModifier } from './util';
+import { addDaysYmd, escapeLikeValue, isPositiveFinite, isoNow, newId, tzModifier } from './util';
 
 const MAX_METS = 30;
 const MAX_DURATION_MIN = 1440; // 24h
@@ -103,11 +103,6 @@ export async function updateExerciseMenu(
     .run();
   if ((res.meta.changes ?? 0) === 0) return null;
   return getExerciseMenu(env, id);
-}
-
-/** LIKEのワイルドカード（%, _）とエスケープ文字自身（\）をリテラル一致させる */
-function escapeLikeValue(q: string): string {
-  return q.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
 export async function listExerciseMenus(
@@ -320,7 +315,7 @@ export function estimateBmr(fatFreeMassKg: number): number {
 
 export async function getDailyExercise(env: Env, from: string, to: string): Promise<DailyExercise[]> {
   const tz = tzModifier(env);
-  const [counts, volume, ffmHist] = await env.DB.batch<{ d: string } & Record<string, number>>([
+  const [counts, volume, ffmHist, ffmSeed] = await env.DB.batch<{ d: string } & Record<string, number>>([
     env.DB.prepare(
       `SELECT date(performed_at, '${tz}') AS d,
        SUM(CASE WHEN category = 'cardio' THEN calories ELSE 0 END) AS calories_burned,
@@ -338,13 +333,20 @@ FROM exercise_logs l JOIN exercise_sets s ON s.log_id = l.id
 WHERE l.category = 'strength' AND date(l.performed_at, '${tz}') BETWEEN ?1 AND ?2
 GROUP BY 1`,
     ).bind(from, to),
-    // BMR用のFFM履歴（to以前の全計測、時系列順）。carry-forwardの種になる範囲前の計測も含める
+    // BMR用のFFM履歴（範囲内のみ、時系列順）。全履歴を返すと計測が増えるほど毎リクエスト重くなる
     env.DB.prepare(
       `SELECT date(measured_at, '${tz}') AS d, fat_free_mass AS ffm
 FROM measurements
-WHERE fat_free_mass IS NOT NULL AND date(measured_at, '${tz}') <= ?1
+WHERE fat_free_mass IS NOT NULL AND date(measured_at, '${tz}') BETWEEN ?1 AND ?2
 ORDER BY measured_at`,
-    ).bind(to),
+    ).bind(from, to),
+    // carry-forwardの種: 範囲開始より前で最新のFFM 1件
+    env.DB.prepare(
+      `SELECT fat_free_mass AS ffm
+FROM measurements
+WHERE fat_free_mass IS NOT NULL AND date(measured_at, '${tz}') < ?1
+ORDER BY measured_at DESC LIMIT 1`,
+    ).bind(from),
   ]);
   const volByDate = new Map<string, number>();
   for (const r of volume.results) volByDate.set(r.d, r.strength_volume);
@@ -359,11 +361,8 @@ ORDER BY measured_at`,
   // 日ごとの最新FFM（同日複数計測は後勝ち=最新）。時系列順なのでMapが日付昇順の最新値になる
   const ffmByDay = new Map<string, number>();
   for (const r of ffmHist.results) ffmByDay.set(r.d, r.ffm);
-  // 範囲開始前の最新FFMをcarryの初期値にする
-  let carry: number | null = null;
-  for (const [d, v] of ffmByDay) {
-    if (d < from) carry = v;
-  }
+  // 範囲開始前の最新FFMをcarryの初期値にする（seedクエリで1件だけ取得）
+  let carry: number | null = ffmSeed.results[0]?.ffm ?? null;
   // 期間内の全日を返す（BMRは運動の有無によらず毎日成立するため）
   const out: DailyExercise[] = [];
   for (let d = from; d <= to; d = addDaysYmd(d, 1)) {
@@ -387,10 +386,6 @@ export async function getExerciseForDay(env: Env, ymd: string): Promise<DailyExe
 }
 
 // ---- バリデータ（REST /rw と MCP の両方から使う） ----
-
-function isPositiveFinite(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0;
-}
 
 function isNonNegativeFinite(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0;

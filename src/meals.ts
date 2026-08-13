@@ -2,7 +2,7 @@
  * 食事データ層。メニュー（マスタ）と記録（スナップショット）のD1クエリを集約する。
  */
 import type { DailyIntake, Env, MealLog, Menu, MenuInput, MealType } from './types';
-import { isoNow, newId, tzModifier } from './util';
+import { escapeLikeValue, isPositiveFinite, isoNow, newId, tzModifier } from './util';
 
 interface MenuRow {
   id: string; name: string; calories: number;
@@ -66,11 +66,6 @@ export async function setMenuArchived(env: Env, id: string, archived: boolean): 
     .bind(id, archived ? 1 : 0, isoNow())
     .run();
   return (res.meta.changes ?? 0) > 0;
-}
-
-/** LIKE句のワイルドカード（%, _）とエスケープ文字自身（\）をリテラル一致させるためエスケープする */
-function escapeLikeValue(q: string): string {
-  return q.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
 export async function listMenus(
@@ -198,10 +193,6 @@ export async function getIntakeForDay(env: Env, ymd: string): Promise<DailyIntak
 
 const MEAL_TYPES: readonly string[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 const MAX_MULTIPLIER = 20;
-
-function isPositiveFinite(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0;
-}
 
 function optionalNutrient(v: unknown): number | null | undefined {
   if (v === undefined) return undefined;

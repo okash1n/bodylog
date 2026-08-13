@@ -55,6 +55,26 @@ async function guarded(tool: string, fn: () => Promise<CallToolResult>): Promise
   }
 }
 
+/**
+ * menu_id未指定時にmenu_nameから一意解決する（完全一致→一意な部分一致の順）。
+ * 見つからない/曖昧なときはエラーメッセージを返す（log_meal / log_exercise共用）。
+ */
+function resolveIdByName(
+  items: { id: string; name: string }[],
+  name: string,
+): { ok: true; id: string } | { ok: false; error: string } {
+  const exact = items.filter((m) => m.name === name);
+  const candidates = exact.length > 0 ? exact : items;
+  if (candidates.length === 0) return { ok: false, error: `menu not found: ${name}` };
+  if (candidates.length > 1) {
+    return {
+      ok: false,
+      error: `menu name is ambiguous: ${candidates.slice(0, 5).map((m) => m.name).join(' / ')}`,
+    };
+  }
+  return { ok: true, id: candidates[0].id };
+}
+
 const rangeShape = {
   days: z
     .number()
@@ -176,16 +196,9 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       (args) => guarded('log_meal', async () => {
         let menuId = args.menu_id;
         if (!menuId && args.menu_name) {
-          const all = await listMenus(env, { q: args.menu_name });
-          const exact = all.filter((m) => m.name === args.menu_name);
-          const candidates = exact.length > 0 ? exact : all;
-          if (candidates.length === 0) return errorResult(`menu not found: ${args.menu_name}`);
-          if (candidates.length > 1) {
-            return errorResult(
-              `menu name is ambiguous: ${candidates.slice(0, 5).map((m) => m.name).join(' / ')}`,
-            );
-          }
-          menuId = candidates[0].id;
+          const resolved = resolveIdByName(await listMenus(env, { q: args.menu_name }), args.menu_name);
+          if (!resolved.ok) return errorResult(resolved.error);
+          menuId = resolved.id;
         }
         if (!menuId) return errorResult('menu_id or menu_name is required');
         const fields = parseMealFields(args as Record<string, unknown>);
@@ -235,16 +248,12 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       (args) => guarded('log_exercise', async () => {
         let menuId = args.menu_id;
         if (!menuId && args.menu_name) {
-          const all = await listExerciseMenus(env, { q: args.menu_name });
-          const exact = all.filter((m) => m.name === args.menu_name);
-          const candidates = exact.length > 0 ? exact : all;
-          if (candidates.length === 0) return errorResult(`menu not found: ${args.menu_name}`);
-          if (candidates.length > 1) {
-            return errorResult(
-              `menu name is ambiguous: ${candidates.slice(0, 5).map((m) => m.name).join(' / ')}`,
-            );
-          }
-          menuId = candidates[0].id;
+          const resolved = resolveIdByName(
+            await listExerciseMenus(env, { q: args.menu_name }),
+            args.menu_name,
+          );
+          if (!resolved.ok) return errorResult(resolved.error);
+          menuId = resolved.id;
         }
         if (!menuId) return errorResult('menu_id or menu_name is required');
         const fields = parseExerciseLogFields(args as Record<string, unknown>);

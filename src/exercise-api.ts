@@ -2,7 +2,7 @@
 import type { Context } from 'hono';
 import type { Env, ExerciseCategory } from './types';
 import { getDailyExercise, listExerciseLogs, listExerciseMenus } from './exercise';
-import { noindexHeaders, resolveRangeFromQuery } from './util';
+import { noindexHeaders, withRange } from './util';
 
 type ExerciseContext = Context<{ Bindings: Env }>;
 type Handler = (c: ExerciseContext) => Response | Promise<Response>;
@@ -12,16 +12,6 @@ const NO_STORE = { 'Cache-Control': 'no-store' };
 function categoryParam(c: ExerciseContext): ExerciseCategory | undefined {
   const cat = c.req.query('category');
   return cat === 'cardio' || cat === 'strength' ? cat : undefined;
-}
-
-function withRange(
-  c: ExerciseContext,
-  fn: (from: string, to: string) => Promise<Response>,
-): Promise<Response> | Response {
-  const headers = noindexHeaders(NO_STORE);
-  const range = resolveRangeFromQuery(c, headers);
-  if (range instanceof Response) return range;
-  return fn(range.from, range.to);
 }
 
 export const serveExerciseMenus: Handler = async (c) => {

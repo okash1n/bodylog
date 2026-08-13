@@ -454,9 +454,11 @@
       for (var k in extra) ds[k] = extra[k];
       return ds;
     }
-    function avg(label, data, color, axis, unit, hidden) {
+    function avg(label, data, color, axis, unit, hidden, key) {
       // 7日平均モードでは主役の系列になるため、点は実測と同じ密度ルールで描く
       return {
+        _key: key,
+        _role: 'avg',
         label: label,
         data: data,
         yAxisID: axis,
@@ -474,18 +476,22 @@
         hidden: hidden,
       };
     }
-    // 実測3系列と7日平均3系列をモードで一括切替（凡例タップでの個別変更も可能）
+    // 実測3系列と7日平均3系列をモードで一括切替（凡例タップでの個別変更も可能）。
+    // 各データセットは _key（データ再代入・テーマ色の引き当て）と _role（トグル・凡例の
+    // グループ判定）を持つ。固定インデックスだと系列追加のたびに複数箇所の同期が要るため
     var hideRaw = seriesMode === 'avg';
     return [
       measured('体重', sets.weight, t.accent, 'yKg', 'kg', {
         fill: false, // 体重線下の青いエリア塗りは無し（線のみ）
         hidden: hideRaw,
+        _key: 'weight',
+        _role: 'raw',
       }),
-      avg('体重 7日平均', sets.weight7, t.accent, 'yKg', 'kg', !hideRaw),
-      measured('脂肪量', sets.fat, t.accent2, 'yKg', 'kg', { hidden: hideRaw }),
-      avg('脂肪量 7日平均', sets.fat7, t.accent2, 'yKg', 'kg', !hideRaw),
-      measured('除脂肪体重', sets.ffm, t.accent3, 'yKg', 'kg', { hidden: hideRaw }),
-      avg('除脂肪体重 7日平均', sets.ffm7, t.accent3, 'yKg', 'kg', !hideRaw),
+      avg('体重 7日平均', sets.weight7, t.accent, 'yKg', 'kg', !hideRaw, 'weight7'),
+      measured('脂肪量', sets.fat, t.accent2, 'yKg', 'kg', { hidden: hideRaw, _key: 'fat', _role: 'raw' }),
+      avg('脂肪量 7日平均', sets.fat7, t.accent2, 'yKg', 'kg', !hideRaw, 'fat7'),
+      measured('除脂肪体重', sets.ffm, t.accent3, 'yKg', 'kg', { hidden: hideRaw, _key: 'ffm', _role: 'raw' }),
+      avg('除脂肪体重 7日平均', sets.ffm7, t.accent3, 'yKg', 'kg', !hideRaw, 'ffm7'),
       // カロリー系（右軸 yKcal, kg系列とは独立）。摂取=緑棒 / 消費=紫棒 / ネット=灰線。
       // カロリートグルで3つまとめて表示切替する
       {
@@ -498,6 +504,8 @@
         borderWidth: 0,
         order: 99,
         hidden: !calorieOverlay,
+        _key: 'intake',
+        _role: 'energy',
         _energy: 'intake',
         _pfc: { p: cals.p, f: cals.f, c: cals.c },
       },
@@ -511,6 +519,8 @@
         borderWidth: 0,
         order: 98,
         hidden: !calorieOverlay,
+        _key: 'burn',
+        _role: 'energy',
         _energy: 'burn',
         _burnParts: cals.burnParts,
       },
@@ -530,18 +540,24 @@
         spanGaps: true,
         order: 97,
         hidden: !calorieOverlay,
+        _key: 'net',
+        _role: 'energy',
         _energy: 'net',
       },
       // 各系列の線形トレンドライン（最小二乗）。オンオフはトグルで。系列色の直線（長い破線）
-      trend('体重トレンド', sets.weight, 'accent', t.accent),
-      trend('脂肪量トレンド', sets.fat, 'accent2', t.accent2),
-      trend('除脂肪体重トレンド', sets.ffm, 'accent3', t.accent3),
+      trend('体重トレンド', sets.weight, 'weight', 'accent', t.accent),
+      trend('脂肪量トレンド', sets.fat, 'fat', 'accent2', t.accent2),
+      trend('除脂肪体重トレンド', sets.ffm, 'ffm', 'accent3', t.accent3),
     ];
   }
 
-  // トレンド系列の定義。_trendColor はテーマ変更時の再着色キー
-  function trend(label, values, colorKey, color) {
+  // トレンド系列の定義。_series は元データのキー（再描画時の回帰再計算用）、
+  // _trendColor はテーマ変更時の再着色キー
+  function trend(label, values, seriesKey, colorKey, color) {
     return {
+      _key: 'trend-' + seriesKey,
+      _role: 'trend',
+      _series: seriesKey,
       label: label,
       data: trendLine(values),
       yAxisID: 'yKg',
@@ -583,14 +599,13 @@
     return weights.map(function (_, x) { return slope * x + intercept; });
   }
 
-  var RAW_DATASET_INDEXES = [0, 2, 4];
-  var AVG_DATASET_INDEXES = [1, 3, 5];
-  // カロリー系（摂取=6 / 消費=7 / ネット=8）。カロリートグルで一括制御する
-  var CALORIE_DATASET_INDEX = 6; // 摂取（_pfcツールチップ・テーブル結合の基準）
-  var ENERGY_DATASET_INDEXES = [6, 7, 8];
-  // 体重・脂肪量・除脂肪体重のトレンド直線（buildDatasetsの並び順）
-  var TREND_DATASET_INDEXES = [9, 10, 11];
-  var TREND_SERIES_KEYS = ['weight', 'fat', 'ffm'];
+  // 役割（raw/avg/energy/trend）でデータセットの可視性を一括切替する。
+  // 固定インデックスの配列だと系列追加のたびに複数箇所の同期が必要でズレやすい
+  function setRoleVisibility(ch, role, visible) {
+    ch.data.datasets.forEach(function (ds, i) {
+      if (ds._role === role) ch.setDatasetVisibility(i, visible);
+    });
+  }
 
   function setActiveMode(mode) {
     modeButtons.forEach(function (btn) {
@@ -607,12 +622,8 @@
       localStorage.setItem('dash-series-mode', mode);
     } catch (e) { /* 保存不可でも表示は切り替わる */ }
     if (!chart) return;
-    RAW_DATASET_INDEXES.forEach(function (i) {
-      chart.setDatasetVisibility(i, mode === 'raw');
-    });
-    AVG_DATASET_INDEXES.forEach(function (i) {
-      chart.setDatasetVisibility(i, mode === 'avg');
-    });
+    setRoleVisibility(chart, 'raw', mode === 'raw');
+    setRoleVisibility(chart, 'avg', mode === 'avg');
     applyAxisRanges(chart);
     chart.update('none');
   }
@@ -742,11 +753,9 @@
               usePointStyle: true,
               boxWidth: 8,
               boxHeight: 8,
-              filter: function (item) {
-                return (
-                  ENERGY_DATASET_INDEXES.indexOf(item.datasetIndex) === -1 &&
-                  TREND_DATASET_INDEXES.indexOf(item.datasetIndex) === -1
-                );
+              filter: function (item, data) {
+                var role = data.datasets[item.datasetIndex] && data.datasets[item.datasetIndex]._role;
+                return role !== 'energy' && role !== 'trend';
               },
             },
             onClick: onLegendClick,
@@ -767,11 +776,11 @@
               },
               afterLabel: function (ctx) {
                 // 消費棒は内訳（基礎代謝の推定 + 運動）を添える
-                var parts = ctx.dataset._burnParts && ctx.dataset._burnParts[ctx.dataIndex];
-                if (parts && (parts.bmr != null || parts.ex != null)) {
+                var burnParts = ctx.dataset._burnParts && ctx.dataset._burnParts[ctx.dataIndex];
+                if (burnParts && (burnParts.bmr != null || burnParts.ex != null)) {
                   var seg = [];
-                  if (parts.bmr != null) seg.push('基礎 ' + Math.round(parts.bmr));
-                  if (parts.ex != null) seg.push('運動 ' + Math.round(parts.ex));
+                  if (burnParts.bmr != null) seg.push('基礎 ' + Math.round(burnParts.bmr));
+                  if (burnParts.ex != null) seg.push('運動 ' + Math.round(burnParts.ex));
                   return '   ' + seg.join(' + ');
                 }
                 var pfc = ctx.dataset._pfc;
@@ -859,37 +868,34 @@
     }
     chart.data.labels = labels;
     var d = chart.data.datasets;
-    d[0].data = sets.weight;
-    d[1].data = sets.weight7;
-    d[2].data = sets.fat;
-    d[3].data = sets.fat7;
-    d[4].data = sets.ffm;
-    d[5].data = sets.ffm7;
-    if (d[CALORIE_DATASET_INDEX]) {
-      d[CALORIE_DATASET_INDEX].data = cals.cal;
-      d[CALORIE_DATASET_INDEX]._pfc = { p: cals.p, f: cals.f, c: cals.c };
-    }
-    if (d[ENERGY_DATASET_INDEXES[1]]) {
-      d[ENERGY_DATASET_INDEXES[1]].data = cals.burn;
-      d[ENERGY_DATASET_INDEXES[1]]._burnParts = cals.burnParts;
-    }
-    if (d[ENERGY_DATASET_INDEXES[2]]) d[ENERGY_DATASET_INDEXES[2]].data = cals.net;
-    ENERGY_DATASET_INDEXES.forEach(function (idx) {
-      if (d[idx]) chart.setDatasetVisibility(idx, calorieOverlay);
-    });
-    chart.options.scales.yKcal.display = calorieOverlay;
-    TREND_DATASET_INDEXES.forEach(function (idx, k) {
-      if (!d[idx]) return;
-      d[idx].data = trendLine(sets[TREND_SERIES_KEYS[k]]);
-      chart.setDatasetVisibility(idx, trendOn);
-    });
+    // _keyで新データを引き当てる（並び順に依存しない）。トレンドは元系列から回帰を再計算
+    var dataByKey = {
+      weight: sets.weight,
+      weight7: sets.weight7,
+      fat: sets.fat,
+      fat7: sets.fat7,
+      ffm: sets.ffm,
+      ffm7: sets.ffm7,
+      intake: cals.cal,
+      burn: cals.burn,
+      net: cals.net,
+    };
     var pr = pointRadiusFor(density);
     var phr = pointHoverRadiusFor(density);
     d.forEach(function (ds) {
-      if (ds._trend) return; // トレンド直線は点なしの直線のまま
+      if (ds._role === 'trend') {
+        ds.data = trendLine(sets[ds._series]); // トレンド直線は点なしの直線のまま
+        return;
+      }
+      if (dataByKey[ds._key]) ds.data = dataByKey[ds._key];
+      if (ds._key === 'intake') ds._pfc = { p: cals.p, f: cals.f, c: cals.c };
+      if (ds._key === 'burn') ds._burnParts = cals.burnParts;
       ds.pointRadius = pr;
       ds.pointHoverRadius = phr;
     });
+    setRoleVisibility(chart, 'energy', calorieOverlay);
+    setRoleVisibility(chart, 'trend', trendOn);
+    chart.options.scales.yKcal.display = calorieOverlay;
     var limits = tickLimitsFor(currentBp);
     chart.options.scales.x.ticks.autoSkip = density !== 'sparse';
     chart.options.scales.x.ticks.maxTicksLimit = limits.x;
@@ -1072,8 +1078,16 @@
     themeCache = readTheme();
     if (!chart) return;
     var t = themeCache;
-    var colors = [t.accent, t.accent, t.accent2, t.accent2, t.accent3, t.accent3];
-    chart.data.datasets.forEach(function (ds, i) {
+    // 系列色は_keyで引き当てる（並び順に依存しない）
+    var colorByKey = {
+      weight: t.accent,
+      weight7: t.accent,
+      fat: t.accent2,
+      fat7: t.accent2,
+      ffm: t.accent3,
+      ffm7: t.accent3,
+    };
+    chart.data.datasets.forEach(function (ds) {
       if (ds._energy) {
         // 摂取=緑棒 / 消費=紫棒 / ネット=灰線。テーマ変更時に各々塗り直す
         if (ds._energy === 'intake') ds.backgroundColor = hexToRgba(t.cal, 0.45);
@@ -1090,9 +1104,10 @@
         ds.borderColor = t[ds._trendColor] || t.muted;
         return;
       }
-      ds.borderColor = colors[i];
-      ds.pointBackgroundColor = colors[i];
-      if (i !== 0) ds.backgroundColor = colors[i];
+      var color = colorByKey[ds._key] || t.muted;
+      ds.borderColor = color;
+      ds.pointBackgroundColor = color;
+      ds.backgroundColor = color;
     });
     chart.options.color = t.text;
     chart.options.plugins.legend.labels.color = t.text;
@@ -1147,9 +1162,7 @@
         if (!chart) return;
         // setDatasetVisibilityで統一（meta.hiddenを確定させ、凡例クリック等と競合しない）。
         // 摂取・消費・ネットを一括切替
-        ENERGY_DATASET_INDEXES.forEach(function (idx) {
-          chart.setDatasetVisibility(idx, calorieOverlay);
-        });
+        setRoleVisibility(chart, 'energy', calorieOverlay);
         chart.options.scales.yKcal.display = calorieOverlay;
         applyAxisRanges(chart);
         chart.update('none');
@@ -1165,9 +1178,7 @@
           localStorage.setItem('dash-trend', trendOn ? '1' : '0');
         } catch (e) { /* 保存不可でも表示は切り替わる */ }
         if (!chart) return;
-        TREND_DATASET_INDEXES.forEach(function (idx) {
-          chart.setDatasetVisibility(idx, trendOn);
-        });
+        setRoleVisibility(chart, 'trend', trendOn);
         chart.update('none');
       });
     }

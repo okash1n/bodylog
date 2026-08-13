@@ -27,7 +27,7 @@ import chartVendorJs from './dashboard/vendor/chart.umd.js';
 import { appleTouchIconPng } from './dashboard/icon';
 
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
-export const ASSET_VERSION = '2026-08-13-18';
+export const ASSET_VERSION = '2026-08-13-19';
 
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';
 const JS_CONTENT_TYPE = 'text/javascript; charset=utf-8';
@@ -192,6 +192,36 @@ const serveOg: Handler = async (c) => {
   }
 };
 
+/**
+ * 公開GETルートの一覧。スラッグ配下とドメイン直下の両ルータへ同じ表から登録する
+ * （個別列挙の二重管理だと、追加漏れがテストを素通りして本番に出るため）。
+ * openapi.json との整合テストからも参照する。
+ */
+export const READ_ROUTES: ReadonlyArray<readonly [string, Handler]> = [
+  ['', serveIndex],
+  ['styles.css', serveStyles],
+  ['app.js', serveAppJs],
+  ['meals.js', serveMealsJs],
+  ['exercise.js', serveExerciseJs],
+  ['vendor/chart.umd.js', serveVendor],
+  ['manifest.webmanifest', serveManifest],
+  ['apple-touch-icon.png', serveAppleTouchIcon],
+  ['sw.js', serveSw],
+  ['api/measurements', serveMeasurements],
+  ['api/raw', serveRaw],
+  ['api/status', serveStatus],
+  ['api/summary', serveSummary],
+  ['api/menus', serveMenus],
+  ['api/meals/daily', serveMealsDaily],
+  ['api/meals', serveMealsList],
+  ['api/exercise/menus', serveExerciseMenus],
+  ['api/exercise/daily', serveExerciseDaily],
+  ['api/exercise/logs', serveExerciseLogs],
+  ['llms.txt', serveLlmsTxt],
+  ['openapi.json', serveOpenapi],
+  ['og.png', serveOg],
+];
+
 /** /d/{slug}/ 配下でダッシュボードを配信する（DASHBOARD_SLUG が非空のとき有効） */
 export function createDashboardRouter(): Hono<{ Bindings: Env }> {
   const app = new Hono<{ Bindings: Env }>();
@@ -207,28 +237,9 @@ export function createDashboardRouter(): Hono<{ Bindings: Env }> {
       headers: noindexHeaders({ Location: `/d/${c.env.DASHBOARD_SLUG}/` }),
     });
   });
-  app.get('/:slug/', guarded(serveIndex));
-  app.get('/:slug/styles.css', guarded(serveStyles));
-  app.get('/:slug/app.js', guarded(serveAppJs));
-  app.get('/:slug/meals.js', guarded(serveMealsJs));
-  app.get('/:slug/exercise.js', guarded(serveExerciseJs));
-  app.get('/:slug/vendor/chart.umd.js', guarded(serveVendor));
-  app.get('/:slug/manifest.webmanifest', guarded(serveManifest));
-  app.get('/:slug/apple-touch-icon.png', guarded(serveAppleTouchIcon));
-  app.get('/:slug/sw.js', guarded(serveSw));
-  app.get('/:slug/api/measurements', guarded(serveMeasurements));
-  app.get('/:slug/api/raw', guarded(serveRaw));
-  app.get('/:slug/api/status', guarded(serveStatus));
-  app.get('/:slug/api/summary', guarded(serveSummary));
-  app.get('/:slug/api/menus', guarded(serveMenus));
-  app.get('/:slug/api/meals/daily', guarded(serveMealsDaily));
-  app.get('/:slug/api/meals', guarded(serveMealsList));
-  app.get('/:slug/api/exercise/menus', guarded(serveExerciseMenus));
-  app.get('/:slug/api/exercise/daily', guarded(serveExerciseDaily));
-  app.get('/:slug/api/exercise/logs', guarded(serveExerciseLogs));
-  app.get('/:slug/llms.txt', guarded(serveLlmsTxt));
-  app.get('/:slug/openapi.json', guarded(serveOpenapi));
-  app.get('/:slug/og.png', guarded(serveOg));
+  for (const [path, handler] of READ_ROUTES) {
+    app.get(`/:slug/${path}`, guarded(handler));
+  }
   // 書き込み（POST/PATCH/DELETE）は同じ /api 名前空間にメソッドで同居し、withAuthで保護する
   registerWriteRoutes(app, guarded, '/:slug');
   return app;
@@ -241,28 +252,9 @@ export function createDashboardRouter(): Hono<{ Bindings: Env }> {
 export function createRootDashboardRouter(): Hono<{ Bindings: Env }> {
   const app = new Hono<{ Bindings: Env }>();
   const guarded = (h: Handler): Handler => (c) => (c.env.DASHBOARD_SLUG === '' ? h(c) : notFound(c));
-  app.get('/', guarded(serveIndex));
-  app.get('/styles.css', guarded(serveStyles));
-  app.get('/app.js', guarded(serveAppJs));
-  app.get('/meals.js', guarded(serveMealsJs));
-  app.get('/exercise.js', guarded(serveExerciseJs));
-  app.get('/vendor/chart.umd.js', guarded(serveVendor));
-  app.get('/manifest.webmanifest', guarded(serveManifest));
-  app.get('/apple-touch-icon.png', guarded(serveAppleTouchIcon));
-  app.get('/sw.js', guarded(serveSw));
-  app.get('/api/measurements', guarded(serveMeasurements));
-  app.get('/api/raw', guarded(serveRaw));
-  app.get('/api/status', guarded(serveStatus));
-  app.get('/api/summary', guarded(serveSummary));
-  app.get('/api/menus', guarded(serveMenus));
-  app.get('/api/meals/daily', guarded(serveMealsDaily));
-  app.get('/api/meals', guarded(serveMealsList));
-  app.get('/api/exercise/menus', guarded(serveExerciseMenus));
-  app.get('/api/exercise/daily', guarded(serveExerciseDaily));
-  app.get('/api/exercise/logs', guarded(serveExerciseLogs));
-  app.get('/llms.txt', guarded(serveLlmsTxt));
-  app.get('/openapi.json', guarded(serveOpenapi));
-  app.get('/og.png', guarded(serveOg));
+  for (const [path, handler] of READ_ROUTES) {
+    app.get(`/${path}`, guarded(handler));
+  }
   registerWriteRoutes(app, guarded, '');
   return app;
 }

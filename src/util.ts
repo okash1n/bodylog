@@ -70,6 +70,15 @@ export function noindexHeaders(extra?: Record<string, string>): Record<string, s
   return { 'X-Robots-Tag': 'noindex, nofollow', ...extra };
 }
 
+/** LIKE句のワイルドカード（%, _）とエスケープ文字自身（\）をリテラル一致させるためエスケープする */
+export function escapeLikeValue(q: string): string {
+  return q.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+export function isPositiveFinite(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0;
+}
+
 /** YYYY-MM-DD の厳格チェック（実在日か含む） */
 export function isValidYmd(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
@@ -154,4 +163,15 @@ export function resolveRangeFromQuery(
   );
   if (!result.ok) return c.json({ error: result.error }, 400, headers);
   return { from: result.from, to: result.to };
+}
+
+/** 期間クエリ付き公開READハンドラの共通枠（検証エラーは400 Responseをそのまま返す） */
+export function withRange(
+  c: Context<{ Bindings: Env }>,
+  fn: (from: string, to: string) => Promise<Response>,
+): Promise<Response> | Response {
+  const headers = noindexHeaders({ 'Cache-Control': 'no-store' });
+  const range = resolveRangeFromQuery(c, headers);
+  if (range instanceof Response) return range;
+  return fn(range.from, range.to);
 }
