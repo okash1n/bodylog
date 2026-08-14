@@ -68,14 +68,20 @@ function round1(v) {
 }
 
 async function collectData() {
-  const [summary, measurements, meals, exercise] = await Promise.all([
+  const [summary, measurements, meals, exercise, metabolism] = await Promise.all([
     getJson('/api/summary'),
     getJson(`/api/measurements?days=${FETCH_DAYS}`),
     getJson(`/api/meals/daily?days=${FETCH_DAYS}`),
     getJson(`/api/exercise/daily?days=${FETCH_DAYS}`),
+    // 実効代謝は補助情報。取得失敗しても講評生成は続ける
+    getJson('/api/metabolism').catch(() => null),
   ]);
   return {
-    goal: '体組成改善（脂肪量を減らし、除脂肪体重を維持・増加させる）',
+    policy: '体組成改善（脂肪量を減らし、除脂肪体重を維持・増加させる）',
+    // 数値目標（kg）。未設定の指標はnull。設定されていれば講評の評価軸に使う
+    goal: summary.goal ?? { weight_kg: null, fat_mass_kg: null },
+    // 直近28日の実測からの実効消費推定。status==='ok'のときだけ使う
+    metabolism: metabolism && metabolism.status === 'ok' ? metabolism : null,
     units: { mass: 'kg', energy: 'kcal', pfc: 'g' },
     summary: {
       recent7_avg: summary.recent7_avg,
@@ -118,6 +124,8 @@ const COMMON_RULES = `
 - プレーンテキストのみ。マークダウン記法（* # \` など）や絵文字は使わない。箇条書きは「・」を使う
 - 日本語。数値はデータから引用し概数でよい
 - ネット収支 = 摂取kcal − (bmr + burn)。日常活動・食事誘発熱産生は含まれない前提で断定しすぎない
+- goalに数値目標（体重・脂肪量）が設定されていれば、目標との差を講評の評価軸に使う（未設定ならpolicyの方針で評価する）
+- metabolismがあれば、実効消費（estimated_tdee_kcal）をモデル値より優先して摂取量の提案に使う。ただし7700kcal/kg換算の参考値なので断定はしない
 - データが欠けている日は無理に言及しない`;
 
 function buildPrompt(kind, data) {

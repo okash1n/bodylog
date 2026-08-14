@@ -218,7 +218,7 @@ npx wrangler d1 execute bodylog --remote \
 | `GET /auth/callback` | 認可コールバック。トークン保存・購読登録・初期インポート投入 |
 | `GET/HEAD/POST /webhook/withings-{WEBHOOK_PATH_SECRET}` | Withings notify 受信。GET/HEAD は疎通確認用に即 200 |
 | `GET /authorize` / `POST /token` / `POST /register` | 食事・運動記録の書き込みAPI、および MCP 用 OAuth 2.1（`@cloudflare/workers-oauth-provider`）。`/authorize` は Google ログインでオーナーのメールを確認する |
-| `POST /mcp` | MCP（Model Context Protocol）エンドポイント。OAuth 認証必須。読み取り7ツール + 書き込み4ツール（`log_meal` `create_menu` `log_exercise` `create_exercise_menu`） |
+| `POST /mcp` | MCP（Model Context Protocol）エンドポイント。OAuth 認証必須。読み取り7ツール + 書き込み5ツール（`log_meal` `create_menu` `log_exercise` `create_exercise_menu` `set_goal`） |
 | `GET {base}/` | ダッシュボード本体（PWA） |
 | `GET {base}/api/measurements?from=&to=` または `?days=N` | 日次系列 JSON（日平均 + 7日移動平均） |
 | `GET {base}/api/raw?from=&to=` または `?days=N` | 計測明細 JSON（1計測=1行、新しい順） |
@@ -231,6 +231,7 @@ npx wrangler d1 execute bodylog --remote \
 | `GET {base}/api/exercise/logs?from=&to=` または `?days=N` | 運動記録 JSON（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）。認証不要 |
 | `GET {base}/api/exercise/daily?from=&to=` または `?days=N` | 日次の基礎代謝（BMR推定）・運動消費kcal・総ボリューム JSON。期間内の全日を返す（運動が無い日も含む）。認証不要 |
 | `GET {base}/api/coaching/latest` | AIコーチの最新講評（daily=日次 / weekly=週次。未生成は null）。認証不要 |
+| `GET {base}/api/metabolism` | 直近28日の実測データからの実効消費カロリー推定（摂取記録が8割未満などの期間は `insufficient_data`）。認証不要 |
 | `POST {base}/api/coaching` | AIコーチ講評の保存（GitHub Actions のジョブ専用）。`Authorization: Bearer {COACHING_API_SECRET}` で保護。secret 未設定の環境では 404 |
 | `POST {base}/api/menus` / `PATCH {base}/api/menus/:id` / `POST {base}/api/menus/:id/archive` / `POST {base}/api/menus/:id/unarchive` | 認証必須（OAuth）。メニュー（マスタ）の作成・更新・アーカイブ切替 |
 | `POST {base}/api/meals` / `PATCH {base}/api/meals/:id` / `DELETE {base}/api/meals/:id` | 認証必須。食事記録の作成・更新・削除 |
@@ -256,6 +257,7 @@ cron トリガー:
 - **PWA**: スマホで「ホーム画面に追加」するとスタンドアロンで起動する
 - **テーマ**: OS 設定に追従 + 手動トグル
 - **食事タブ**: メニュー検索・当日の記録一覧・記録入力ができる。記録入力には「ログイン」ボタンから Google アカウントで OAuth 2.1（PKCE）認可する（オーナーのメールが `OWNER_EMAILS` にある場合のみ許可）
+- **目標と実効消費**: MCP の `set_goal` で目標体重・目標脂肪量を設定すると、グラフに目標線（水平破線）、カードに「目標まで」が表示される。摂取記録が直近28日の8割以上あると「実効消費（推定）」カードも表示される（ネット収支と実際の体重変化から逆算した参考値）
 - **運動タブ**: 種目検索・当日の記録一覧・記録入力ができる（有酸素は時間、筋トレはセット明細 reps×weight。自重種目は記録時の体重を負荷に算入）。筋トレの総ボリュームは除脂肪体重の推移と重ねたグラフで確認できる。記録入力は食事タブと同じ Google アカウントでのログインが必要
 
 グラフ・表・通知の集計はすべて「日単位（`TZ_OFFSET_HOURS` のローカル日付境界）」で行う。1日に複数回計測した場合、日次系列はその日の平均になる。
@@ -266,13 +268,13 @@ ChatGPT・Claude などのAIクライアントから体重推移・食事記録�
 
 - **URLを渡して読ませる**: `https://weight.example.com/llms.txt` にエンドポイント一覧と使い方が載っているので、「このURLを見て最近の体重推移を教えて」だけで動く。要約は `/api/summary`、時系列は `/api/measurements?days=90` のように相対期間で取れる。食事記録は `/api/menus` `/api/meals` `/api/meals/daily`、運動記録は `/api/exercise/menus` `/api/exercise/logs` `/api/exercise/daily` で照会できる
 - **ChatGPT カスタムGPT（Actions）**: GPT編集画面の Actions で「URLからインポート」に `https://weight.example.com/openapi.json` を指定する。認証は「なし」（読み取り専用）
-- **MCP クライアント**: `https://weight.example.com/mcp` を OAuth 対応のコネクタとして登録する（MCP はドメイン直下の単一エンドポイントで、`DASHBOARD_SLUG` の設定にかかわらずここに固定。OAuth 認可必須）。ChatGPT はコネクタ作成時に認証方式で「OAuth」を選ぶ。Claude Code は `claude mcp add --transport http bodylog https://weight.example.com/mcp`（接続時にブラウザで Google ログイン画面が開く）。ツールは読み取り7つ（体重: `get_weight_summary` / `get_daily_series` / `get_raw_measurements`、食事: `search_menus` / `get_meal_logs`、運動: `search_exercise_menus` / `get_exercise_logs`）＋書き込み4つ（`log_meal` 食事記録 / `create_menu` メニュー登録 / `log_exercise` 運動記録 / `create_exercise_menu` 種目登録）。**記録は必ず登録済みのメニュー/種目から行うこと**（無ければ先に `create_menu` / `create_exercise_menu` で登録してから記録する。AI が判断でメニュー・種目を新規作成しないよう、登録前にユーザーへ確認するのが安全）
+- **MCP クライアント**: `https://weight.example.com/mcp` を OAuth 対応のコネクタとして登録する（MCP はドメイン直下の単一エンドポイントで、`DASHBOARD_SLUG` の設定にかかわらずここに固定。OAuth 認可必須）。ChatGPT はコネクタ作成時に認証方式で「OAuth」を選ぶ。Claude Code は `claude mcp add --transport http bodylog https://weight.example.com/mcp`（接続時にブラウザで Google ログイン画面が開く）。ツールは読み取り7つ（体重: `get_weight_summary` / `get_daily_series` / `get_raw_measurements`、食事: `search_menus` / `get_meal_logs`、運動: `search_exercise_menus` / `get_exercise_logs`）＋書き込み5つ（`log_meal` 食事記録 / `create_menu` メニュー登録 / `log_exercise` 運動記録 / `create_exercise_menu` 種目登録 / `set_goal` 目標設定）。**記録は必ず登録済みのメニュー/種目から行うこと**（無ければ先に `create_menu` / `create_exercise_menu` で登録してから記録する。AI が判断でメニュー・種目を新規作成しないよう、登録前にユーザーへ確認するのが安全）
 
 単位は kg（`fat_ratio` のみ %）、日付境界は `TZ_OFFSET_HOURS` のローカル日付。`fat_mass` は `weight - fat_free_mass` の導出値。食事記録の `calories` は kcal、`protein_g`/`fat_g`/`carbs_g` は g。日次の栄養素合計（`/api/meals/daily`）のうち `protein_g`/`fat_g`/`carbs_g` は栄養素が入力済みの記録のみの部分合計（未入力の記録は含まない）。`calories` は全記録の合計。PFC比率を出す場合は P×4 / F×9 / C×4 kcal に換算し3者の合計を100%として正規化すること（登録カロリーで割ると食物繊維等の差で100%を超えうるため不可）。運動記録の消費kcal（`/api/exercise/logs` の `calories`）は有酸素のみ算出（METs×体重×時間×1.05）。`/api/exercise/daily` の `bmr` は Katch-McArdle推定の基礎代謝（実測除脂肪体重が一度も無い期間は null）で、総消費は `bmr + calories_burned`。
 
 ## AIコーチング（定期講評）
 
-毎朝 06:00 JST に GitHub Actions（`.github/workflows/coaching.yml`）が直近14日のデータを分析し、AIコーチの講評を生成する（月曜は週次総括、他の曜日は日次講評）。生成は Claude Agent SDK をサブスクリプションの OAuth トークンで動かすため、API の従量課金は発生しない。講評は `POST /api/coaching` で保存され、Slack（`mode` が `daily`/`both` の宛先）へ配信され、ダッシュボードの「AIコーチ」カードに表示される。方針は「体組成改善（脂肪量を減らし、除脂肪体重を維持・増加）」で、数値目標は設けていない。
+毎朝 06:00 JST に GitHub Actions（`.github/workflows/coaching.yml`）が直近14日のデータを分析し、AIコーチの講評を生成する（月曜は週次総括、他の曜日は日次講評）。生成は Claude Agent SDK をサブスクリプションの OAuth トークンで動かすため、API の従量課金は発生しない。講評は `POST /api/coaching` で保存され、Slack（`mode` が `daily`/`both` の宛先）へ配信され、ダッシュボードの「AIコーチ」カードに表示される。方針は「体組成改善（脂肪量を減らし、除脂肪体重を維持・増加）」。`set_goal` で数値目標（体重・脂肪量）を設定している場合は目標との差を、実効消費の推定（`/api/metabolism`）が成立している場合はその値を、講評の評価軸に使う。
 
 セットアップ（GitHub Secrets を3つ登録する）:
 
