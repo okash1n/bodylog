@@ -201,6 +201,7 @@
     }
   })();
   var lastCals = null; // 直近のカロリー整列結果（テーマ/リサイズ再描画で参照）
+  var currentGoal = null; // /api/summary の goal（両指標未設定なら null）
   var period = '1m';
   var customFromValue = null;
   var customToValue = null;
@@ -299,6 +300,17 @@
           return { days: [] };
         });
     };
+    // 目標・実効代謝は取得失敗しても体重表示を壊さない（null扱い）
+    var tolerantJson = function (u, label) {
+      return fetch(u)
+        .then(function (res) {
+          return res.ok ? res.json() : null;
+        })
+        .catch(function (err) {
+          console.error('[dashboard] ' + label + ' fetch failed', err);
+          return null;
+        });
+    };
     Promise.all([
       fetch(url).then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -307,12 +319,18 @@
       tolerantDays(mealsUrl, 'meals/daily'),
       tolerantDays(exUrl, 'exercise/daily'),
       fetchStatus(),
+      tolerantJson(BASE + 'api/summary', 'summary'),
+      tolerantJson(BASE + 'api/metabolism', 'metabolism'),
     ])
       .then(function (results) {
         var days = (results[0] && results[0].days) || [];
         var mealsDays = (results[1] && results[1].days) || [];
         var exDays = (results[2] && results[2].days) || [];
         var status = results[3];
+        var goal = results[4] && results[4].goal;
+        currentGoal =
+          goal && (goal.weight_kg != null || goal.fat_mass_kg != null) ? goal : null;
+        renderMetabolism(results[5]);
         rawRows = null; // 期間が変わった可能性があるので明細キャッシュを破棄
         renderHeader(days, status);
         if (days.length === 0) {
@@ -579,7 +597,41 @@
       trend('体重トレンド', sets.weight, 'weight', 'accent', t.accent),
       trend('脂肪量トレンド', sets.fat, 'fat', 'accent2', t.accent2),
       trend('除脂肪体重トレンド', sets.ffm, 'ffm', 'accent3', t.accent3),
-    ];
+    ].concat(goalDatasets(t, sets.weight.length));
+  }
+
+  // 目標線（水平の細い破線）。設定済みの指標だけ作る。renderChartでは設定の追加・解除に
+  // 追従できるよう毎回作り直す（他系列の_key再利用とは扱いが異なる）
+  function goalDatasets(t, len) {
+    if (!currentGoal) return [];
+    function line(label, value, color, key) {
+      var data = [];
+      for (var i = 0; i < len; i++) data.push(value);
+      return {
+        _key: key,
+        _role: 'goal',
+        _goalValue: value,
+        label: label,
+        data: data,
+        yAxisID: 'yKg',
+        unit: 'kg',
+        borderColor: color,
+        backgroundColor: color,
+        pointBackgroundColor: color,
+        borderWidth: 1,
+        borderDash: [2, 3],
+        tension: 0,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        spanGaps: true,
+        fill: false,
+        order: 60,
+      };
+    }
+    var out = [];
+    if (currentGoal.weight_kg != null) out.push(line('目標体重', currentGoal.weight_kg, t.accent, 'goal-weight'));
+    if (currentGoal.fat_mass_kg != null) out.push(line('目標脂肪量', currentGoal.fat_mass_kg, t.accent2, 'goal-fat'));
+    return out;
   }
 
   // トレンド系列の定義。_series は元データのキー（再描画時の回帰再計算用）、
@@ -961,6 +1013,10 @@
       ds.pointRadius = pr;
       ds.pointHoverRadius = phr;
     });
+    // 目標線は設定の変化（追加・解除・値変更）に追従するため毎回作り直す
+    chart.data.datasets = chart.data.datasets
+      .filter(function (ds) { return ds._role !== 'goal'; })
+      .concat(goalDatasets(themeCache, labels.length));
     applyEnergyVisibility(chart);
     setRoleVisibility(chart, 'trend', trendOn);
     chart.options.scales.yKcal.display = calorieOverlay;
@@ -1044,7 +1100,35 @@
       $(m.id + '-value').textContent = fmt(value);
       $(m.id + '-avg').textContent = fmt(avg7);
       $(m.id + '-diff').textContent = fmtSigned(diff);
+      // 目標サブ行（体重・脂肪量のみ。目標未設定 or 現在値なしは非表示）
+      var goalRow = $(m.id + '-goal-row');
+      if (goalRow) {
+        var goalVal = null;
+        if (currentGoal && m.key === 'weight') goalVal = currentGoal.weight_kg;
+        if (currentGoal && m.key === 'fat_mass') goalVal = currentGoal.fat_mass_kg;
+        if (goalVal != null && value != null) {
+          $(m.id + '-goal').textContent = fmtSigned(goalVal - value);
+          goalRow.classList.remove('hidden');
+        } else {
+          goalRow.classList.add('hidden');
+        }
+      }
     });
+  }
+
+  /* 実効消費（推定）カード。insufficient_data の間は非表示 */
+  function renderMetabolism(m) {
+    var card = $('metabolism-card');
+    if (!card) return;
+    if (!m || m.status !== 'ok') {
+      card.classList.add('hidden');
+      return;
+    }
+    $('metabolism-value').textContent = Math.round(m.estimated_tdee_kcal).toLocaleString('ja-JP');
+    var diff = m.correction_kcal_per_day;
+    $('metabolism-diff').textContent =
+      diff == null ? '' : '（モデル比 ' + (diff >= 0 ? '+' : '') + Math.round(diff) + ' kcal）';
+    card.classList.remove('hidden');
   }
 
   /* ---- テーブル（新しい日付が上。日次集計と計測明細を切り替え可能） ---- */
@@ -1171,6 +1255,8 @@
       fat7: t.accent2,
       ffm: t.accent3,
       ffm7: t.accent3,
+      'goal-weight': t.accent,
+      'goal-fat': t.accent2,
     };
     chart.data.datasets.forEach(function (ds) {
       if (ds._role === 'energy') {

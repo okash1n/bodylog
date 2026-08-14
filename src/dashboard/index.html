@@ -80,12 +80,14 @@
         <p class="card-value"><span id="card-weight-value">—</span><span class="unit">kg</span></p>
         <p class="card-sub">7日平均 <span id="card-weight-avg">—</span><span class="unit">kg</span></p>
         <p class="card-sub">期間比 <span id="card-weight-diff">—</span><span class="unit">kg</span></p>
+        <p id="card-weight-goal-row" class="card-sub hidden">目標まで <span id="card-weight-goal">—</span><span class="unit">kg</span></p>
       </article>
       <article class="card">
         <h3>脂肪量</h3>
         <p class="card-value"><span id="card-fat-value">—</span><span class="unit">kg</span></p>
         <p class="card-sub">7日平均 <span id="card-fat-avg">—</span><span class="unit">kg</span></p>
         <p class="card-sub">期間比 <span id="card-fat-diff">—</span><span class="unit">kg</span></p>
+        <p id="card-fat-goal-row" class="card-sub hidden">目標まで <span id="card-fat-goal">—</span><span class="unit">kg</span></p>
       </article>
       <article class="card">
         <h3>除脂肪体重</h3>
@@ -104,6 +106,11 @@
         <summary>週次総括（<span id="ai-coach-weekly-date"></span>）</summary>
         <p id="ai-coach-weekly-body" class="ai-coach-body"></p>
       </details>
+    </section>
+    <section id="metabolism-card" class="stat-note hidden" aria-label="実効消費の推定">
+      実効消費（推定・28日）: <strong><span id="metabolism-value">—</span> kcal/日</strong>
+      <span id="metabolism-diff" class="stat-note-sub"></span>
+      <span class="stat-note-hint">体重変化と摂取記録から逆算した参考値</span>
     </section>
     <div class="controls-row">
       <div class="segment" role="group" aria-label="表示期間">

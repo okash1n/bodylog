@@ -364,6 +364,29 @@ body {
 .ai-coach-weekly summary:hover {
   color: var(--text);
 }
+
+/* 実効消費（推定）の1行カード */
+.stat-note {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.stat-note strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.stat-note-sub {
+  font-variant-numeric: tabular-nums;
+}
+.stat-note-hint {
+  display: block;
+  font-size: 0.7rem;
+  margin-top: 2px;
+}
 .unit {
   font-size: 0.7em;
   color: var(--text-muted);
