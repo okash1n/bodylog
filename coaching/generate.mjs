@@ -166,11 +166,12 @@ async function generate(kind, data) {
   // Worker側の上限（4000文字）に合わせて切り詰める（超過すると保存が400で失敗するため）
   const content = result.result.trim().slice(0, 4000);
   if (!content) throw new Error('generation returned empty content');
-  // 実際に使われたモデル名が取れれば記録する（取れなければ設定値）
+  // 実際に使われたモデル名を記録する。modelUsageには内部補助呼び出し（haiku等）も
+  // 混ざるため、出力トークン数が最大のモデル＝本文を生成したモデルを選ぶ
+  const usage = Object.entries(result.modelUsage ?? {});
   const usedModel =
-    result.modelUsage && Object.keys(result.modelUsage).length > 0
-      ? Object.keys(result.modelUsage)[0]
-      : model;
+    usage.sort((a, b) => (b[1]?.outputTokens ?? 0) - (a[1]?.outputTokens ?? 0))[0]?.[0] ?? model;
+  if (usage.length > 1) console.log(`models used: ${usage.map(([k]) => k).join(', ')}`);
   return { content, usedModel };
 }
 
