@@ -9,7 +9,7 @@
  *   BODYLOG_BASE_URL        必須。例 https://weight.example.com（末尾スラッシュ不要）
  *   COACHING_API_SECRET     必須。POST /api/coaching のBearerトークン
  *   CLAUDE_CODE_OAUTH_TOKEN 必須（SDKが参照）。`claude setup-token` で発行
- *   COACHING_MODEL          任意。既定 'claude-opus-5'
+ *   COACHING_MODEL          任意。既定 'opus'（Claude Codeの既定Opusに追従する別名）
  *   COACHING_TZ_OFFSET_HOURS 任意。既定 9（JST）
  *   KIND                    任意。'daily' | 'weekly' | ''/'auto'（自動判定）
  *
@@ -31,7 +31,7 @@ function requiredEnv(name) {
 const base = requiredEnv('BODYLOG_BASE_URL').replace(/\/+$/, '');
 const secret = requiredEnv('COACHING_API_SECRET');
 requiredEnv('CLAUDE_CODE_OAUTH_TOKEN'); // SDKが読む。早期に未設定を検出するためだけに確認
-const model = process.env.COACHING_MODEL || 'claude-opus-5';
+const model = process.env.COACHING_MODEL || 'opus';
 const tzOffsetHours = Number.isFinite(Number(process.env.COACHING_TZ_OFFSET_HOURS))
   ? Number(process.env.COACHING_TZ_OFFSET_HOURS)
   : 9;
