@@ -97,10 +97,10 @@ D1 のバインディング名（`DB`）と `database_name` はコード側の�
 ### 4. D1 と KV の作成
 
 ```sh
-npx wrangler d1 create withings-weight
+npx wrangler d1 create bodylog
 # 表示された database_id を wrangler.toml の [[d1_databases]] に記入
 
-npx wrangler d1 migrations apply withings-weight --remote
+npx wrangler d1 migrations apply bodylog --remote
 
 npx wrangler kv namespace create OAUTH_KV
 # 表示された id を wrangler.toml の [[kv_namespaces]]（binding = "OAUTH_KV"）に記入
@@ -167,7 +167,7 @@ https://<Worker URL>/auth/start?key={SETUP_SECRET}
 通知の「基準日からの変化」の起点日を登録する。未設定の間はそのブロック自体が通知から省略される（エラーではない）:
 
 ```sh
-npx wrangler d1 execute withings-weight --remote \
+npx wrangler d1 execute bodylog --remote \
   --command "INSERT OR REPLACE INTO settings (key, value) VALUES ('baseline_date', '2026-07-01')"
 ```
 
@@ -230,6 +230,8 @@ npx wrangler d1 execute withings-weight --remote \
 | `GET {base}/api/exercise/menus?q=&category=` | 運動種目（マスタ）一覧・検索。`category=cardio\|strength` で絞り込み。認証不要 |
 | `GET {base}/api/exercise/logs?from=&to=` または `?days=N` | 運動記録 JSON（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）。認証不要 |
 | `GET {base}/api/exercise/daily?from=&to=` または `?days=N` | 日次の基礎代謝（BMR推定）・運動消費kcal・総ボリューム JSON。期間内の全日を返す（運動が無い日も含む）。認証不要 |
+| `GET {base}/api/coaching/latest` | AIコーチの最新講評（daily=日次 / weekly=週次。未生成は null）。認証不要 |
+| `POST {base}/api/coaching` | AIコーチ講評の保存（GitHub Actions のジョブ専用）。`Authorization: Bearer {COACHING_API_SECRET}` で保護。secret 未設定の環境では 404 |
 | `POST {base}/api/menus` / `PATCH {base}/api/menus/:id` / `POST {base}/api/menus/:id/archive` / `POST {base}/api/menus/:id/unarchive` | 認証必須（OAuth）。メニュー（マスタ）の作成・更新・アーカイブ切替 |
 | `POST {base}/api/meals` / `PATCH {base}/api/meals/:id` / `DELETE {base}/api/meals/:id` | 認証必須。食事記録の作成・更新・削除 |
 | `POST {base}/api/exercise/menus` / `PATCH {base}/api/exercise/menus/:id` / `POST {base}/api/exercise/menus/:id/archive` / `POST {base}/api/exercise/menus/:id/unarchive` | 認証必須。運動種目（マスタ）の作成・更新・アーカイブ切替 |
@@ -268,6 +270,26 @@ ChatGPT・Claude などのAIクライアントから体重推移・食事記録�
 
 単位は kg（`fat_ratio` のみ %）、日付境界は `TZ_OFFSET_HOURS` のローカル日付。`fat_mass` は `weight - fat_free_mass` の導出値。食事記録の `calories` は kcal、`protein_g`/`fat_g`/`carbs_g` は g。日次の栄養素合計（`/api/meals/daily`）のうち `protein_g`/`fat_g`/`carbs_g` は栄養素が入力済みの記録のみの部分合計（未入力の記録は含まない）。`calories` は全記録の合計。PFC比率を出す場合は P×4 / F×9 / C×4 kcal に換算し3者の合計を100%として正規化すること（登録カロリーで割ると食物繊維等の差で100%を超えうるため不可）。運動記録の消費kcal（`/api/exercise/logs` の `calories`）は有酸素のみ算出（METs×体重×時間×1.05）。`/api/exercise/daily` の `bmr` は Katch-McArdle推定の基礎代謝（実測除脂肪体重が一度も無い期間は null）で、総消費は `bmr + calories_burned`。
 
+## AIコーチング（定期講評）
+
+毎朝 06:00 JST に GitHub Actions（`.github/workflows/coaching.yml`）が直近14日のデータを分析し、AIコーチの講評を生成する（月曜は週次総括、他の曜日は日次講評）。生成は Claude Agent SDK をサブスクリプションの OAuth トークンで動かすため、API の従量課金は発生しない。講評は `POST /api/coaching` で保存され、Slack（`mode` が `daily`/`both` の宛先）へ配信され、ダッシュボードの「AIコーチ」カードに表示される。方針は「体組成改善（脂肪量を減らし、除脂肪体重を維持・増加）」で、数値目標は設けていない。
+
+セットアップ（GitHub Secrets を3つ登録する）:
+
+| Secret | 内容 |
+|---|---|
+| `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` で発行するサブスク用トークン（要 Claude Pro/Max。約1年有効。失効したら再発行して更新） |
+| `COACHING_API_SECRET` | `openssl rand -hex 32` 等で生成した値。Worker 側にも `npx wrangler secret put COACHING_API_SECRET` で**同じ値**を登録する |
+| `BODYLOG_BASE_URL` | 本番URL（例 `https://weight.example.com`。実URLをリポジトリに書かないため Secret で渡す） |
+
+補足:
+
+- 手動実行: Actions の「AI Coaching」→ Run workflow（`kind` で daily/weekly を指定可能。`auto` は曜日で判定）
+- 同じ kind・同じ日付での再実行は講評を上書きするが、Slack へは再送しない（失敗リラン時の二重投稿防止）
+- パブリックリポジトリの schedule は60日間コミットが無いと自動停止する（GitHub 仕様）。止まったら Actions 画面から有効化し直す
+- Actions のログは公開されるため、ジョブは講評本文・健康データをログに出力しない設計になっている
+- トークン失効などでジョブが失敗すると GitHub からワークフロー失敗の通知が届く
+
 ## Slack 通知
 
 計測を取り込むと Block Kit で通知する。数値はインラインコード、見出しは太字、データ欠如は `—`。
@@ -289,7 +311,7 @@ ChatGPT・Claude などのAIクライアントから体重推移・食事記録�
 送信時刻は D1 の設定で変更できる（再デプロイ不要。5分刻み・最遅 23:55。5分毎 cron が判定するため）:
 
 ```sh
-npx wrangler d1 execute withings-weight --remote \
+npx wrangler d1 execute bodylog --remote \
   --command "INSERT OR REPLACE INTO settings (key, value) VALUES ('digest_time', '21:00')"
 ```
 
@@ -304,7 +326,7 @@ npx wrangler d1 execute withings-weight --remote \
 - [ ] 体重計に載る → 数分以内に全チャンネルへ Slack 通知（グラフ画像付き）が届き、D1 にも行が増えている:
 
   ```sh
-  npx wrangler d1 execute withings-weight --remote --command "SELECT COUNT(*) FROM measurements"
+  npx wrangler d1 execute bodylog --remote --command "SELECT COUNT(*) FROM measurements"
   ```
 
 - [ ] スマホでダッシュボードを「ホーム画面に追加」→ スタンドアロン起動でグラフが見える
@@ -362,13 +384,13 @@ URL が漏れた場合などは slug を変更する。
 1. **定期エクスポート**: 定期ジョブで以下を実行し、SQL ダンプを保管する（`backup*.sql` は git にコミットしない）
 
    ```sh
-   npx wrangler d1 export withings-weight --remote --output backup-$(date +%Y%m%d).sql
+   npx wrangler d1 export bodylog --remote --output backup-$(date +%Y%m%d).sql
    ```
 
 2. **Time Travel**: D1 は過去 **30 日**の任意時点へ復元できる（[公式ドキュメント](https://developers.cloudflare.com/d1/reference/time-travel/)）
 
    ```sh
-   npx wrangler d1 time-travel restore withings-weight --timestamp=<unix-timestamp>
+   npx wrangler d1 time-travel restore bodylog --timestamp=<unix-timestamp>
    ```
 
 注意: バックアップから復元すると `tokens` テーブルの refresh_token が古い値に巻き戻り、8 時間ルールにより無効になっている可能性が高い。復元後は `/auth/start` での再認可を前提とすること。
