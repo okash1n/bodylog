@@ -790,7 +790,8 @@
     afterDatasetsDraw: function (ch) {
       var total = 0;
       ch.data.datasets.forEach(function (ds, i) {
-        if (ds.yAxisID === 'yKcal' || ds._trend || !ch.isDatasetVisible(i)) return; // カロリー棒・トレンドは点ラベル対象外
+        // カロリー棒・トレンド・目標線（定数の水平線）は点ラベル対象外
+        if (ds.yAxisID === 'yKcal' || ds._trend || ds._role === 'goal' || !ch.isDatasetVisible(i)) return;
         ds.data.forEach(function (v) {
           if (v != null) total++;
         });
@@ -802,7 +803,8 @@
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
       ch.data.datasets.forEach(function (ds, di) {
-        if (ds.yAxisID === 'yKcal' || ds._trend || !ch.isDatasetVisible(di)) return; // カロリー棒・トレンドは点ラベルを描かない
+        // カロリー棒・トレンド・目標線は点ラベルを描かない
+        if (ds.yAxisID === 'yKcal' || ds._trend || ds._role === 'goal' || !ch.isDatasetVisible(di)) return;
         var meta = ch.getDatasetMeta(di);
         var lastIdx = -1;
         if (!showAll) {
@@ -833,11 +835,19 @@
   function createChart(labels, sets, cals, density) {
     var t = themeCache;
     var limits = tickLimitsFor(currentBp);
-    // 初期レンジは「表示モードで見えている系列」全部から計算する（全系列kgの単一軸）
+    // 初期レンジは「表示モードで見えている系列」全部から計算する（全系列kgの単一軸）。
+    // 目標線も可視系列なので含める（applyAxisRangesと同じ規則。含めないと遠い目標線が
+    // 初回描画で軸レンジ外にクリップされて見えない）
+    var goalVals = [];
+    if (currentGoal) {
+      if (currentGoal.weight_kg != null) goalVals.push(currentGoal.weight_kg);
+      if (currentGoal.fat_mass_kg != null) goalVals.push(currentGoal.fat_mass_kg);
+    }
     var kgRange = axisRange(
-      seriesMode === 'avg'
+      (seriesMode === 'avg'
         ? sets.weight7.concat(sets.fat7, sets.ffm7)
-        : sets.weight.concat(sets.fat, sets.ffm),
+        : sets.weight.concat(sets.fat, sets.ffm)
+      ).concat(goalVals),
     );
     // カロリー右軸の初期レンジ（applyAxisRangesと同じ規則）。以降の更新と一貫させる。
     // 表示モードで見えている系列（実測=net / 7日平均=net7）から取り、
@@ -1013,10 +1023,18 @@
       ds.pointRadius = pr;
       ds.pointHoverRadius = phr;
     });
-    // 目標線は設定の変化（追加・解除・値変更）に追従するため毎回作り直す
+    // 目標線は設定の変化（追加・解除・値変更）に追従するため毎回作り直す。
+    // 凡例クリックでの非表示状態はChart.jsのmeta（旧オブジェクト）に付くため、明示的に引き継ぐ
+    var goalHidden = {};
+    chart.data.datasets.forEach(function (ds, i) {
+      if (ds._role === 'goal') goalHidden[ds._key] = !chart.isDatasetVisible(i);
+    });
     chart.data.datasets = chart.data.datasets
       .filter(function (ds) { return ds._role !== 'goal'; })
-      .concat(goalDatasets(themeCache, labels.length));
+      .concat(goalDatasets(themeCache, labels.length).map(function (ds) {
+        if (goalHidden[ds._key] !== undefined) ds.hidden = goalHidden[ds._key];
+        return ds;
+      }));
     applyEnergyVisibility(chart);
     setRoleVisibility(chart, 'trend', trendOn);
     chart.options.scales.yKcal.display = calorieOverlay;
