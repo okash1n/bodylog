@@ -1,0 +1,51 @@
+# AIコーチング講評を毎朝生成する（生成はClaudeサブスク、保存先はbodylogのAPI）。
+#
+# 必要な GitHub Secrets:
+#   CLAUDE_CODE_OAUTH_TOKEN — `claude setup-token` で発行するサブスク用OAuthトークン（約1年有効）
+#   COACHING_API_SECRET     — POST /api/coaching のBearerトークン（Worker側シークレットと同値）
+#   BODYLOG_BASE_URL        — 本番URL（パブリックリポに実URLを書かないためSecretで渡す）
+#
+# 注意:
+# - パブリックリポのActionsログは公開されるため、ジョブは講評本文・健康データをログに出さない
+# - パブリックリポのscheduleは60日間リポジトリに動きがないと自動停止する（GitHub仕様）
+name: AI Coaching
+
+on:
+  schedule:
+    - cron: "0 21 * * *" # 06:00 JST（月曜は週次、他は日次をスクリプト側で判定）
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: "生成する講評の種類（autoは曜日で判定）"
+        required: false
+        type: choice
+        options: [auto, daily, weekly]
+        default: auto
+
+concurrency:
+  group: coaching
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  coaching:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: coaching/package-lock.json
+      - run: npm ci
+        working-directory: coaching
+      - run: node generate.mjs
+        working-directory: coaching
+        env:
+          KIND: ${{ inputs.kind }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          COACHING_API_SECRET: ${{ secrets.COACHING_API_SECRET }}
+          BODYLOG_BASE_URL: ${{ secrets.BODYLOG_BASE_URL }}
