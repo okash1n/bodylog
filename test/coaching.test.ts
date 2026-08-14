@@ -1,4 +1,4 @@
-import { createExecutionContext } from 'cloudflare:test';
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
 import type { Env } from '../src/types';
@@ -22,8 +22,9 @@ const coachingEnv: Env = {
   SLACK_WEBHOOKS: `[{"id":"night","url":"https://${SLACK_HOST}${SLACK_PATH}","mode":"daily"}]`,
 };
 
-function postCoaching(env: Env, body: unknown, token: string | null = SECRET): Promise<Response> {
-  return worker.fetch(
+async function postCoaching(env: Env, body: unknown, token: string | null = SECRET): Promise<Response> {
+  const ctx = createExecutionContext();
+  const res = await worker.fetch(
     new Request('http://localhost/api/coaching', {
       method: 'POST',
       headers: {
@@ -33,8 +34,11 @@ function postCoaching(env: Env, body: unknown, token: string | null = SECRET): P
       body: JSON.stringify(body),
     }),
     env,
-    createExecutionContext(),
+    ctx,
   );
+  // Slack送信はwaitUntilで走るため、アサーション前に完了を待つ
+  await waitOnExecutionContext(ctx);
+  return res;
 }
 
 function getLatest(env: Env): Promise<Response> {

@@ -15,7 +15,7 @@ import {
 } from './exercise';
 import { withAuth } from './auth';
 import { coachingTokenMatches, parseCoachingInput, upsertCoachingNote } from './coaching';
-import { queueCoachingNotification } from './slack';
+import { processNotificationBatches, queueCoachingNotification } from './slack';
 import { noindexHeaders } from './util';
 
 type Ctx = Context<{ Bindings: Env }>;
@@ -144,12 +144,20 @@ export function registerWriteRoutes(
     if (!parsed.ok) return c.json({ error: parsed.error }, 400, headers());
     const note = await upsertCoachingNote(c.env, parsed.value);
     // Slack配信失敗で保存自体を失敗にしない（配信は既存のリトライ機構が引き継ぐ）
-    const { queued } = await queueCoachingNotification(c.env, new URL(c.req.url).origin, note).catch(
-      (err: unknown) => {
-        console.error('[writes] coaching notification queue failed', err);
-        return { queued: 0 };
-      },
-    );
+    const { queued } = await queueCoachingNotification(c.env, note).catch((err: unknown) => {
+      console.error('[writes] coaching notification queue failed', err);
+      return { queued: 0 };
+    });
+    if (queued > 0) {
+      // 送信はレスポンス後に継続（同期awaitだとSlack再送バックログ次第で
+      // クライアントのタイムアウトと衝突する。失敗分は5分毎cronが再送する）
+      const origin = new URL(c.req.url).origin;
+      c.executionCtx.waitUntil(
+        processNotificationBatches(c.env, origin).catch((err: unknown) =>
+          console.error('[writes] coaching notification send failed', err),
+        ),
+      );
+    }
     return c.json({ ...note, queued }, 201, headers());
   })));
 }

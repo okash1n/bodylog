@@ -163,7 +163,8 @@ async function generate(kind, data) {
   if (!result || (result.subtype && result.subtype !== 'success') || typeof result.result !== 'string') {
     throw new Error(`generation failed: ${result ? result.subtype : 'no result message'}`);
   }
-  const content = result.result.trim();
+  // Worker側の上限（4000文字）に合わせて切り詰める（超過すると保存が400で失敗するため）
+  const content = result.result.trim().slice(0, 4000);
   if (!content) throw new Error('generation returned empty content');
   // 実際に使われたモデル名が取れれば記録する（取れなければ設定値）
   const usedModel =
@@ -181,7 +182,7 @@ async function save(kind, date, content, usedModel) {
       authorization: `Bearer ${secret}`,
     },
     body: JSON.stringify({ kind, date, content, model: usedModel }),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) {
     // エラーレスポンスに本文の一部が含まれても、こちらの{error}はサーバー定義の定型文のみ

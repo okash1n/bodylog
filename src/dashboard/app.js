@@ -340,8 +340,9 @@
         var daily = latest && latest.daily;
         var weekly = latest && latest.weekly;
         if (!daily && !weekly) return; // 未生成ならカードごと非表示のまま
+        // 見出しの日付はdaily優先、weeklyのみの期間（初回が月曜等）はweeklyの日付を出す
+        els.aiCoachDailyDate.textContent = daily ? daily.date : weekly.date;
         if (daily) {
-          els.aiCoachDailyDate.textContent = daily.date;
           els.aiCoachDaily.textContent = daily.content;
         }
         els.aiCoachDaily.classList.toggle('hidden', !daily);
@@ -1300,8 +1301,14 @@
       });
     }
 
-    els.retry.addEventListener('click', loadData);
-    els.emptyReload.addEventListener('click', loadData);
+    els.retry.addEventListener('click', function () {
+      loadData();
+      loadCoaching(); // 初回にAIコーチ講評の取得だけ失敗したケースも再試行で復帰させる
+    });
+    els.emptyReload.addEventListener('click', function () {
+      loadData();
+      loadCoaching();
+    });
 
     window.addEventListener('online', updateOnlineState);
     window.addEventListener('offline', updateOnlineState);

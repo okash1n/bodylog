@@ -538,13 +538,14 @@ async function buildCoachingMessage(env: Env, origin: string, batchId: string): 
 }
 
 /**
- * AIコーチ講評の保存時に daily/both のSlack宛先へ配信バッチを投入し、即時処理する。
+ * AIコーチ講評の保存時に daily/both のSlack宛先へ配信バッチを投入する。
  * batch_idのUNIQUE制約により同一kind・同日の再保存では再送しない
  * （GitHub Actionsの失敗リラン等でのSlack二重投稿を防ぐ）。
+ * 送信自体は呼び出し側が waitUntil で processNotificationBatches を実行する
+ * （リクエストパスで同期送信するとクライアントのタイムアウトと衝突するため）。
  */
 export async function queueCoachingNotification(
   env: Env,
-  origin: string,
   note: CoachingNote,
 ): Promise<{ queued: number }> {
   const destinations = parseDestinations(env).filter((d) => d.mode === 'daily' || d.mode === 'both');
@@ -556,11 +557,7 @@ export async function queueCoachingNotification(
     ).bind(batchId, d.id),
   );
   const results = await env.DB.batch(statements);
-  const queued = results.reduce((n, r) => n + r.meta.changes, 0);
-  if (queued > 0) {
-    await processNotificationBatches(env, origin);
-  }
-  return { queued };
+  return { queued: results.reduce((n, r) => n + r.meta.changes, 0) };
 }
 
 async function buildBatchMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
