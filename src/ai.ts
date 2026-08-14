@@ -37,6 +37,7 @@ REST（GET）はすべて読み取り専用・認証不要。書き込みは /mc
 - GET ${root}/api/exercise/menus?q=&category= — 運動種目（マスタ）一覧・検索。category=cardio|strengthで絞れる
 - GET ${root}/api/exercise/logs?days=30 — 運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）
 - GET ${root}/api/exercise/daily?days=30 — 日次の基礎代謝（Katch-McArdle推定）・運動消費kcal・総ボリューム。期間内の全日を返す
+- GET ${root}/api/coaching/latest — AIコーチの最新講評（daily=日次 / weekly=週次。未生成はnull）
 - GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（ChatGPTカスタムGPTのActionsにはこれを登録する）
 - POST ${root}/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール
 
@@ -398,6 +399,32 @@ export function openapiSpec(
           },
         },
       },
+      '/api/coaching/latest': {
+        get: {
+          operationId: 'getLatestCoaching',
+          summary: 'AIコーチの最新講評（daily=日次 / weekly=週次。未生成はnull）',
+          responses: {
+            '200': {
+              description: '各kindの最新講評',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      daily: {
+                        oneOf: [{ $ref: '#/components/schemas/CoachingNote' }, { type: 'null' }],
+                      },
+                      weekly: {
+                        oneOf: [{ $ref: '#/components/schemas/CoachingNote' }, { type: 'null' }],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     },
     components: {
       schemas: {
@@ -528,6 +555,20 @@ export function openapiSpec(
             created_at: { type: 'string', format: 'date-time' },
             sets: { type: 'array', items: { $ref: '#/components/schemas/ExerciseSet' } },
             total_volume: { type: ['number', 'null'] },
+          },
+        },
+        CoachingNote: {
+          type: 'object',
+          description:
+            'AIコーチの講評1件。kind=daily（前日分のライト講評）| weekly（週次の深掘り総括）。' +
+            'dateは生成対象のローカル日付、contentは講評本文',
+          properties: {
+            id: { type: 'string' },
+            kind: { type: 'string', enum: ['daily', 'weekly'] },
+            date: { type: 'string', format: 'date' },
+            content: { type: 'string' },
+            model: { type: ['string', 'null'] },
+            created_at: { type: 'string', format: 'date-time' },
           },
         },
         DailyExercise: {

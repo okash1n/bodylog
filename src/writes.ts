@@ -14,6 +14,8 @@ import {
   parseExerciseMenuInput, parseExerciseMenuPatch, setExerciseMenuArchived, updateExerciseMenu,
 } from './exercise';
 import { withAuth } from './auth';
+import { coachingTokenMatches, parseCoachingInput, upsertCoachingNote } from './coaching';
+import { queueCoachingNotification } from './slack';
 import { noindexHeaders } from './util';
 
 type Ctx = Context<{ Bindings: Env }>;
@@ -126,4 +128,28 @@ export function registerWriteRoutes(
     (await deleteExerciseLog(c.env, pid(c)))
       ? c.json({ ok: true }, 200, headers())
       : c.json({ error: 'exercise log not found' }, 404, headers())));
+
+  // ---- AIコーチング講評 ----
+  // GitHub Actions からのサーバー間書き込みのため、OAuth（withAuth）ではなく
+  // COACHING_API_SECRET とのBearer照合で保護する。secret未設定の環境では404（機能無効）
+  app.post(p('/api/coaching'), guarded(guardedErrors(async (c) => {
+    const secret = c.env.COACHING_API_SECRET;
+    if (!secret) return c.json({ error: 'not found' }, 404, headers());
+    const auth = c.req.header('Authorization') ?? '';
+    const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
+    if (!token || !coachingTokenMatches(token, secret)) {
+      return c.json({ error: 'unauthorized' }, 401, headers());
+    }
+    const parsed = parseCoachingInput(await readJson(c));
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400, headers());
+    const note = await upsertCoachingNote(c.env, parsed.value);
+    // Slack配信失敗で保存自体を失敗にしない（配信は既存のリトライ機構が引き継ぐ）
+    const { queued } = await queueCoachingNotification(c.env, new URL(c.req.url).origin, note).catch(
+      (err: unknown) => {
+        console.error('[writes] coaching notification queue failed', err);
+        return { queued: 0 };
+      },
+    );
+    return c.json({ ...note, queued }, 201, headers());
+  })));
 }

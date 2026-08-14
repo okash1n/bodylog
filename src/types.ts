@@ -18,6 +18,7 @@ export interface Env {
   GOOGLE_OAUTH_CLIENT_ID?: string;
   GOOGLE_OAUTH_CLIENT_SECRET?: string;
   OWNER_EMAILS?: string; // カンマ区切りの許可メール
+  COACHING_API_SECRET?: string; // POST /api/coaching（AI講評保存）のサーバー間Bearer認証。未設定なら機能無効
 }
 
 /** immediate=計測ごとに通知（既定） / daily=日次ダイジェストのみ / both=両方 */

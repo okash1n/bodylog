@@ -13,6 +13,14 @@ import { LIMITS, assertSecret, dashboardBase, isoNow, offsetHours, ymdWithOffset
 import { getDailySeries, getDayMeasurementCount, getLatestForBatch, getNotificationStats } from './queries';
 import { getIntakeForDay } from './meals';
 import { getExerciseForDay } from './exercise';
+import {
+  buildCoachingBlocks,
+  COACHING_BATCH_PREFIX,
+  coachingBatchId,
+  getCoachingNote,
+  parseCoachingBatchId,
+} from './coaching';
+import type { CoachingNote } from './coaching';
 import { OG_RENDERER_VERSION } from './og';
 
 /** 日次ダイジェストのバッチID（notification_batchesのUNIQUE制約で同日二重送信を防ぐ） */
@@ -511,9 +519,56 @@ async function deferOrDead(
   counts.deferred++;
 }
 
+async function buildCoachingMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
+  try {
+    const parsed = parseCoachingBatchId(batchId);
+    if (!parsed) {
+      return { kind: 'permanent', error: `invalid coaching batch id ${batchId}` };
+    }
+    const note = await getCoachingNote(env, parsed.kind, parsed.date);
+    if (!note) {
+      return { kind: 'permanent', error: `coaching note for ${batchId} not found` };
+    }
+    const base = `${origin}${dashboardBase(env)}`;
+    return { kind: 'ok', blocks: buildCoachingBlocks(note, `${base}?v=${note.date}`) };
+  } catch (e) {
+    console.error('[slack] failed to build coaching message for', batchId, e);
+    return { kind: 'transient', error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * AIコーチ講評の保存時に daily/both のSlack宛先へ配信バッチを投入し、即時処理する。
+ * batch_idのUNIQUE制約により同一kind・同日の再保存では再送しない
+ * （GitHub Actionsの失敗リラン等でのSlack二重投稿を防ぐ）。
+ */
+export async function queueCoachingNotification(
+  env: Env,
+  origin: string,
+  note: CoachingNote,
+): Promise<{ queued: number }> {
+  const destinations = parseDestinations(env).filter((d) => d.mode === 'daily' || d.mode === 'both');
+  if (destinations.length === 0) return { queued: 0 };
+  const batchId = coachingBatchId(note.kind, note.date);
+  const statements = destinations.map((d) =>
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO notification_batches (batch_id, destination_id, status, next_attempt_at) VALUES (?1, ?2, 'pending', datetime('now'))",
+    ).bind(batchId, d.id),
+  );
+  const results = await env.DB.batch(statements);
+  const queued = results.reduce((n, r) => n + r.meta.changes, 0);
+  if (queued > 0) {
+    await processNotificationBatches(env, origin);
+  }
+  return { queued };
+}
+
 async function buildBatchMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
   if (batchId.startsWith(DAILY_BATCH_PREFIX)) {
     return buildDailyDigestMessage(env, origin, batchId);
+  }
+  if (batchId.startsWith(COACHING_BATCH_PREFIX)) {
+    return buildCoachingMessage(env, origin, batchId);
   }
   try {
     const found = await getLatestForBatch(env, batchId);

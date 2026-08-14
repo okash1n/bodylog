@@ -64,6 +64,7 @@ export function parseToolJson<T>(result: Record<string, unknown>): T {
 /** 各テスト前に呼び、関連テーブルを全て空にする */
 export async function resetTables(): Promise<void> {
   const tables = [
+    'coaching_notes',
     'meal_logs',
     'menus',
     'exercise_sets',
