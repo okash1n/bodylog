@@ -14,6 +14,7 @@ import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { getDailySeries, getRawMeasurements, getSummary } from './queries';
+import { parseSetGoalInput, setGoal } from './goals';
 import { createMenu, listMealLogs, listMenus, logMeal, parseMealFields, parseMenuInput } from './meals';
 import {
   createExerciseMenu, listExerciseLogs, listExerciseMenus, logExercise,
@@ -34,6 +35,7 @@ function instructions(tzOffsetHours: number): string {
     '食事記録はsearch_menus / get_meal_logsで照会できる（記録・メニュー作成は認可済みエンドポイント/mcpのみ）。',
     'PFC（protein_g/fat_g/carbs_g）はグラム数。比率を出すときはP×4/F×9/C×4kcalに換算し3者の合計を100%として正規化すること。登録カロリーで割ってはいけない（食物繊維等の差で換算合計と登録kcalは一致せず、100%を超えうる）。',
     '運動記録はsearch_exercise_menus / get_exercise_logsで照会できる（有酸素は消費kcal、筋トレはセット明細と総ボリューム。記録・種目作成は/mcpのみ）。',
+    '目標（体重・脂肪量）はget_weight_summaryのgoalで確認でき、set_goalで設定・解除できる（ユーザーが明示的に依頼したときだけ変更すること）。',
   ].join('\n');
 }
 
@@ -281,6 +283,22 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
         const parsed = parseExerciseMenuInput(args);
         if (!parsed.ok) return errorResult(parsed.error);
         return jsonResult(await createExerciseMenu(env, parsed.value));
+      }),
+    );
+    server.registerTool(
+      'set_goal',
+      {
+        description:
+          '目標（体重・脂肪量kg）を設定・解除する。少なくとも一方を指定し、nullでその指標の目標を解除する。ユーザーが明示的に依頼したときだけ使うこと',
+        inputSchema: {
+          weight_kg: z.number().nullable().optional().describe('目標体重kg（nullで解除）'),
+          fat_mass_kg: z.number().nullable().optional().describe('目標脂肪量kg（nullで解除）'),
+        },
+      },
+      (args) => guarded('set_goal', async () => {
+        const parsed = parseSetGoalInput(args as Record<string, unknown>);
+        if (!parsed.ok) return errorResult(parsed.error);
+        return jsonResult(await setGoal(env, parsed.value));
       }),
     );
   }

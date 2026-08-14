@@ -105,6 +105,12 @@ export interface LatestMeasurement {
   fat_ratio: number | null; // 計測時点の参考値（通知の計測結果行にのみ表示）
 }
 
+/** 目標（体重・脂肪量、kg）。どちらも任意で未設定はnull。MCPツール set_goal で設定する */
+export interface Goal {
+  weight_kg: number | null;
+  fat_mass_kg: number | null;
+}
+
 /** /api/summary と MCP get_weight_summary のレスポンス */
 export interface WeightSummary {
   as_of: string; // ISO8601 UTC
@@ -116,6 +122,7 @@ export interface WeightSummary {
   baseline: { date: string | null; diff: MetricTriple }; // 最新計測 - 基準日値
   last_sync_at: string | null;
   intake_today: DailyIntake | null; // 今日のローカル日付の食事摂取量（記録がなければ null）
+  goal: Goal; // 目標（未設定の指標は null）
 }
 
 export interface ImportStatus {

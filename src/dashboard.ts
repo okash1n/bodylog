@@ -15,6 +15,7 @@ import { llmsTxt, openapiSpec } from './ai';
 import { serveMealsDaily, serveMealsList, serveMenus } from './meals-api';
 import { serveExerciseDaily, serveExerciseLogs, serveExerciseMenus } from './exercise-api';
 import { serveCoachingLatest } from './coaching';
+import { serveMetabolism } from './stats';
 import { registerWriteRoutes } from './writes';
 import { OG_RENDERER_VERSION, renderOgPng } from './og';
 import indexHtmlTpl from './dashboard/index.html';
@@ -224,6 +225,7 @@ export const READ_ROUTES: ReadonlyArray<readonly [string, Handler]> = [
   ['api/exercise/daily', serveExerciseDaily],
   ['api/exercise/logs', serveExerciseLogs],
   ['api/coaching/latest', serveCoachingLatest],
+  ['api/metabolism', serveMetabolism],
   ['llms.txt', serveLlmsTxt],
   ['openapi.json', serveOpenapi],
   ['og.png', serveOg],

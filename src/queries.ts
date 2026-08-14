@@ -8,6 +8,7 @@ import type {
   WeightSummary,
 } from './types';
 import { getIntakeForDay } from './meals';
+import { getGoal } from './goals';
 import { isoNow, localToday, offsetHours, tzModifier } from './util';
 
 function diffTriple(a: MetricTriple, b: MetricTriple): MetricTriple {
@@ -217,6 +218,7 @@ export async function getSummary(env: Env): Promise<WeightSummary> {
   const lastSync = await env.DB.prepare(`SELECT value FROM settings WHERE key = 'last_sync_at'`)
     .first<{ value: string | null }>();
   const intakeToday = await getIntakeForDay(env, localToday(env));
+  const goal = await getGoal(env);
   return {
     as_of: isoNow(),
     units: { mass: 'kg', fat_ratio: 'percent' },
@@ -227,6 +229,7 @@ export async function getSummary(env: Env): Promise<WeightSummary> {
     baseline: { date: stats?.baselineDate ?? null, diff: stats?.baselineDiff ?? nullTriple() },
     last_sync_at: lastSync?.value ?? null,
     intake_today: intakeToday,
+    goal,
   };
 }
 

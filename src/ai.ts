@@ -27,7 +27,7 @@ REST（GET）はすべて読み取り専用・認証不要。書き込みは /mc
 
 ## エンドポイント
 
-- GET ${root}/api/summary — 最新計測・直近7日平均・前週比・基準日比・今日の食事摂取量の要約。まずこれを見る
+- GET ${root}/api/summary — 最新計測・直近7日平均・前週比・基準日比・今日の食事摂取量・目標（goal）の要約。まずこれを見る
 - GET ${root}/api/measurements?days=90 — 日次平均と7日移動平均の時系列
 - GET ${root}/api/raw?days=30 — 計測1回ごとの明細（新しい順、最大2000件）
 - GET ${root}/api/status — データ同期状態（最終同期・最新計測日時）
@@ -38,6 +38,7 @@ REST（GET）はすべて読み取り専用・認証不要。書き込みは /mc
 - GET ${root}/api/exercise/logs?days=30 — 運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）
 - GET ${root}/api/exercise/daily?days=30 — 日次の基礎代謝（Katch-McArdle推定）・運動消費kcal・総ボリューム。期間内の全日を返す
 - GET ${root}/api/coaching/latest — AIコーチの最新講評（daily=日次 / weekly=週次。未生成はnull）
+- GET ${root}/api/metabolism — 直近28日の実測データからの実効消費カロリー推定（摂取記録が8割未満の期間はinsufficient_data）
 - GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（ChatGPTカスタムGPTのActionsにはこれを登録する）
 - POST ${root}/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール
 
@@ -141,6 +142,14 @@ export function openapiSpec(
                       last_sync_at: { type: ['string', 'null'], format: 'date-time' },
                       intake_today: {
                         oneOf: [{ $ref: '#/components/schemas/DailyIntake' }, { type: 'null' }],
+                      },
+                      goal: {
+                        type: 'object',
+                        description: '目標（体重・脂肪量kg）。未設定の指標はnull',
+                        properties: {
+                          weight_kg: { type: ['number', 'null'] },
+                          fat_mass_kg: { type: ['number', 'null'] },
+                        },
                       },
                     },
                   },
@@ -396,6 +405,42 @@ export function openapiSpec(
               },
             },
             '400': errorResponse,
+          },
+        },
+      },
+      '/api/metabolism': {
+        get: {
+          operationId: 'getMetabolism',
+          summary:
+            '直近28日の実測データからの実効消費カロリー推定（推定TDEE・モデル比の補正値）。' +
+            '摂取記録が8割未満・体重7日平均が両端で取れない・実日数14日未満のときは insufficient_data',
+          responses: {
+            '200': {
+              description: '実効代謝の推定（7700kcal/kg換算の近似。体組成変化が混ざるとブレる参考値）',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      status: { type: 'string', enum: ['ok', 'insufficient_data'] },
+                      window_days: { type: 'integer' },
+                      span_days: { type: 'integer' },
+                      intake_days: { type: 'integer' },
+                      avg_intake_kcal: { type: 'number' },
+                      weight_change_kg: { type: 'number' },
+                      estimated_tdee_kcal: { type: 'number' },
+                      model_tdee_kcal: { type: ['number', 'null'] },
+                      correction_kcal_per_day: { type: ['number', 'null'] },
+                      reason: {
+                        type: 'string',
+                        enum: ['intake_coverage', 'no_weight_avg', 'short_span'],
+                      },
+                    },
+                    required: ['status', 'window_days'],
+                  },
+                },
+              },
+            },
           },
         },
       },

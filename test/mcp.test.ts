@@ -86,7 +86,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     );
     expect(authed.status).toBe(200);
     const body = (await authed.json()) as RpcResponse;
-    expect((body.result as { tools: unknown[] }).tools).toHaveLength(11);
+    expect((body.result as { tools: unknown[] }).tools).toHaveLength(12);
   });
 
   it('initializeに応答する（ステートレス・セッションIDなし）', async () => {
@@ -102,7 +102,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     expect(serverInfo.name).toBe('bodylog');
   });
 
-  it('tools/list が読み取り7＋書き込み4ツールを返す', async () => {
+  it('tools/list が読み取り7＋書き込み5ツールを返す', async () => {
     const res = await rwRpc(token, 'tools/list');
     expect(res.status).toBe(200);
     const body = (await res.json()) as RpcResponse;
@@ -119,6 +119,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
       'log_meal',
       'search_exercise_menus',
       'search_menus',
+      'set_goal',
     ]);
   });
 
@@ -212,7 +213,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     const res = await rwRpc(token, 'tools/list', {}, { 'MCP-Protocol-Version': '2026-07-28' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as RpcResponse;
-    expect((body.result as { tools: unknown[] }).tools).toHaveLength(11);
+    expect((body.result as { tools: unknown[] }).tools).toHaveLength(12);
   });
 
   it('未対応バージョンヘッダ付きinitializeはサーバー対応版へ交渉される', async () => {
