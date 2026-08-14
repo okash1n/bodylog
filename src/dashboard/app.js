@@ -538,7 +538,7 @@
       // 摂取が未記録の日はnull=非表示。摂取/消費の内訳とPFCはツールチップに残す（_netParts）
       {
         type: 'bar',
-        label: 'カロリー',
+        label: 'カロリー収支',
         data: cals.net,
         yAxisID: 'yKcal',
         unit: 'kcal',
@@ -554,7 +554,7 @@
       },
       {
         type: 'line',
-        label: 'カロリー 7日平均',
+        label: 'カロリー収支 7日平均',
         data: cals.net7,
         yAxisID: 'yKcal',
         unit: 'kcal',
