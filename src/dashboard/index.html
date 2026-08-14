@@ -94,6 +94,17 @@
         <p class="card-sub">期間比 <span id="card-ffm-diff">—</span><span class="unit">kg</span></p>
       </article>
     </section>
+    <section id="ai-coach" class="ai-coach hidden" aria-label="AIコーチの講評">
+      <div class="ai-coach-head">
+        <h3>AIコーチ</h3>
+        <span id="ai-coach-daily-date" class="ai-coach-date"></span>
+      </div>
+      <p id="ai-coach-daily" class="ai-coach-body hidden"></p>
+      <details id="ai-coach-weekly" class="ai-coach-weekly hidden">
+        <summary>週次総括（<span id="ai-coach-weekly-date"></span>）</summary>
+        <p id="ai-coach-weekly-body" class="ai-coach-body"></p>
+      </details>
+    </section>
     <div class="controls-row">
       <div class="segment" role="group" aria-label="表示期間">
         <button type="button" class="segment-btn active" data-period="1m" aria-pressed="true">1M</button>

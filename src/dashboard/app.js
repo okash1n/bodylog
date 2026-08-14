@@ -167,6 +167,12 @@
     customTo: $('custom-to'),
     customApply: $('custom-apply'),
     customError: $('custom-error'),
+    aiCoach: $('ai-coach'),
+    aiCoachDaily: $('ai-coach-daily'),
+    aiCoachDailyDate: $('ai-coach-daily-date'),
+    aiCoachWeekly: $('ai-coach-weekly'),
+    aiCoachWeeklyBody: $('ai-coach-weekly-body'),
+    aiCoachWeeklyDate: $('ai-coach-weekly-date'),
   };
   var segButtons = Array.prototype.slice.call(document.querySelectorAll('.segment-btn[data-period]'));
   var modeButtons = Array.prototype.slice.call(document.querySelectorAll('.segment-btn[data-mode]'));
@@ -319,6 +325,36 @@
       .catch(function (err) {
         console.error('[dashboard] load failed', err);
         showState('error');
+      });
+  }
+
+  /* ---- AIコーチ講評（生成はサーバー側の定期ジョブ。ここは最新を表示するだけ） ---- */
+
+  function loadCoaching() {
+    fetch(BASE + 'api/coaching/latest')
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (latest) {
+        var daily = latest && latest.daily;
+        var weekly = latest && latest.weekly;
+        if (!daily && !weekly) return; // 未生成ならカードごと非表示のまま
+        if (daily) {
+          els.aiCoachDailyDate.textContent = daily.date;
+          els.aiCoachDaily.textContent = daily.content;
+        }
+        els.aiCoachDaily.classList.toggle('hidden', !daily);
+        if (weekly) {
+          els.aiCoachWeeklyDate.textContent = weekly.date;
+          els.aiCoachWeeklyBody.textContent = weekly.content;
+        }
+        els.aiCoachWeekly.classList.toggle('hidden', !weekly);
+        els.aiCoach.classList.remove('hidden');
+      })
+      .catch(function (err) {
+        // 取得失敗はカード非表示のまま（体重表示を巻き込まない）
+        console.error('[dashboard] coaching fetch failed', err);
       });
   }
 
@@ -1310,4 +1346,5 @@
   updateViewToggleLabel();
   updateOnlineState();
   loadData();
+  loadCoaching();
 })();

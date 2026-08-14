@@ -34,6 +34,8 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     expect(html).toContain('摂取 <span class="unit">kcal</span>');
     expect(html).toContain('消費 <span class="unit">kcal</span>');
     expect(html).toContain('ネット <span class="unit">kcal</span>');
+    // AIコーチ講評カード（初期状態はhidden、/api/coaching/latest取得後にJSが表示する）
+    expect(html).toContain('id="ai-coach"');
     // 食事履歴テーブル（直近50日）
     expect(html).toContain('id="meals-history"');
     expect(html).not.toContain('id="meals-list"');
