@@ -196,6 +196,7 @@ export interface ExerciseMenu {
   mets: number | null; // cardio用（安静時比の運動強度）
   muscle_group: string | null; // strength任意
   is_bodyweight: boolean; // strength用（自重種目）
+  bodyweight_factor: number; // 自重種目のボリューム補正係数 0〜1（既定1.0。実効重量=追加重量+体重×係数）
   note: string | null;
   archived: boolean;
   created_at: string;
@@ -208,6 +209,7 @@ export interface ExerciseMenuInput {
   mets?: number | null;
   muscle_group?: string | null;
   is_bodyweight?: boolean;
+  bodyweight_factor?: number;
   note?: string | null;
 }
 
@@ -228,6 +230,7 @@ export interface ExerciseLog {
   menu_name: string; // スナップショット
   note: string | null;
   is_bodyweight: boolean; // スナップショット
+  bodyweight_factor: number; // スナップショット（自重種目の体重算入係数）
   duration_min: number | null; // cardio
   mets: number | null; // cardio スナップショット
   body_weight_kg: number | null; // スナップショット（cardio消費kcal / 自重ボリューム用）

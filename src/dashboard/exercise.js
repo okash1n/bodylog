@@ -87,7 +87,7 @@
     if (m.category === 'cardio') return `有酸素 · ${m.mets} METs`;
     const parts = ['筋トレ'];
     if (m.muscle_group) parts.push(m.muscle_group);
-    if (m.is_bodyweight) parts.push('自重');
+    if (m.is_bodyweight) parts.push(m.bodyweight_factor != null && m.bodyweight_factor < 1 ? `自重×${m.bodyweight_factor}` : '自重');
     return parts.join(' · ');
   }
   function renderMenus() {
@@ -124,6 +124,7 @@
     $('exercise-menu-mets').hidden = !isCardio;
     $('exercise-menu-muscle').hidden = isCardio;
     $('exercise-menu-bw-wrap').hidden = isCardio;
+    $('exercise-menu-bwf-wrap').hidden = isCardio;
   }
   $('exercise-menu-category').addEventListener('change', syncMenuFormFields);
   syncMenuFormFields();
@@ -138,6 +139,11 @@
       const muscle = $('exercise-menu-muscle').value.trim();
       if (muscle) body.muscle_group = muscle;
       body.is_bodyweight = $('exercise-menu-bw').checked;
+      if (body.is_bodyweight) {
+        // 体重算入係数（0〜1）。未入力・不正値は既定1.0（サーバー側の既定に任せる）
+        const factor = parseFloat($('exercise-menu-bwf').value);
+        if (Number.isFinite(factor) && factor >= 0 && factor <= 1) body.bodyweight_factor = factor;
+      }
     }
     const res = await rw('exercise/menus', 'POST', body);
     if (!res.ok) return alert(`種目追加に失敗: ${(await res.json()).error ?? res.status}`);

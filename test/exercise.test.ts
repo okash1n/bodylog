@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   createExerciseMenu, deleteExerciseLog, getBodyWeightAt, getDailyExercise, getExerciseForDay,
-  listExerciseLogs, listExerciseMenus, logExercise, parseExerciseLogFields, parseExerciseMenuInput,
-  setExerciseMenuArchived, updateExerciseMenu,
+  getExerciseMenu, listExerciseLogs, listExerciseMenus, logExercise, parseExerciseLogFields,
+  parseExerciseMenuInput, setExerciseMenuArchived, updateExerciseMenu,
 } from '../src/exercise';
 import { insertMeasurement, localYmdDaysAgo, resetTables, testEnv } from './helpers';
 
@@ -40,6 +40,45 @@ describe('運動種目マスタ', () => {
     expect((await listExerciseMenus(testEnv, { category: 'strength' })).map((m) => m.name)).toEqual(['スクワット']);
     expect((await listExerciseMenus(testEnv, { category: 'strength', includeArchived: true })).length).toBe(2);
     expect((await listExerciseMenus(testEnv, { q: 'ラン' })).map((m) => m.name)).toEqual(['ランニング']);
+  });
+
+  it('自重係数: 実効重量=追加重量+体重×係数でボリュームが補正される', async () => {
+    await insertMeasurement({ grpid: 40001, measured_at: new Date().toISOString(), weight: 83.4 });
+    const circuit = await createExerciseMenu(testEnv, {
+      name: 'コアサーキット', category: 'strength', is_bodyweight: true, bodyweight_factor: 0.1,
+    });
+    expect(circuit.bodyweight_factor).toBe(0.1);
+    const log = await logExercise(testEnv, { menu_id: circuit.id, sets: [{ reps: 75 }] });
+    if ('error' in log) throw new Error(log.error);
+    expect(log.bodyweight_factor).toBe(0.1);
+    expect(log.sets[0].effective_weight_kg).toBeCloseTo(8.34, 5); // 83.4 × 0.1
+    expect(log.total_volume).toBeCloseTo(625.5, 3); // 75回 × 8.34
+
+    // 日次集計のボリュームも係数を反映する
+    const daily = await getDailyExercise(testEnv, localYmdDaysAgo(0), localYmdDaysAgo(0));
+    expect(daily[0].strength_volume).toBeCloseTo(625.5, 3);
+
+    // 係数未指定の自重種目は従来どおり全体重（既定1.0）
+    const pullup = await createExerciseMenu(testEnv, {
+      name: '懸垂', category: 'strength', is_bodyweight: true,
+    });
+    expect(pullup.bodyweight_factor).toBe(1);
+    const log2 = await logExercise(testEnv, { menu_id: pullup.id, sets: [{ reps: 10 }] });
+    if ('error' in log2) throw new Error(log2.error);
+    expect(log2.total_volume).toBeCloseTo(834, 3);
+
+    // PATCHで係数を変えても過去ログのスナップショットは変わらない
+    await updateExerciseMenu(testEnv, circuit.id, { bodyweight_factor: 0.5 });
+    expect((await getExerciseMenu(testEnv, circuit.id))?.bodyweight_factor).toBe(0.5);
+    const relisted = await listExerciseLogs(testEnv, localYmdDaysAgo(0), localYmdDaysAgo(0));
+    const kept = relisted.find((l) => l.id === log.id);
+    expect(kept?.total_volume).toBeCloseTo(625.5, 3);
+  });
+
+  it('自重係数のバリデーション: 範囲外は400相当のエラー', () => {
+    expect(parseExerciseMenuInput({ name: 'x', category: 'strength', is_bodyweight: true, bodyweight_factor: 1.5 }).ok).toBe(false);
+    expect(parseExerciseMenuInput({ name: 'x', category: 'strength', is_bodyweight: true, bodyweight_factor: -0.1 }).ok).toBe(false);
+    expect(parseExerciseMenuInput({ name: 'x', category: 'strength', is_bodyweight: true, bodyweight_factor: 0 }).ok).toBe(true);
   });
 
   it('種目一覧は利用頻度順（直近90日の記録回数→最終使用→名前）で返す', async () => {

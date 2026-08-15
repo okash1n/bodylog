@@ -276,6 +276,9 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
           mets: z.number().positive().optional().describe('有酸素の運動強度（安静時比）。cardioで必須'),
           muscle_group: z.string().optional().describe('筋トレの対象部位（任意）'),
           is_bodyweight: z.boolean().optional().describe('筋トレの自重種目（懸垂・腕立て等）'),
+          bodyweight_factor: z.number().min(0).max(1).optional().describe(
+            '自重種目のボリューム補正係数0〜1（既定1.0=全体重）。体の一部しか動かさない種目で下げる（例: コア系0.1〜0.4、腕立て0.65）',
+          ),
           note: z.string().optional(),
         },
       },

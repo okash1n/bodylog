@@ -25,6 +25,7 @@ const MAX_SETS = 50;
 interface MenuRow {
   id: string; name: string; category: string;
   mets: number | null; muscle_group: string | null; is_bodyweight: number;
+  bodyweight_factor: number;
   note: string | null; archived: number; created_at: string; updated_at: string;
 }
 
@@ -36,6 +37,7 @@ function toMenu(r: MenuRow): ExerciseMenu {
     mets: r.mets,
     muscle_group: r.muscle_group,
     is_bodyweight: r.is_bodyweight !== 0,
+    bodyweight_factor: r.bodyweight_factor,
     note: r.note,
     archived: r.archived !== 0,
     created_at: r.created_at,
@@ -44,20 +46,21 @@ function toMenu(r: MenuRow): ExerciseMenu {
 }
 
 const MENU_COLS =
-  'id, name, category, mets, muscle_group, is_bodyweight, note, archived, created_at, updated_at';
+  'id, name, category, mets, muscle_group, is_bodyweight, bodyweight_factor, note, archived, created_at, updated_at';
 
 export async function createExerciseMenu(env: Env, input: ExerciseMenuInput): Promise<ExerciseMenu> {
   const now = isoNow();
   const id = newId();
   await env.DB.prepare(
     `INSERT INTO exercise_menus (${MENU_COLS})
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8)`,
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?9)`,
   )
     .bind(
       id, input.name, input.category,
       input.category === 'cardio' ? input.mets ?? null : null,
       input.category === 'strength' ? input.muscle_group ?? null : null,
       input.category === 'strength' && input.is_bodyweight ? 1 : 0,
+      input.category === 'strength' && input.is_bodyweight ? input.bodyweight_factor ?? 1 : 1,
       input.note ?? null, now,
     )
     .run();
@@ -94,6 +97,7 @@ export async function updateExerciseMenu(
   if ('mets' in patch) push('mets', patch.mets ?? null);
   if ('muscle_group' in patch) push('muscle_group', patch.muscle_group ?? null);
   if ('is_bodyweight' in patch) push('is_bodyweight', patch.is_bodyweight ? 1 : 0);
+  if ('bodyweight_factor' in patch) push('bodyweight_factor', patch.bodyweight_factor ?? 1);
   if ('note' in patch) push('note', patch.note ?? null);
   if (sets.length === 0) return getExerciseMenu(env, id);
   binds.push(isoNow());
@@ -160,6 +164,7 @@ ORDER BY measured_at DESC LIMIT 1`,
 interface LogRow {
   id: string; menu_id: string; performed_at: string; category: string;
   menu_name: string; note: string | null; is_bodyweight: number;
+  bodyweight_factor: number;
   duration_min: number | null; mets: number | null; body_weight_kg: number | null;
   calories: number | null; created_at: string;
 }
@@ -169,10 +174,10 @@ interface SetRow {
 }
 
 const LOG_COLS =
-  'id, menu_id, performed_at, category, menu_name, note, is_bodyweight, duration_min, mets, body_weight_kg, calories, created_at';
+  'id, menu_id, performed_at, category, menu_name, note, is_bodyweight, bodyweight_factor, duration_min, mets, body_weight_kg, calories, created_at';
 
-function toSet(is_bodyweight: boolean, bodyWeight: number | null, r: SetRow): ExerciseSet {
-  const eff = (r.weight_kg ?? 0) + (is_bodyweight ? bodyWeight ?? 0 : 0);
+function toSet(is_bodyweight: boolean, bodyWeight: number | null, factor: number, r: SetRow): ExerciseSet {
+  const eff = (r.weight_kg ?? 0) + (is_bodyweight ? (bodyWeight ?? 0) * factor : 0);
   return {
     set_index: r.set_index,
     reps: r.reps,
@@ -184,7 +189,7 @@ function toSet(is_bodyweight: boolean, bodyWeight: number | null, r: SetRow): Ex
 
 function toLog(r: LogRow, setRows: SetRow[]): ExerciseLog {
   const isBw = r.is_bodyweight !== 0;
-  const sets = setRows.map((s) => toSet(isBw, r.body_weight_kg, s));
+  const sets = setRows.map((s) => toSet(isBw, r.body_weight_kg, r.bodyweight_factor, s));
   return {
     id: r.id,
     menu_id: r.menu_id,
@@ -193,6 +198,7 @@ function toLog(r: LogRow, setRows: SetRow[]): ExerciseLog {
     menu_name: r.menu_name,
     note: r.note,
     is_bodyweight: isBw,
+    bodyweight_factor: r.bodyweight_factor,
     duration_min: r.duration_min,
     mets: r.mets,
     body_weight_kg: r.body_weight_kg,
@@ -246,7 +252,7 @@ export async function logExercise(
     const calories = estimateCalories(menu.mets, bw, input.duration_min);
     await env.DB.prepare(
       `INSERT INTO exercise_logs (${LOG_COLS})
-VALUES (?1, ?2, ?3, 'cardio', ?4, ?5, 0, ?6, ?7, ?8, ?9, ?10)`,
+VALUES (?1, ?2, ?3, 'cardio', ?4, ?5, 0, 1, ?6, ?7, ?8, ?9, ?10)`,
     )
       .bind(id, menu.id, performedAt, menu.name, input.note ?? null,
             input.duration_min, menu.mets, bw, calories, isoNow())
@@ -265,9 +271,10 @@ VALUES (?1, ?2, ?3, 'cardio', ?4, ?5, 0, ?6, ?7, ?8, ?9, ?10)`,
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(
       `INSERT INTO exercise_logs (${LOG_COLS})
-VALUES (?1, ?2, ?3, 'strength', ?4, ?5, ?6, NULL, NULL, ?7, NULL, ?8)`,
+VALUES (?1, ?2, ?3, 'strength', ?4, ?5, ?6, ?7, NULL, NULL, ?8, NULL, ?9)`,
     ).bind(id, menu.id, performedAt, menu.name, input.note ?? null,
-           menu.is_bodyweight ? 1 : 0, bw, isoNow()),
+           menu.is_bodyweight ? 1 : 0, menu.is_bodyweight ? menu.bodyweight_factor : 1,
+           bw, isoNow()),
     ...rawSets.map((s, i) =>
       env.DB.prepare(
         'INSERT INTO exercise_sets (id, log_id, set_index, reps, weight_kg) VALUES (?1, ?2, ?3, ?4, ?5)',
@@ -334,7 +341,7 @@ GROUP BY 1`,
     env.DB.prepare(
       `SELECT date(l.performed_at, '${tz}') AS d,
        SUM(s.reps * (COALESCE(s.weight_kg, 0)
-         + CASE WHEN l.is_bodyweight = 1 THEN COALESCE(l.body_weight_kg, 0) ELSE 0 END)) AS strength_volume
+         + CASE WHEN l.is_bodyweight = 1 THEN COALESCE(l.body_weight_kg, 0) * l.bodyweight_factor ELSE 0 END)) AS strength_volume
 FROM exercise_logs l JOIN exercise_sets s ON s.log_id = l.id
 WHERE l.category = 'strength' AND date(l.performed_at, '${tz}') BETWEEN ?1 AND ?2
 GROUP BY 1`,
@@ -414,6 +421,9 @@ export function parseExerciseMenuInput(body: unknown): Parsed<ExerciseMenuInput>
   if (b.muscle_group !== undefined && b.muscle_group !== null && typeof b.muscle_group !== 'string') {
     return { ok: false, error: 'muscle_group must be a string' };
   }
+  if (!isValidBodyweightFactor(b.bodyweight_factor)) {
+    return { ok: false, error: 'bodyweight_factor must be a number between 0 and 1' };
+  }
   return {
     ok: true,
     value: {
@@ -425,9 +435,19 @@ export function parseExerciseMenuInput(body: unknown): Parsed<ExerciseMenuInput>
           ? b.muscle_group.trim()
           : null,
       is_bodyweight: category === 'strength' && b.is_bodyweight === true,
+      bodyweight_factor:
+        category === 'strength' && b.is_bodyweight === true && typeof b.bodyweight_factor === 'number'
+          ? b.bodyweight_factor
+          : 1,
       note: typeof b.note === 'string' ? b.note : null,
     },
   };
+}
+
+/** 0〜1の有限数か（undefinedは許可=既定1.0） */
+function isValidBodyweightFactor(v: unknown): boolean {
+  if (v === undefined) return true;
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
 }
 
 export function parseExerciseMenuPatch(body: unknown): Parsed<Partial<Omit<ExerciseMenuInput, 'category'>>> {
@@ -453,6 +473,12 @@ export function parseExerciseMenuPatch(body: unknown): Parsed<Partial<Omit<Exerc
   if ('is_bodyweight' in b) {
     if (typeof b.is_bodyweight !== 'boolean') return { ok: false, error: 'is_bodyweight must be boolean' };
     out.is_bodyweight = b.is_bodyweight;
+  }
+  if ('bodyweight_factor' in b) {
+    if (b.bodyweight_factor !== null && !isValidBodyweightFactor(b.bodyweight_factor)) {
+      return { ok: false, error: 'bodyweight_factor must be a number between 0 and 1' };
+    }
+    out.bodyweight_factor = typeof b.bodyweight_factor === 'number' ? b.bodyweight_factor : 1;
   }
   if ('note' in b) {
     if (b.note === null) out.note = null;

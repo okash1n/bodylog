@@ -241,6 +241,7 @@
         <input id="exercise-menu-mets" type="number" placeholder="METs" min="0.5" max="30" step="0.1">
         <input id="exercise-menu-muscle" placeholder="部位(任意)" hidden>
         <label id="exercise-menu-bw-wrap" class="calorie-toggle" hidden><input id="exercise-menu-bw" type="checkbox"> 自重</label>
+        <label id="exercise-menu-bwf-wrap" class="calorie-toggle" hidden title="体重をどれだけ負荷に算入するか（懸垂1.0 / 腕立て0.65 / コア系0.1〜0.4）">係数 <input id="exercise-menu-bwf" type="number" min="0" max="1" step="0.05" value="1" style="width:4.5em"></label>
         <button type="submit">追加</button>
       </form>
       <ul id="exercise-menus-list"></ul>

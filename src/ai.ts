@@ -589,6 +589,10 @@ export function openapiSpec(
             mets: { type: ['number', 'null'], description: '有酸素の運動強度（安静時比）' },
             muscle_group: { type: ['string', 'null'] },
             is_bodyweight: { type: 'boolean' },
+            bodyweight_factor: {
+              type: 'number',
+              description: '自重種目のボリューム補正係数0〜1（実効重量=追加重量+体重×係数。既定1.0）',
+            },
             note: { type: ['string', 'null'] },
             archived: { type: 'boolean' },
             created_at: { type: 'string', format: 'date-time' },
@@ -598,7 +602,7 @@ export function openapiSpec(
         ExerciseSet: {
           type: 'object',
           description:
-            '筋トレ1セット。effective_weight_kgは自重種目なら記録時の体重を加算した実効重量、volume=reps×実効重量',
+            '筋トレ1セット。effective_weight_kgは自重種目なら記録時の体重×bodyweight_factorを加算した実効重量、volume=reps×実効重量',
           properties: {
             set_index: { type: 'integer' },
             reps: { type: 'integer' },
@@ -620,6 +624,7 @@ export function openapiSpec(
             menu_name: { type: 'string' },
             note: { type: ['string', 'null'] },
             is_bodyweight: { type: 'boolean' },
+            bodyweight_factor: { type: 'number' },
             duration_min: { type: ['number', 'null'] },
             mets: { type: ['number', 'null'] },
             body_weight_kg: { type: ['number', 'null'] },
