@@ -31,10 +31,10 @@ REST（GET）はすべて読み取り専用・認証不要。書き込みは /mc
 - GET ${root}/api/measurements?days=90 — 日次平均と7日移動平均の時系列
 - GET ${root}/api/raw?days=30 — 計測1回ごとの明細（新しい順、最大2000件）
 - GET ${root}/api/status — データ同期状態（最終同期・最新計測日時）
-- GET ${root}/api/menus?q= — 食事メニュー（マスタ）一覧・検索
+- GET ${root}/api/menus?q= — 食事メニュー（マスタ）一覧・検索（利用頻度順）
 - GET ${root}/api/meals?days=7 — 食事記録（メニュー名・倍率・実効kcal/PFC付き）
 - GET ${root}/api/meals/daily?days=30 — 日次の摂取カロリー・PFC合計
-- GET ${root}/api/exercise/menus?q=&category= — 運動種目（マスタ）一覧・検索。category=cardio|strengthで絞れる
+- GET ${root}/api/exercise/menus?q=&category= — 運動種目（マスタ）一覧・検索（利用頻度順）。category=cardio|strengthで絞れる
 - GET ${root}/api/exercise/logs?days=30 — 運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）
 - GET ${root}/api/exercise/daily?days=30 — 日次の基礎代謝（Katch-McArdle推定）・運動消費kcal・総ボリューム。期間内の全日を返す
 - GET ${root}/api/coaching/latest — AIコーチの最新講評（daily=日次 / weekly=週次。未生成はnull）
@@ -238,7 +238,7 @@ export function openapiSpec(
       '/api/menus': {
         get: {
           operationId: 'getMenus',
-          summary: '食事メニュー（マスタ）一覧・検索',
+          summary: '食事メニュー（マスタ）一覧・検索（利用頻度順: 直近90日の記録回数→最終使用→名前）',
           parameters: [
             {
               name: 'q',
@@ -321,7 +321,7 @@ export function openapiSpec(
       '/api/exercise/menus': {
         get: {
           operationId: 'getExerciseMenus',
-          summary: '運動種目（マスタ）一覧・検索',
+          summary: '運動種目（マスタ）一覧・検索（利用頻度順: 直近90日の記録回数→最終使用→名前）',
           parameters: [
             {
               name: 'q',

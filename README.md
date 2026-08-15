@@ -224,10 +224,10 @@ npx wrangler d1 execute bodylog --remote \
 | `GET {base}/api/raw?from=&to=` または `?days=N` | 計測明細 JSON（1計測=1行、新しい順） |
 | `GET {base}/api/status` | 初期インポート状況・最終同期時刻 |
 | `GET {base}/api/summary` | 要約 JSON（最新計測・直近7日平均・前週比・基準日比・今日の食事摂取量・最終同期） |
-| `GET {base}/api/menus?q=` | 食事メニュー（マスタ）一覧・検索。認証不要 |
+| `GET {base}/api/menus?q=` | 食事メニュー（マスタ）一覧・検索（利用頻度順: 直近90日の記録回数→最終使用→名前）。認証不要 |
 | `GET {base}/api/meals?from=&to=` または `?days=N` | 食事記録 JSON（メニュー名・倍率・実効kcal/PFC付き）。認証不要 |
 | `GET {base}/api/meals/daily?from=&to=` または `?days=N` | 日次の摂取カロリー・PFC合計 JSON。認証不要 |
-| `GET {base}/api/exercise/menus?q=&category=` | 運動種目（マスタ）一覧・検索。`category=cardio\|strength` で絞り込み。認証不要 |
+| `GET {base}/api/exercise/menus?q=&category=` | 運動種目（マスタ）一覧・検索（利用頻度順）。`category=cardio\|strength` で絞り込み。認証不要 |
 | `GET {base}/api/exercise/logs?from=&to=` または `?days=N` | 運動記録 JSON（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）。認証不要 |
 | `GET {base}/api/exercise/daily?from=&to=` または `?days=N` | 日次の基礎代謝（BMR推定）・運動消費kcal・総ボリューム JSON。期間内の全日を返す（運動が無い日も含む）。認証不要 |
 | `GET {base}/api/coaching/latest` | AIコーチの最新講評（daily=日次 / weekly=週次。未生成は null）。認証不要 |

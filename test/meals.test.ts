@@ -41,6 +41,21 @@ describe('メニューCRUD', () => {
     expect((await listMenus(testEnv, { q: 'a_b' })).map((m) => m.name)).toEqual(['a_b']);
   });
 
+  it('一覧は利用頻度順（直近90日の記録回数→最終使用→名前）で返す', async () => {
+    const a = await createMenu(testEnv, { name: 'あまり食べない', calories: 100 });
+    const b = await createMenu(testEnv, { name: 'よく食べる', calories: 200 });
+    const c = await createMenu(testEnv, { name: 'たまに食べる', calories: 300 });
+    void a;
+    await logMeal(testEnv, { menu_id: b.id });
+    await logMeal(testEnv, { menu_id: b.id });
+    await logMeal(testEnv, { menu_id: c.id });
+    expect((await listMenus(testEnv, {})).map((m) => m.name)).toEqual([
+      'よく食べる',
+      'たまに食べる',
+      'あまり食べない',
+    ]);
+  });
+
   it('存在しないIDの更新はnull、archive切替はfalseを返す', async () => {
     expect(await updateMenu(testEnv, 'nope', { name: 'x', calories: 1 })).toBeNull();
     expect(await setMenuArchived(testEnv, 'nope', true)).toBe(false);

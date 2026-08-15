@@ -121,8 +121,14 @@ export async function listExerciseMenus(
     conds.push(`name LIKE ?${binds.length} ESCAPE '\\'`);
   }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  // 利用頻度順（食事メニューと同じ規則）: 直近90日の記録回数 → 最終使用 → 名前
   const res = await env.DB.prepare(
-    `SELECT ${MENU_COLS} FROM exercise_menus ${where} ORDER BY name LIMIT 500`,
+    `SELECT ${MENU_COLS} FROM exercise_menus ${where}
+ORDER BY (SELECT COUNT(*) FROM exercise_logs l
+          WHERE l.menu_id = exercise_menus.id AND l.performed_at >= datetime('now', '-90 days')) DESC,
+         (SELECT MAX(performed_at) FROM exercise_logs l WHERE l.menu_id = exercise_menus.id) DESC,
+         name
+LIMIT 500`,
   )
     .bind(...binds)
     .all<MenuRow>();

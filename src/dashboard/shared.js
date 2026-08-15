@@ -191,15 +191,15 @@
     const computeCandidates = () => {
       const q = opts.input.value.trim();
       const scored = [];
+      let idx = 0;
       for (const m of opts.getItems()) {
         const r = fuzzyMatch(m.name, q);
-        if (r) scored.push({ m, ...r });
+        if (r) scored.push({ m, idx, ...r });
+        idx++;
       }
-      scored.sort(
-        q
-          ? (a, b) => b.score - a.score || [...a.m.name].length - [...b.m.name].length
-          : (a, b) => a.m.name.localeCompare(b.m.name, 'ja'),
-      );
+      // APIは利用頻度順（直近90日の記録回数）で返すため、クエリなしはその順のまま出す。
+      // クエリありはあいまい一致スコア優先、同点は頻度順（元の並び idx）で崩さない
+      if (q) scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
       return scored.slice(0, CAND_LIMIT);
     };
 

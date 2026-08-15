@@ -42,6 +42,22 @@ describe('運動種目マスタ', () => {
     expect((await listExerciseMenus(testEnv, { q: 'ラン' })).map((m) => m.name)).toEqual(['ランニング']);
   });
 
+  it('種目一覧は利用頻度順（直近90日の記録回数→最終使用→名前）で返す', async () => {
+    // 有酸素の記録は消費kcal算出用の体重スナップショットが必須
+    await insertMeasurement({ grpid: 30001, measured_at: new Date().toISOString(), weight: 80 });
+    await createExerciseMenu(testEnv, { name: 'やらない種目', category: 'strength' });
+    const run = await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    const squat = await createExerciseMenu(testEnv, { name: 'スクワット', category: 'strength' });
+    expect('error' in (await logExercise(testEnv, { menu_id: run.id, duration_min: 30 }))).toBe(false);
+    expect('error' in (await logExercise(testEnv, { menu_id: run.id, duration_min: 20 }))).toBe(false);
+    expect('error' in (await logExercise(testEnv, { menu_id: squat.id, sets: [{ reps: 10 }] }))).toBe(false);
+    expect((await listExerciseMenus(testEnv, {})).map((m) => m.name)).toEqual([
+      'ランニング',
+      'スクワット',
+      'やらない種目',
+    ]);
+  });
+
   it('種目のPATCHは部分更新、archive切替できる', async () => {
     const menu = await createExerciseMenu(testEnv, { name: 'ベンチ', category: 'strength', muscle_group: '胸' });
     const updated = await updateExerciseMenu(testEnv, menu.id, { name: 'ベンチプレス' });

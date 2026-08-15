@@ -134,7 +134,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
   server.registerTool(
     'search_menus',
     {
-      description: '登録済みの食事メニュー（マスタ）を名前の部分一致で検索する',
+      description: '登録済みの食事メニュー（マスタ）を名前の部分一致で検索する。結果は利用頻度順（直近90日の記録回数→最終使用→名前）',
       inputSchema: { q: z.string().optional().describe('検索語（省略時は全件、最大500件）') },
       annotations: { readOnlyHint: true },
     },
@@ -157,7 +157,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
   server.registerTool(
     'search_exercise_menus',
     {
-      description: '登録済みの運動種目（マスタ）を名前の部分一致で検索する。categoryで有酸素/筋トレを絞れる',
+      description: '登録済みの運動種目（マスタ）を名前の部分一致で検索する。categoryで有酸素/筋トレを絞れる。結果は利用頻度順（直近90日の記録回数→最終使用→名前）',
       inputSchema: {
         q: z.string().optional().describe('検索語（省略時は全件、最大500件）'),
         category: z.enum(['cardio', 'strength']).optional().describe('cardio=有酸素 / strength=筋トレ'),

@@ -80,8 +80,15 @@ export async function listMenus(
     conds.push(`name LIKE ?${binds.length} ESCAPE '\\'`);
   }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  // 利用頻度順: 直近90日の記録回数 → 最終使用が新しい順 → 名前順。
+  // ドロップダウン・MCP検索の候補が「よく使うものから」並ぶようにする
   const res = await env.DB.prepare(
-    `SELECT ${MENU_COLS} FROM menus ${where} ORDER BY name LIMIT 500`,
+    `SELECT ${MENU_COLS} FROM menus ${where}
+ORDER BY (SELECT COUNT(*) FROM meal_logs l
+          WHERE l.menu_id = menus.id AND l.eaten_at >= datetime('now', '-90 days')) DESC,
+         (SELECT MAX(eaten_at) FROM meal_logs l WHERE l.menu_id = menus.id) DESC,
+         name
+LIMIT 500`,
   )
     .bind(...binds)
     .all<MenuRow>();
