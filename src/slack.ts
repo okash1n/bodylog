@@ -169,6 +169,18 @@ export function formatIntakeLine(intake: DailyIntake | null): string | null {
   if (intake.protein_g != null) pfc.push(`P${r1(intake.protein_g)}`);
   if (intake.fat_g != null) pfc.push(`F${r1(intake.fat_g)}`);
   if (intake.carbs_g != null) pfc.push(`C${r1(intake.carbs_g)}`);
+  // PFC比率: エネルギー換算(4/9/4)して3者内で正規化（登録kcal割りは食物繊維等でずれるため不可）。
+  // 3値が揃う日だけ出す（部分合計同士の比率はミスリードになる）
+  if (intake.protein_g != null && intake.fat_g != null && intake.carbs_g != null) {
+    const pe = intake.protein_g * 4;
+    const fe = intake.fat_g * 9;
+    const ce = intake.carbs_g * 4;
+    const te = pe + fe + ce;
+    if (te > 0) {
+      const pct = (x: number): number => Math.round((x / te) * 100);
+      pfc.push(`= ${pct(pe)}:${pct(fe)}:${pct(ce)}%`);
+    }
+  }
   const macros = pfc.length ? ` (${pfc.join(' ')})` : '';
   return `*摂取* : ${Math.round(intake.calories)} kcal${macros}`;
 }

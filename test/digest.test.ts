@@ -228,10 +228,10 @@ describe('digest_time（送信時刻設定）', () => {
 });
 
 describe('ダイジェストの摂取カロリー行', () => {
-  it('カロリー+PFCを整形する', () => {
+  it('カロリー+PFC+比率（4/9/4換算・3者内正規化）を整形する', () => {
     expect(
       formatIntakeLine({ d: '2026-08-12', count: 3, calories: 1850.4, protein_g: 90.2, fat_g: 55, carbs_g: 210 }),
-    ).toBe('*摂取* : 1850 kcal (P90.2 F55 C210)');
+    ).toBe('*摂取* : 1850 kcal (P90.2 F55 C210 = 21:29:50%)');
   });
   it('PFCが全てnullならカロリーのみ', () => {
     expect(
