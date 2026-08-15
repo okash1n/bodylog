@@ -198,12 +198,12 @@ export function formatBurnLine(exercise: DailyExercise | null): string | null {
   return `*消費* : ${Math.round(total)} kcal${detail}`;
 }
 
-/** ネット行 = 摂取 − 総消費（基礎代謝＋運動）。摂取と消費の両方がある日だけ出す */
+/** カロリー収支行 = 摂取 − 総消費（基礎代謝＋運動）。摂取と消費の両方がある日だけ出す */
 export function formatNetLine(intake: DailyIntake | null, exercise: DailyExercise | null): string | null {
   if (!intake) return null;
   const total = totalBurn(exercise);
   if (total == null) return null;
-  return `*ネット* : ${Math.round(intake.calories - total)} kcal (摂取−消費)`;
+  return `*カロリー収支* : ${Math.round(intake.calories - total)} kcal`;
 }
 
 /** 運動内訳行 = 筋トレ件数・総ボリューム / 有酸素件数・消費kcal。どちらも無い日は出さない */
@@ -262,7 +262,7 @@ export function buildDigestBlocks(input: {
     blocks.push(section(`*基準日（${stats.baselineDate}）からの変化*\n${baselineLine}`));
   }
 
-  // 当日の摂取 → 消費(有酸素) → ネット の順。それぞれ該当データがある日だけ出す
+  // 当日の摂取 → 消費 → カロリー収支 → 運動内訳 の順。それぞれ該当データがある日だけ出す
   const energyLines = [
     formatIntakeLine(input.intake ?? null),
     formatBurnLine(input.exercise ?? null),

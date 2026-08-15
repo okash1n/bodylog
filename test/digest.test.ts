@@ -108,7 +108,7 @@ describe('runDailyDigest', () => {
     const body = stub.requests({ host: SLACK_HOST })[0].body;
     expect(body).toContain('*摂取* : 700 kcal');
     expect(body).toContain('*消費* : 2045 kcal (基礎 1709 + 運動 336)');
-    expect(body).toContain('*ネット* : -1345 kcal (摂取−消費)');
+    expect(body).toContain('*カロリー収支* : -1345 kcal');
   });
 
   it('当日のAI講評が保存済みならダイジェスト本文に差し込まれる', async () => {
@@ -269,8 +269,8 @@ describe('ダイジェストの消費（基礎+運動）・ネット行', () => 
     expect(formatBurnLine(ex(null, null, 1200))).toBeNull();
   });
   it('ネットは摂取−総消費（赤字は負値で出る）', () => {
-    expect(formatNetLine(intake(1850), ex(1750, 320, null))).toBe('*ネット* : -220 kcal (摂取−消費)');
-    expect(formatNetLine(intake(1850), ex(null, 320, null))).toBe('*ネット* : 1530 kcal (摂取−消費)');
+    expect(formatNetLine(intake(1850), ex(1750, 320, null))).toBe('*カロリー収支* : -220 kcal');
+    expect(formatNetLine(intake(1850), ex(null, 320, null))).toBe('*カロリー収支* : 1530 kcal');
   });
   it('ネットは摂取と消費の両方がある日だけ出す', () => {
     expect(formatNetLine(null, ex(1750, 320, null))).toBeNull();
