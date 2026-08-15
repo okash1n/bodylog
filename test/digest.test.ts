@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/types';
 import {
   formatBurnLine,
+  formatExerciseLine,
   formatIntakeLine,
   formatNetLine,
   immediateDestinations,
@@ -275,5 +276,16 @@ describe('ダイジェストの消費（基礎+運動）・ネット行', () => 
     expect(formatNetLine(null, ex(1750, 320, null))).toBeNull();
     expect(formatNetLine(intake(1850), null)).toBeNull();
     expect(formatNetLine(intake(1850), ex(null, 0, null))).toBeNull();
+  });
+
+  it('運動内訳行: 筋トレ件数・ボリューム / 有酸素件数・kcal。どちらも無い日は出さない', () => {
+    expect(formatExerciseLine({ d: '2026-08-15', bmr: 1700, calories_burned: 417.4, strength_volume: 6463.2, cardio_count: 3, strength_count: 13 }))
+      .toBe('*運動* : 筋トレ 13件 (Vol 6463) | 有酸素 3件 (417 kcal)');
+    expect(formatExerciseLine({ d: '2026-08-15', bmr: 1700, calories_burned: null, strength_volume: 1200, cardio_count: 0, strength_count: 2 }))
+      .toBe('*運動* : 筋トレ 2件 (Vol 1200)');
+    expect(formatExerciseLine({ d: '2026-08-15', bmr: 1700, calories_burned: 300, strength_volume: null, cardio_count: 1, strength_count: 0 }))
+      .toBe('*運動* : 有酸素 1件 (300 kcal)');
+    expect(formatExerciseLine({ d: '2026-08-15', bmr: 1700, calories_burned: null, strength_volume: null, cardio_count: 0, strength_count: 0 })).toBeNull();
+    expect(formatExerciseLine(null)).toBeNull();
   });
 });

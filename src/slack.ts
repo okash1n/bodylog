@@ -206,6 +206,22 @@ export function formatNetLine(intake: DailyIntake | null, exercise: DailyExercis
   return `*ネット* : ${Math.round(intake.calories - total)} kcal (摂取−消費)`;
 }
 
+/** 運動内訳行 = 筋トレ件数・総ボリューム / 有酸素件数・消費kcal。どちらも無い日は出さない */
+export function formatExerciseLine(exercise: DailyExercise | null): string | null {
+  if (!exercise) return null;
+  const parts: string[] = [];
+  if (exercise.strength_count > 0) {
+    const vol = exercise.strength_volume != null ? ` (Vol ${Math.round(exercise.strength_volume)})` : '';
+    parts.push(`筋トレ ${exercise.strength_count}件${vol}`);
+  }
+  if (exercise.cardio_count > 0) {
+    const kcal = exercise.calories_burned != null ? ` (${Math.round(exercise.calories_burned)} kcal)` : '';
+    parts.push(`有酸素 ${exercise.cardio_count}件${kcal}`);
+  }
+  if (parts.length === 0) return null;
+  return `*運動* : ${parts.join(' | ')}`;
+}
+
 /** 日次ダイジェスト（その日の平均3値 + 7日平均比 + 基準日比 + 当日摂取） */
 export function buildDigestBlocks(input: {
   date: string;
@@ -251,6 +267,7 @@ export function buildDigestBlocks(input: {
     formatIntakeLine(input.intake ?? null),
     formatBurnLine(input.exercise ?? null),
     formatNetLine(input.intake ?? null, input.exercise ?? null),
+    formatExerciseLine(input.exercise ?? null),
   ].filter((l): l is string => l !== null);
   if (energyLines.length) blocks.push(section(energyLines.join('\n')));
 
