@@ -13,13 +13,7 @@ import { LIMITS, assertSecret, dashboardBase, isoNow, offsetHours, ymdWithOffset
 import { getDailySeries, getDayMeasurementCount, getLatestForBatch, getNotificationStats } from './queries';
 import { getIntakeForDay } from './meals';
 import { getExerciseForDay } from './exercise';
-import {
-  buildCoachingBlocks,
-  COACHING_BATCH_PREFIX,
-  coachingBatchId,
-  getCoachingNote,
-  parseCoachingBatchId,
-} from './coaching';
+import { coachingDigestBlocks, getCoachingNote } from './coaching';
 import type { CoachingNote } from './coaching';
 import { OG_RENDERER_VERSION } from './og';
 
@@ -222,6 +216,7 @@ export function buildDigestBlocks(input: {
   ogImageUrl?: string;
   intake?: DailyIntake | null;
   exercise?: DailyExercise | null;
+  coaching?: CoachingNote | null;
 }): unknown[] {
   const { date, count, day, stats, dashboardUrl, ogImageUrl } = input;
 
@@ -258,6 +253,9 @@ export function buildDigestBlocks(input: {
     formatNetLine(input.intake ?? null, input.exercise ?? null),
   ].filter((l): l is string => l !== null);
   if (energyLines.length) blocks.push(section(energyLines.join('\n')));
+
+  // 当日のAI講評（23:30の生成ジョブが保存済みのときだけ。無ければ数値のみで送る）
+  if (input.coaching) blocks.push(...coachingDigestBlocks(input.coaching));
 
   blocks.push(section(`ダッシュボード: ${dashboardUrl}`));
   if (ogImageUrl) {
@@ -369,11 +367,12 @@ export async function runDailyDigest(env: Env, origin: string): Promise<{ queued
 async function buildDailyDigestMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
   try {
     const date = batchId.slice(DAILY_BATCH_PREFIX.length);
-    const [series, count, intake, exercise] = await Promise.all([
+    const [series, count, intake, exercise, coaching] = await Promise.all([
       getDailySeries(env, date, date),
       getDayMeasurementCount(env, date),
       getIntakeForDay(env, date),
       getExerciseForDay(env, date),
+      getCoachingNote(env, 'daily', date),
     ]);
     const day = series[series.length - 1];
     if (!day) {
@@ -399,6 +398,7 @@ async function buildDailyDigestMessage(env: Env, origin: string, batchId: string
         stats,
         intake,
         exercise,
+        coaching,
         dashboardUrl: `${base}?v=${date}`,
         ogImageUrl: `${base}og.png?v=${v}`,
       }),
@@ -519,53 +519,9 @@ async function deferOrDead(
   counts.deferred++;
 }
 
-async function buildCoachingMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
-  try {
-    const parsed = parseCoachingBatchId(batchId);
-    if (!parsed) {
-      return { kind: 'permanent', error: `invalid coaching batch id ${batchId}` };
-    }
-    const note = await getCoachingNote(env, parsed.kind, parsed.date);
-    if (!note) {
-      return { kind: 'permanent', error: `coaching note for ${batchId} not found` };
-    }
-    const base = `${origin}${dashboardBase(env)}`;
-    return { kind: 'ok', blocks: buildCoachingBlocks(note, `${base}?v=${note.date}`) };
-  } catch (e) {
-    console.error('[slack] failed to build coaching message for', batchId, e);
-    return { kind: 'transient', error: e instanceof Error ? e.message : String(e) };
-  }
-}
-
-/**
- * AIコーチ講評の保存時に daily/both のSlack宛先へ配信バッチを投入する。
- * batch_idのUNIQUE制約により同一kind・同日の再保存では再送しない
- * （GitHub Actionsの失敗リラン等でのSlack二重投稿を防ぐ）。
- * 送信自体は呼び出し側が waitUntil で processNotificationBatches を実行する
- * （リクエストパスで同期送信するとクライアントのタイムアウトと衝突するため）。
- */
-export async function queueCoachingNotification(
-  env: Env,
-  note: CoachingNote,
-): Promise<{ queued: number }> {
-  const destinations = parseDestinations(env).filter((d) => d.mode === 'daily' || d.mode === 'both');
-  if (destinations.length === 0) return { queued: 0 };
-  const batchId = coachingBatchId(note.kind, note.date);
-  const statements = destinations.map((d) =>
-    env.DB.prepare(
-      "INSERT OR IGNORE INTO notification_batches (batch_id, destination_id, status, next_attempt_at) VALUES (?1, ?2, 'pending', datetime('now'))",
-    ).bind(batchId, d.id),
-  );
-  const results = await env.DB.batch(statements);
-  return { queued: results.reduce((n, r) => n + r.meta.changes, 0) };
-}
-
 async function buildBatchMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
   if (batchId.startsWith(DAILY_BATCH_PREFIX)) {
     return buildDailyDigestMessage(env, origin, batchId);
-  }
-  if (batchId.startsWith(COACHING_BATCH_PREFIX)) {
-    return buildCoachingMessage(env, origin, batchId);
   }
   try {
     const found = await getLatestForBatch(env, batchId);

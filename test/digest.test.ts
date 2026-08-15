@@ -13,6 +13,8 @@ import {
 import type { DailyExercise, DailyIntake } from '../src/types';
 import { createMenu, logMeal } from '../src/meals';
 import { createExerciseMenu, logExercise } from '../src/exercise';
+import { upsertCoachingNote } from '../src/coaching';
+import { offsetHours, ymdWithOffset } from '../src/util';
 import { insertMeasurement, resetTables, setSetting, stubFetch, testEnv } from './helpers';
 
 const SLACK_HOST = 'hooks.slack.com';
@@ -106,6 +108,32 @@ describe('runDailyDigest', () => {
     expect(body).toContain('*摂取* : 700 kcal');
     expect(body).toContain('*消費* : 2045 kcal (基礎 1709 + 運動 336)');
     expect(body).toContain('*ネット* : -1345 kcal (摂取−消費)');
+  });
+
+  it('当日のAI講評が保存済みならダイジェスト本文に差し込まれる', async () => {
+    await insertMeasurement({
+      grpid: 9401,
+      measured_at: new Date().toISOString(),
+      weight: 82.0,
+      fat_free_mass: 62.0,
+    });
+    await upsertCoachingNote(testEnv, {
+      kind: 'daily',
+      date: ymdWithOffset(new Date().toISOString(), offsetHours(testEnv)),
+      content: '今日の総括テスト。明日はタンパク質を増やす。',
+      model: null,
+    });
+    const stub = stubFetch().on({
+      host: SLACK_HOST,
+      path: SLACK_PATH,
+      method: 'POST',
+      times: 1,
+      reply: () => new Response('ok'),
+    });
+    await runDailyDigest(DAILY_ENV, ORIGIN);
+    const body = stub.requests({ host: SLACK_HOST })[0].body;
+    expect(body).toContain('AIコーチ');
+    expect(body).toContain('今日の総括テスト');
   });
 
   it('当日の計測がなければ何も送らない', async () => {

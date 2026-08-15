@@ -11,7 +11,6 @@
  *   CLAUDE_CODE_OAUTH_TOKEN 必須（SDKが参照）。`claude setup-token` で発行
  *   COACHING_MODEL          任意。既定 'opus'（Claude Codeの既定Opusに追従する別名）
  *   COACHING_TZ_OFFSET_HOURS 任意。既定 9（JST）
- *   KIND                    任意。'daily' | 'weekly' | ''/'auto'（自動判定）
  *
  * 注意: パブリックリポのActionsログは公開されるため、講評本文や取得データはログに出さない。
  */
@@ -40,20 +39,6 @@ const tzOffsetHours = Number.isFinite(Number(process.env.COACHING_TZ_OFFSET_HOUR
 function localYmd(daysAgo = 0) {
   const t = Date.now() + tzOffsetHours * 3_600_000 - daysAgo * 86_400_000;
   return new Date(t).toISOString().slice(0, 10);
-}
-
-/** ローカル曜日（0=日 ... 1=月） */
-function localWeekday() {
-  return new Date(Date.now() + tzOffsetHours * 3_600_000).getUTCDay();
-}
-
-function resolveKind() {
-  const argIdx = process.argv.indexOf('--kind');
-  const raw = (argIdx >= 0 ? process.argv[argIdx + 1] : process.env.KIND) || 'auto';
-  if (raw === 'daily' || raw === 'weekly') return raw;
-  if (raw === 'auto' || raw === '') return localWeekday() === 1 ? 'weekly' : 'daily';
-  console.error(`invalid kind: ${raw} (daily | weekly | auto)`);
-  process.exit(1);
 }
 
 async function getJson(path) {
@@ -128,34 +113,26 @@ const COMMON_RULES = `
 - metabolismがあれば、実効消費（estimated_tdee_kcal）をモデル値より優先して摂取量の提案に使う。ただし7700kcal/kg換算の参考値なので断定はしない
 - データが欠けている日は無理に言及しない`;
 
-function buildPrompt(kind, data) {
+/**
+ * 毎晩23:30 JSTに当日分を生成し、日次ダイジェスト（23:55）の本文に差し込まれる。
+ * 当日総括＋週間トレンド＋明日の行動方針を1本にまとめる（週次の別枠は廃止）
+ */
+function buildPrompt(data) {
   const dataJson = JSON.stringify(data);
-  if (kind === 'daily') {
-    return `あなたは体組成改善（脂肪を減らし除脂肪体重を維持・増加）を支援するコーチです。
-昨日（${localYmd(1)}）の記録を中心に、直近トレンドも踏まえて日次講評を書いてください。
-
-構成（合計1〜3行、簡潔に）:
-- 昨日の食事（カロリー収支・PFCバランス）と運動の講評
-- 今日の具体的な一手（食事または運動の提案）
-${COMMON_RULES}
-
-データ（直近${FETCH_DAYS}日）: ${dataJson}`;
-  }
   return `あなたは体組成改善（脂肪を減らし除脂肪体重を維持・増加）を支援するコーチです。
-直近14日のデータを分析し、週次の総括を書いてください。
+今日（${localYmd(0)}）の1日を総括し、明日の行動方針を示してください。
 
-構成（全体で3〜8行）:
-- 体組成トレンド（体重・脂肪量・除脂肪体重の7日平均の動き）の評価
-- 摂取と消費のバランス、PFC傾向の評価
-- 運動（有酸素・筋トレ）の量・頻度の評価
-- 来週に向けた具体的な提案（1〜2個）
+構成（全体で3〜6行）:
+- 今日の食事（カロリー収支・PFCバランス）・運動・体重の総括
+- 直近7〜14日のトレンド（体重・脂肪量・除脂肪体重の7日平均、収支の傾向）を踏まえた評価
+- 明日の具体的な行動方針（食事・運動で1〜2個）
 ${COMMON_RULES}
 
 データ（直近${FETCH_DAYS}日）: ${dataJson}`;
 }
 
-async function generate(kind, data) {
-  const prompt = buildPrompt(kind, data);
+async function generate(data) {
+  const prompt = buildPrompt(data);
   let result = null;
   for await (const message of query({
     prompt,
@@ -201,7 +178,7 @@ async function save(kind, date, content, usedModel) {
   return res.json();
 }
 
-const kind = resolveKind();
+const kind = 'daily'; // 週次の別枠は廃止（週間視点は毎日の総括に常に含める）
 const date = localYmd(0);
 console.log(`kind=${kind} date=${date} model=${model}`);
 
@@ -210,10 +187,10 @@ try {
   console.log(
     `data: body=${data.body.length}d intake=${data.intake.length}d exercise=${data.exercise.length}d`,
   );
-  const { content, usedModel } = await generate(kind, data);
+  const { content, usedModel } = await generate(data);
   console.log(`generated: ${content.length} chars (model=${usedModel})`);
   const saved = await save(kind, date, content, usedModel);
-  console.log(`saved: id=${saved.id} queued=${saved.queued}`);
+  console.log(`saved: id=${saved.id}`);
 } catch (err) {
   console.error('coaching job failed:', err instanceof Error ? err.message : err);
   process.exit(1);

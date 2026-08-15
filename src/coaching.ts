@@ -26,19 +26,6 @@ export interface CoachingInput {
   model: string | null;
 }
 
-/** Slack配信バッチID: coaching-{kind}-{date}（slack.tsのbuildBatchMessageが解決する） */
-export const COACHING_BATCH_PREFIX = 'coaching-';
-
-export function coachingBatchId(kind: CoachingKind, date: string): string {
-  return `${COACHING_BATCH_PREFIX}${kind}-${date}`;
-}
-
-export function parseCoachingBatchId(batchId: string): { kind: CoachingKind; date: string } | null {
-  const m = /^(daily|weekly)-(\d{4}-\d{2}-\d{2})$/.exec(batchId.slice(COACHING_BATCH_PREFIX.length));
-  if (!batchId.startsWith(COACHING_BATCH_PREFIX) || !m) return null;
-  return { kind: m[1] as CoachingKind, date: m[2] };
-}
-
 const MAX_CONTENT_LENGTH = 4000;
 
 export function parseCoachingInput(
@@ -144,14 +131,13 @@ function splitForSlack(text: string): string[] {
   return chunks;
 }
 
-export function buildCoachingBlocks(note: CoachingNote, dashboardUrl: string): unknown[] {
-  const label = note.kind === 'daily' ? '日次' : '週次';
+/**
+ * 日次ダイジェストに差し込むAI講評ブロック（見出し＋本文）。
+ * AI講評は単独のSlackメッセージにせず、日次サマリーの一部として配信する
+ */
+export function coachingDigestBlocks(note: CoachingNote): unknown[] {
   const section = (text: string): unknown => ({ type: 'section', text: { type: 'mrkdwn', text } });
-  return [
-    section(`:robot_face: *AIコーチ（${label}・${note.date}）*`),
-    ...splitForSlack(note.content).map(section),
-    section(`ダッシュボード: ${dashboardUrl}`),
-  ];
+  return [section(':robot_face: *AIコーチ*'), ...splitForSlack(note.content).map(section)];
 }
 
 /**

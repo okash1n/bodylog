@@ -353,18 +353,6 @@ body {
   line-height: 1.7;
   white-space: pre-line; /* 講評はプレーンテキスト。改行を保持する */
 }
-.ai-coach-weekly {
-  margin-top: 8px;
-}
-.ai-coach-weekly summary {
-  cursor: pointer;
-  font-size: 0.78rem;
-  color: var(--text-muted);
-}
-.ai-coach-weekly summary:hover {
-  color: var(--text);
-}
-
 /* 実効消費（推定）の1行カード */
 .stat-note {
   background: var(--surface);

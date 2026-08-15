@@ -12,15 +12,9 @@ name: AI Coaching
 
 on:
   schedule:
-    - cron: "0 21 * * *" # 06:00 JST（月曜は週次、他は日次をスクリプト側で判定）
-  workflow_dispatch:
-    inputs:
-      kind:
-        description: "生成する講評の種類（autoは曜日で判定）"
-        required: false
-        type: choice
-        options: [auto, daily, weekly]
-        default: auto
+    # 23:30 JST。当日分を生成し、23:55の日次ダイジェスト（Slack）が本文に差し込む
+    - cron: "30 14 * * *"
+  workflow_dispatch: {}
 
 concurrency:
   group: coaching
@@ -45,7 +39,6 @@ jobs:
       - run: node generate.mjs
         working-directory: coaching
         env:
-          KIND: ${{ inputs.kind }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           COACHING_API_SECRET: ${{ secrets.COACHING_API_SECRET }}
           BODYLOG_BASE_URL: ${{ secrets.BODYLOG_BASE_URL }}

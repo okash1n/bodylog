@@ -170,9 +170,6 @@
     aiCoach: $('ai-coach'),
     aiCoachDaily: $('ai-coach-daily'),
     aiCoachDailyDate: $('ai-coach-daily-date'),
-    aiCoachWeekly: $('ai-coach-weekly'),
-    aiCoachWeeklyBody: $('ai-coach-weekly-body'),
-    aiCoachWeeklyDate: $('ai-coach-weekly-date'),
   };
   var segButtons = Array.prototype.slice.call(document.querySelectorAll('.segment-btn[data-period]'));
   var modeButtons = Array.prototype.slice.call(document.querySelectorAll('.segment-btn[data-mode]'));
@@ -355,20 +352,12 @@
         return res.json();
       })
       .then(function (latest) {
+        // 週次の別枠は廃止（週間視点は日次の総括に含まれる）。最新の日次だけを表示する
         var daily = latest && latest.daily;
-        var weekly = latest && latest.weekly;
-        if (!daily && !weekly) return; // 未生成ならカードごと非表示のまま
-        // 見出しの日付はdaily優先、weeklyのみの期間（初回が月曜等）はweeklyの日付を出す
-        els.aiCoachDailyDate.textContent = daily ? daily.date : weekly.date;
-        if (daily) {
-          els.aiCoachDaily.textContent = daily.content;
-        }
-        els.aiCoachDaily.classList.toggle('hidden', !daily);
-        if (weekly) {
-          els.aiCoachWeeklyDate.textContent = weekly.date;
-          els.aiCoachWeeklyBody.textContent = weekly.content;
-        }
-        els.aiCoachWeekly.classList.toggle('hidden', !weekly);
+        if (!daily) return; // 未生成ならカードごと非表示のまま
+        els.aiCoachDailyDate.textContent = daily.date;
+        els.aiCoachDaily.textContent = daily.content;
+        els.aiCoachDaily.classList.remove('hidden');
         els.aiCoach.classList.remove('hidden');
       })
       .catch(function (err) {
