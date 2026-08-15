@@ -38,6 +38,7 @@ REST（GET）はすべて読み取り専用・認証不要。書き込みは /mc
 - GET ${root}/api/exercise/logs?days=30 — 運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）
 - GET ${root}/api/exercise/daily?days=30 — 日次の基礎代謝（Katch-McArdle推定）・運動消費kcal・総ボリューム。期間内の全日を返す
 - GET ${root}/api/coaching/latest — AIコーチの最新講評（daily=日次 / weekly=週次。未生成はnull）
+- GET ${root}/api/coaching?days=30 — AIコーチ講評の履歴（新しい順、最大200件）
 - GET ${root}/api/metabolism — 直近28日の実測データからの実効消費カロリー推定（摂取記録が8割未満の期間はinsufficient_data）
 - GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（ChatGPTカスタムGPTのActionsにはこれを登録する）
 - POST ${root}/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール
@@ -441,6 +442,32 @@ export function openapiSpec(
                 },
               },
             },
+          },
+        },
+      },
+      '/api/coaching': {
+        get: {
+          operationId: 'listCoachingNotes',
+          summary: 'AIコーチ講評の履歴（新しい順、最大200件）',
+          parameters: rangeParams,
+          responses: {
+            '200': {
+              description: '講評一覧',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      notes: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/CoachingNote' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
           },
         },
       },

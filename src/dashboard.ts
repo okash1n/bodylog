@@ -14,7 +14,7 @@ import { getDailySeries, getImportStatus, getRawMeasurements, getSummary } from 
 import { llmsTxt, openapiSpec } from './ai';
 import { serveMealsDaily, serveMealsList, serveMenus } from './meals-api';
 import { serveExerciseDaily, serveExerciseLogs, serveExerciseMenus } from './exercise-api';
-import { serveCoachingLatest } from './coaching';
+import { serveCoachingLatest, serveCoachingList } from './coaching';
 import { serveMetabolism } from './stats';
 import { registerWriteRoutes } from './writes';
 import { OG_RENDERER_VERSION, renderOgPng } from './og';
@@ -30,7 +30,7 @@ import chartVendorJs from './dashboard/vendor/chart.umd.js';
 import { appleTouchIconPng } from './dashboard/icon';
 
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
-export const ASSET_VERSION = '2026-08-15-31';
+export const ASSET_VERSION = '2026-08-16-32';
 
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';
 const JS_CONTENT_TYPE = 'text/javascript; charset=utf-8';
@@ -225,6 +225,7 @@ export const READ_ROUTES: ReadonlyArray<readonly [string, Handler]> = [
   ['api/exercise/daily', serveExerciseDaily],
   ['api/exercise/logs', serveExerciseLogs],
   ['api/coaching/latest', serveCoachingLatest],
+  ['api/coaching', serveCoachingList],
   ['api/metabolism', serveMetabolism],
   ['llms.txt', serveLlmsTxt],
   ['openapi.json', serveOpenapi],

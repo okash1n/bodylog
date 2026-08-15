@@ -95,6 +95,32 @@ describe('POST /api/coaching の保存', () => {
   });
 });
 
+describe('GET /api/coaching（履歴一覧）', () => {
+  beforeEach(async () => {
+    await resetTables();
+  });
+
+  it('期間指定なしは400、days指定で新しい順に返す', async () => {
+    await postCoaching(coachingEnv, { kind: 'daily', date: '2026-08-13', content: '一昨日' });
+    await postCoaching(coachingEnv, { kind: 'daily', date: '2026-08-14', content: '昨日' });
+    const bad = await worker.fetch(
+      new Request('http://localhost/api/coaching'),
+      rootTestEnv,
+      createExecutionContext(),
+    );
+    expect(bad.status).toBe(400);
+
+    const res = await worker.fetch(
+      new Request('http://localhost/api/coaching?days=731'),
+      rootTestEnv,
+      createExecutionContext(),
+    );
+    expect(res.status).toBe(200);
+    const { notes } = (await res.json()) as { notes: CoachingNote[] };
+    expect(notes.map((n) => n.date)).toEqual(['2026-08-14', '2026-08-13']);
+  });
+});
+
 describe('GET /api/coaching/latest', () => {
   beforeEach(async () => {
     await resetTables();

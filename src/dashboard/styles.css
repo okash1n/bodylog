@@ -353,6 +353,35 @@ body {
   line-height: 1.7;
   white-space: pre-line; /* 講評はプレーンテキスト。改行を保持する */
 }
+.ai-coach-history {
+  margin-top: 8px;
+}
+.ai-coach-history summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.ai-coach-history summary:hover {
+  color: var(--text);
+}
+.ai-coach-history-item {
+  border-top: 1px solid var(--border);
+  padding: 8px 0;
+}
+.ai-coach-history-item:first-child {
+  border-top: none;
+}
+.ai-coach-history-date {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ai-coach-history-empty {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+}
+
 /* 実効消費（推定）の1行カード */
 .stat-note {
   background: var(--surface);

@@ -36,6 +36,7 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     expect(html).toContain('カロリー収支 <span class="unit">kcal</span>');
     // AIコーチ講評カード（初期状態はhidden、/api/coaching/latest取得後にJSが表示する）
     expect(html).toContain('id="ai-coach"');
+    expect(html).toContain('id="ai-coach-history"');
     // 実効消費カードと目標サブ行（目標未設定・データ不足時はhiddenのまま）
     expect(html).toContain('id="metabolism-card"');
     expect(html).toContain('id="card-weight-goal-row"');

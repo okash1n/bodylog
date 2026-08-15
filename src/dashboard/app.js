@@ -170,6 +170,8 @@
     aiCoach: $('ai-coach'),
     aiCoachDaily: $('ai-coach-daily'),
     aiCoachDailyDate: $('ai-coach-daily-date'),
+    aiCoachHistory: $('ai-coach-history'),
+    aiCoachHistoryList: $('ai-coach-history-list'),
   };
   var segButtons = Array.prototype.slice.call(document.querySelectorAll('.segment-btn[data-period]'));
   var modeButtons = Array.prototype.slice.call(document.querySelectorAll('.segment-btn[data-mode]'));
@@ -363,6 +365,48 @@
       .catch(function (err) {
         // 取得失敗はカード非表示のまま（体重表示を巻き込まない）
         console.error('[dashboard] coaching fetch failed', err);
+      });
+  }
+
+  // 過去の講評は折りたたみを最初に開いたときだけ取得する（毎回のページ表示で余計に叩かない）
+  var coachingHistoryLoaded = false;
+
+  function loadCoachingHistory() {
+    if (coachingHistoryLoaded) return;
+    coachingHistoryLoaded = true;
+    fetch(BASE + 'api/coaching?days=30')
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        var notes = (data && data.notes) || [];
+        els.aiCoachHistoryList.textContent = '';
+        if (notes.length === 0) {
+          var empty = document.createElement('p');
+          empty.className = 'ai-coach-history-empty';
+          empty.textContent = 'まだ履歴がありません。';
+          els.aiCoachHistoryList.appendChild(empty);
+          return;
+        }
+        notes.forEach(function (n) {
+          var item = document.createElement('div');
+          item.className = 'ai-coach-history-item';
+          var head = document.createElement('div');
+          head.className = 'ai-coach-history-date';
+          head.textContent = n.date + (n.kind === 'weekly' ? '（週次）' : '');
+          var body = document.createElement('p');
+          body.className = 'ai-coach-body';
+          body.textContent = n.content;
+          item.appendChild(head);
+          item.appendChild(body);
+          els.aiCoachHistoryList.appendChild(item);
+        });
+      })
+      .catch(function (err) {
+        coachingHistoryLoaded = false; // 失敗時は次に開いたとき再試行
+        console.error('[dashboard] coaching history fetch failed', err);
+        els.aiCoachHistoryList.textContent = '読み込みに失敗しました。閉じて開き直すと再試行します。';
       });
   }
 
@@ -1393,6 +1437,10 @@
         if (!document.documentElement.dataset.theme) applyThemeToChart();
       });
     }
+
+    els.aiCoachHistory.addEventListener('toggle', function () {
+      if (els.aiCoachHistory.open) loadCoachingHistory();
+    });
 
     els.retry.addEventListener('click', function () {
       loadData();

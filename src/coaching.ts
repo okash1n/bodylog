@@ -6,7 +6,7 @@
  */
 import type { Context } from 'hono';
 import type { Env } from './types';
-import { isValidYmd, newId, noindexHeaders } from './util';
+import { isValidYmd, newId, noindexHeaders, withRange } from './util';
 
 export type CoachingKind = 'daily' | 'weekly';
 
@@ -104,6 +104,17 @@ export async function getLatestCoaching(env: Env): Promise<LatestCoaching> {
   return { daily, weekly };
 }
 
+/** 期間内の講評一覧（新しい順、最大200件）。履歴表示用 */
+export async function listCoachingNotes(env: Env, from: string, to: string): Promise<CoachingNote[]> {
+  const res = await env.DB.prepare(
+    `SELECT id, kind, date, content, model, created_at FROM coaching_notes
+     WHERE date BETWEEN ?1 AND ?2 ORDER BY date DESC, kind LIMIT 200`,
+  )
+    .bind(from, to)
+    .all<CoachingNote>();
+  return res.results;
+}
+
 /** Slackのsection.textは3000文字上限のため、余裕を持って行単位で分割する */
 const SLACK_SECTION_LIMIT = 2800;
 
@@ -151,6 +162,21 @@ export function coachingTokenMatches(token: string, secret: string): boolean {
   if (a.byteLength !== b.byteLength) return false;
   return crypto.subtle.timingSafeEqual(a, b);
 }
+
+/** GET /api/coaching — 期間内の講評一覧（履歴）。公開読み取り */
+export const serveCoachingList = (c: Context<{ Bindings: Env }>): Promise<Response> | Response =>
+  withRange(c, async (from, to) => {
+    try {
+      return c.json(
+        { notes: await listCoachingNotes(c.env, from, to) },
+        200,
+        noindexHeaders({ 'Cache-Control': 'no-store' }),
+      );
+    } catch (err) {
+      console.error('[coaching] listCoachingNotes failed', err);
+      return c.json({ error: 'internal error' }, 500, noindexHeaders({ 'Cache-Control': 'no-store' }));
+    }
+  });
 
 /** GET /api/coaching/latest — 各kindの最新講評（なければnull）。公開読み取り */
 export const serveCoachingLatest = async (c: Context<{ Bindings: Env }>): Promise<Response> => {
