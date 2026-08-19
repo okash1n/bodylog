@@ -37,7 +37,7 @@ REST（GET）はすべて読み取り専用・認証不要。書き込みは /mc
 - GET ${root}/api/exercise/menus?q=&category= — 運動種目（マスタ）一覧・検索（利用頻度順）。category=cardio|strengthで絞れる
 - GET ${root}/api/exercise/logs?days=30 — 運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）
 - GET ${root}/api/exercise/daily?days=30 — 日次の基礎代謝（Katch-McArdle推定）・運動消費kcal・総ボリューム。期間内の全日を返す
-- GET ${root}/api/coaching/latest — AIコーチの最新講評（daily=日次 / weekly=週次。未生成はnull）
+- GET ${root}/api/coaching/latest — AIコーチの最新講評（daily=日次総括 / weekly=過去の週次総括・現在は生成されない。未生成はnull）
 - GET ${root}/api/coaching?days=30 — AIコーチ講評の履歴（新しい順、最大200件）
 - GET ${root}/api/metabolism — 直近28日の実測データからの実効消費カロリー推定（摂取記録が8割未満の期間はinsufficient_data）
 - GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（ChatGPTカスタムGPTのActionsにはこれを登録する）
@@ -474,7 +474,7 @@ export function openapiSpec(
       '/api/coaching/latest': {
         get: {
           operationId: 'getLatestCoaching',
-          summary: 'AIコーチの最新講評（daily=日次 / weekly=週次。未生成はnull）',
+          summary: 'AIコーチの最新講評（daily=日次総括 / weekly=過去の週次総括・現在は生成されない。未生成はnull）',
           responses: {
             '200': {
               description: '各kindの最新講評',
@@ -615,7 +615,7 @@ export function openapiSpec(
           type: 'object',
           description:
             '運動記録1件。menu_name等は記録時点のスナップショット。cardioはduration_min/mets/caloriesを持ち、' +
-            'strengthはsets（明細）とtotal_volume（総ボリューム）を持つ。caloriesは METs×体重×時間 の推定消費kcal',
+            'strengthはsets（明細）とtotal_volume（総ボリューム）を持つ。caloriesは METs×体重×時間×1.05 の推定消費kcal',
           properties: {
             id: { type: 'string' },
             menu_id: { type: 'string' },
@@ -637,7 +637,7 @@ export function openapiSpec(
         CoachingNote: {
           type: 'object',
           description:
-            'AIコーチの講評1件。kind=daily（前日分のライト講評）| weekly（週次の深掘り総括）。' +
+            'AIコーチの講評1件。kind=daily（当日の総括＋週間トレンド＋明日の行動方針）| weekly（過去の週次総括。現在は生成されない）。' +
             'dateは生成対象のローカル日付、contentは講評本文',
           properties: {
             id: { type: 'string' },

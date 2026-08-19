@@ -10,7 +10,7 @@ Fork/clone して設定値を差し替えるだけで動く（コード変更不
 - ダッシュボード: PWA 対応・noindex。実測⇔7日平均のワンクリック切替、期間プリセット（1M/3M/1Y/カスタム）、日次集計⇔計測明細の表、ライト/ダークテーマ、OGP 画像を Worker 内で生成。食事・運動タブから記録の閲覧・入力もでき、体重グラフには摂取/消費（基礎代謝＋運動）/カロリー収支を重ねられる
 - 食事記録: 登録済みメニュー（マスタ）からのみ記録する方式（自由入力ではない）。PFC比率はP×4/F×9/C×4kcal換算による3者内正規化で算出する（登録kcalでは割らない）。閲覧は公開API・認証不要、記録・メニュー登録はオーナーの Google アカウントによる OAuth 2.1 認可が必要
 - インフラ: Cloudflare Workers + D1 + KV（KV は食事・運動記録の書き込みAPI、および MCP の書き込みツール用 OAuth の認可フロー・トークン保存にのみ使用。Queues / Durable Objects は不使用）。外部依存は Hono / Chart.js / `@cloudflare/workers-oauth-provider` / `@modelcontextprotocol/sdk` / `@hono/mcp` / zod
-- 動作確認済みバージョン: Node.js 22+ / wrangler 4.118（大きく異なるバージョンでは手順が変わることがある）
+- 動作確認済みバージョン: Node.js 22+ / wrangler 4.122（大きく異なるバージョンでは手順が変わることがある）
 
 ## アーキテクチャ
 
@@ -31,7 +31,16 @@ Withings Cloud ──(notify webhook: POST /webhook/withings-{secret})──┐
                                                                 ▼
                                                           Cloudflare D1
                                           (measurements / tokens / settings /
-                                           webhook_inbox / notification_batches)
+                                           webhook_inbox / notification_batches / 食事・運動・coaching系 ほか)
+```
+
+体重トラッキング以外の主要経路:
+
+```
+GitHub Actions (coaching.yml, 毎晩23:30 JST・任意機能)
+  └─ Claude Agent SDK で講評生成 ──POST /api/coaching──▶ Worker ─▶ D1 (coaching_notes)
+                                                          └─ 23:55 の日次ダイジェストに差し込み ─▶ Slack
+AIクライアント / ダッシュボード ──OAuth 2.1 (Googleログイン)──▶ /mcp・/api/*(書き込み) ─▶ KV (OAUTH_KV: 認可フロー・トークン)
 ```
 
 Webhook は受信内容を即座に D1 の inbox テーブルへ永続化して 200 を返し、実際の取り込みは `waitUntil` と cron で非同期に行う。取り込みは Withings の `grpid` をキーにした UPSERT のため、再送・値修正にも冪等。通知は grpid 単位の claim（一意制約）で二重送信を防ぐ。
@@ -69,7 +78,7 @@ openssl rand -hex 8    # → DASHBOARD_SLUG（ダッシュボード URL の slug
 | `DASHBOARD_SLUG` | ダッシュボード URL `/d/{DASHBOARD_SLUG}/` の slug。URL を知っている人だけが見られる。**空文字（`""`）にするとドメイン直下（`/`）で配信**（カスタムドメイン運用向け。ホスト名は証明書の透明性ログ等で公開されるため、アクセス制限が必要なら Cloudflare Access などをドメインに後付けする） |
 | `TZ_OFFSET_HOURS` | 集計・表示のタイムゾーンオフセット（時間）。既定 `9`（JST）。変更不要ならそのまま |
 
-D1 のバインディング名（`DB`）と `database_name` はコード側の型・CI と一致しているため変更しないこと。
+D1 のバインディング名（`DB`）と KV のバインディング名（`OAUTH_KV`）はコード・CI が参照するため変更しないこと。`database_name` は手順4で `wrangler d1 create` に渡す名前（本手順では `bodylog`）と一致させる。
 
 ### 2. Withings アプリ登録
 
@@ -109,6 +118,8 @@ npx wrangler kv namespace create OAUTH_KV
 `wrangler.toml.example` は KV バインディングを含んだ状態で配布されているため、食事・運動記録の書き込み機能を使う予定がなくても、ここで KV ネームスペースを作成して `id` を記入しておく必要がある（プレースホルダーの `id` のままデプロイすると Cloudflare 側で弾かれる）。Withings のトークンは D1 に保存される（KV は OAuth の認可フロー・トークン保存専用）。Google OAuth クライアントの作成や関連 Secrets の登録は手順9で行う。
 
 ### 5. Secrets の登録
+
+初回はまだ Worker が存在しないため、`secret put` 時に「新しい Worker を作成して Secrets を追加するか」の確認が出る。yes と答えるとプレースホルダー Worker が作成され、手順6のデプロイで本体に置き換わる。
 
 ```sh
 npx wrangler secret put WITHINGS_CLIENT_ID      # 手順2の Client ID
@@ -177,15 +188,17 @@ npx wrangler d1 execute bodylog --remote \
 
 メニュー・食事記録・運動記録の**閲覧**（`/api/menus` `/api/meals` `/api/meals/daily` `/api/exercise/menus` `/api/exercise/logs` `/api/exercise/daily`、ダッシュボードの食事・運動タブ表示）は追加設定なしで動く。**記録の書き込み**（ダッシュボードでの入力、`{base}/api/*` の POST/PATCH/DELETE、MCP の書き込みツール）は Google アカウントによる OAuth 2.1 認可が必要で、以下を設定しないと `/authorize` が実行時エラーになる（KV ネームスペースは手順4で作成済み）。
 
-1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) で OAuth クライアントを作成する（アプリケーションの種類は「ウェブ アプリケーション」）:
+1. 新規の Google Cloud プロジェクトの場合は、先に **OAuth 同意画面**を構成する（User type: External、アプリ名等を入力）。公開ステータスが「テスト中（Testing）」の間は、`OWNER_EMAILS` に入れる予定の Google アカウントを**テストユーザーに追加**すること（追加しないとログインが 403 access_denied で拒否され、`OWNER_EMAILS` のチェック以前に失敗する）
+
+2. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) で OAuth クライアントを作成する（アプリケーションの種類は「ウェブ アプリケーション」）:
    - **承認済みのリダイレクト URI** に `https://<デプロイ先のドメイン>/authorize/callback` を追加する（例: `https://weight.example.com/authorize/callback`。ドメインは手順6でデプロイした Worker のもの、カスタムドメインを使う場合はそちら）
    - 発行された **クライアント ID** と **クライアント シークレット** を控える
 
-2. Secrets を登録する:
+3. Secrets を登録する:
 
    ```sh
-   npx wrangler secret put GOOGLE_OAUTH_CLIENT_ID      # 手順1のクライアントID
-   npx wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET  # 手順1のクライアントシークレット
+   npx wrangler secret put GOOGLE_OAUTH_CLIENT_ID      # 手順2のクライアントID
+   npx wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET  # 手順2のクライアントシークレット
    npx wrangler secret put OWNER_EMAILS                # 書き込みを許可するGoogleアカウントのメール（カンマ区切り。例: "me@example.com"）
    ```
 
@@ -223,7 +236,7 @@ npx wrangler d1 execute bodylog --remote \
 | `GET {base}/api/measurements?from=&to=` または `?days=N` | 日次系列 JSON（日平均 + 7日移動平均） |
 | `GET {base}/api/raw?from=&to=` または `?days=N` | 計測明細 JSON（1計測=1行、新しい順） |
 | `GET {base}/api/status` | 初期インポート状況・最終同期時刻 |
-| `GET {base}/api/summary` | 要約 JSON（最新計測・直近7日平均・前週比・基準日比・今日の食事摂取量・最終同期） |
+| `GET {base}/api/summary` | 要約 JSON（最新計測・直近7日平均・前週比・基準日比・今日の食事摂取量・目標（goal）・最終同期） |
 | `GET {base}/api/menus?q=` | 食事メニュー（マスタ）一覧・検索（利用頻度順: 直近90日の記録回数→最終使用→名前）。認証不要 |
 | `GET {base}/api/meals?from=&to=` または `?days=N` | 食事記録 JSON（メニュー名・倍率・実効kcal/PFC付き）。認証不要 |
 | `GET {base}/api/meals/daily?from=&to=` または `?days=N` | 日次の摂取カロリー・PFC合計 JSON。認証不要 |
@@ -275,6 +288,8 @@ ChatGPT・Claude などのAIクライアントから体重推移・食事記録�
 
 ## AIコーチング（定期講評）
 
+この機能は**任意**で、Claude Pro/Max サブスクリプションが必要。使わない場合は下記 Secrets を登録しなければよい（Secrets 未登録のときワークフローは失敗ではなくスキップになる）。
+
 毎晩 23:30 JST に GitHub Actions（`.github/workflows/coaching.yml`）が直近14日のデータを分析し、**当日の総括＋週間トレンド評価＋明日の行動方針**をまとめたAI講評を生成する（週次の別枠は無く、週間視点を毎日の総括に含める）。生成は Claude Agent SDK をサブスクリプションの OAuth トークンで動かすため、API の従量課金は発生しない。講評は `POST /api/coaching` で保存され、**23:55 の日次ダイジェスト（Slack）の本文に差し込まれる**（AI講評の単独Slackメッセージは無い）。ダッシュボードの「AIコーチ」カードにも表示される。方針は「体組成改善（脂肪量を減らし、除脂肪体重を維持・増加）」。`set_goal` で数値目標（体重・脂肪量）を設定している場合は目標との差を、実効消費の推定（`/api/metabolism`）が成立している場合はその値を、講評の評価軸に使う。
 
 セットアップ（GitHub Secrets を3つ登録する）:
@@ -283,7 +298,7 @@ ChatGPT・Claude などのAIクライアントから体重推移・食事記録�
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` で発行するサブスク用トークン（要 Claude Pro/Max。約1年有効。失効したら再発行して更新） |
 | `COACHING_API_SECRET` | `openssl rand -hex 32` 等で生成した値。Worker 側にも `npx wrangler secret put COACHING_API_SECRET` で**同じ値**を登録する |
-| `BODYLOG_BASE_URL` | 本番URL（例 `https://weight.example.com`。実URLをリポジトリに書かないため Secret で渡す） |
+| `BODYLOG_BASE_URL` | ダッシュボード基点までのURL。`DASHBOARD_SLUG` 設定時は `https://<ホスト>/d/{DASHBOARD_SLUG}`、空文字運用時は `https://weight.example.com`（実URLをリポジトリに書かないため Secret で渡す） |
 
 補足:
 
@@ -337,17 +352,22 @@ npx wrangler d1 execute bodylog --remote \
 - [ ] スマホでダッシュボードを「ホーム画面に追加」→ スタンドアロン起動でグラフが見える
 - [ ] `key` なし（または誤った key）で `/auth/start` にアクセスすると 404 になる
 - [ ] 翌日以降、日次バックフィル（cron）がエラーなく動いていることを `npx wrangler tail` で確認
+- [ ] （書き込み機能利用時）食事タブの「ログイン」から Google 認可でき、テスト記録を1件作成・削除できる（`OWNER_EMAILS` 外のアカウントは 403 になる）
+- [ ] （AIコーチング利用時）Actions の「AI Coaching」を Run workflow で手動実行 → 成功し、`{base}/api/coaching/latest` の daily が null でなくなり、ダッシュボードの「AIコーチ」カードに表示される
+- [ ] （MCP利用時）`claude mcp add --transport http bodylog https://<ホスト>/mcp` で接続し、Google ログイン後に `get_weight_summary` が動く
 
 ## 自動デプロイ（GitHub Actions）
 
-`main` への push で「typecheck + テスト → D1 マイグレーション → デプロイ」が自動実行される（`.github/workflows/deploy.yml`）。PR ではテストのみ実行。
+`main` への push で「typecheck + テスト → D1 マイグレーション → デプロイ」が自動実行される（`.github/workflows/deploy.yml`）。PR ではテストのみ実行。下記 Secrets が未設定の間、デプロイジョブはスキップされる（テストは example 設定で動く）。
+
+> **Fork した場合の注意**: Fork 直後は Actions が無効のため、リポジトリの **Actions タブで有効化**する必要がある。また schedule トリガー（AIコーチングの `coaching.yml`）はパブリックリポジトリの Fork ではデフォルト無効のため、使う場合は Actions タブの「AI Coaching」で個別に有効化する（clone して自分のリポジトリとして push した場合は最初から有効）。パブリックリポジトリの schedule は60日間コミットが無いと自動停止する点にも注意。
 
 利用するには GitHub リポジトリに以下の Secrets を登録する:
 
 | Secret | 内容 |
 |---|---|
 | `WRANGLER_TOML` | 実値入り `wrangler.toml` の中身。`gh secret set WRANGLER_TOML < wrangler.toml` で登録 |
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API トークン。テンプレート「Edit Cloudflare Workers」に **Account → D1 → Edit** 権限を追加して作成 |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API トークン。テンプレート「Edit Cloudflare Workers」に **Account → D1 → Edit** 権限を追加して作成。カスタムドメイン運用時は対象ゾーンへのZone権限も必要 |
 
 ローカルの `wrangler.toml` を変更したら（ドメイン変更・slug 変更など）、`gh secret set WRANGLER_TOML < wrangler.toml` で CI 側の Secret も更新すること。忘れると CI が古い設定でデプロイして手元の変更が巻き戻る。
 
@@ -419,7 +439,7 @@ npx wrangler secret put SETUP_SECRET   # 新しい値を入力
 
 ### レート制限（推奨）
 
-`/authorize` `/register` `/token`（OAuth 認可フロー）は総当たり・乱用の対象になりうるため、Cloudflare のゾーンのレート制限ルールを設定することを推奨する（無料プランでもゾーンごとに1ルールまで利用できる）。余裕があれば公開 GET API 全般にも広げるとよい。これはアプリのコードではなく Cloudflare ダッシュボード側（ゾーンの Security / WAF）で設定するもので、Fork したユーザーが自分のゾーンに対して個別に行う必要がある。しきい値は実際のトラフィックに合わせて調整すること。
+カスタムドメイン運用（自分のゾーンに Worker を載せている場合）が前提。`*.workers.dev` のみの運用ではゾーンの WAF/レート制限は設定できない。`/authorize` `/register` `/token`（OAuth 認可フロー）は総当たり・乱用の対象になりうるため、Cloudflare のゾーンのレート制限ルールを設定することを推奨する（無料プランでもゾーンごとに1ルールまで利用できる）。余裕があれば公開 GET API 全般にも広げるとよい。これはアプリのコードではなく Cloudflare ダッシュボード側（ゾーンの Security / WAF）で設定するもので、Fork したユーザーが自分のゾーンに対して個別に行う必要がある。しきい値は実際のトラフィックに合わせて調整すること。
 
 ## うまくいかないとき
 

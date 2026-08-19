@@ -12,8 +12,9 @@
 #   wrangler secret put GOOGLE_OAUTH_CLIENT_ID      # 食事記録の書き込みAPI用。Google CloudのOAuthクライアントID
 #   wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET  # 同 Client Secret
 #   wrangler secret put OWNER_EMAILS                # 書き込みを許可するGoogleアカウントのメール（カンマ区切り、例: "a@example.com,b@example.com"）
+#   wrangler secret put COACHING_API_SECRET         # 任意: AIコーチング（GitHub Actions）用。GitHub Secrets側と同値を登録
 
-name = "withings-weight-tracker"
+name = "bodylog"
 main = "src/index.ts"
 compatibility_date = "2026-04-01"
 
@@ -24,8 +25,8 @@ compatibility_date = "2026-04-01"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "withings-weight"
-database_id = "YOUR_D1_DATABASE_ID" # wrangler d1 create withings-weight で表示されるID
+database_name = "bodylog"
+database_id = "YOUR_D1_DATABASE_ID" # wrangler d1 create bodylog で表示されるID
 
 # OAuth 2.1（食事記録の書き込みAPI用）のトークン・認可フロー保存先
 [[kv_namespaces]]

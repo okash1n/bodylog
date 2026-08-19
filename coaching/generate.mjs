@@ -6,7 +6,8 @@
  * 3. POST /api/coaching（Bearer: COACHING_API_SECRET）で保存 → WorkerがSlack配信・表示
  *
  * 環境変数:
- *   BODYLOG_BASE_URL        必須。例 https://weight.example.com（末尾スラッシュ不要）
+ *   BODYLOG_BASE_URL        必須。ダッシュボード基点までのURL（末尾スラッシュ不要）。
+ *                           DASHBOARD_SLUG設定時は https://weight.example.com/d/{slug}、空文字運用時は https://weight.example.com
  *   COACHING_API_SECRET     必須。POST /api/coaching のBearerトークン
  *   CLAUDE_CODE_OAUTH_TOKEN 必須（SDKが参照）。`claude setup-token` で発行
  *   COACHING_MODEL          任意。既定 'opus'（Claude Codeの既定Opusに追従する別名）

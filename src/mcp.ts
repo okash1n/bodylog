@@ -1,7 +1,7 @@
 /**
  * MCP（Model Context Protocol）サーバー。読み取り専用ツール7つ（体重3 / 食事2 / 運動2）を
- * 公開し、認証済みエンドポイント（/mcp）では書き込みツール4つ（log_meal / create_menu /
- * log_exercise / create_exercise_menu）を追加で公開する。
+ * 公開し、認証済みエンドポイント（/mcp）では書き込みツール5つ（log_meal / create_menu /
+ * log_exercise / create_exercise_menu / set_goal）を追加で公開する。
  * リクエストごとにサーバー/トランスポートを生成するステートレス構成
  * （セッションを持たないため、Durable Objects等の追加インフラが不要）。
  */
@@ -171,7 +171,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
     'get_exercise_logs',
     {
       description:
-        '運動記録を返す。有酸素は消費kcal（METs×体重×時間）、筋トレはセット明細と総ボリューム付き。daysまたはfrom/toで期間指定',
+        '運動記録を返す。有酸素は消費kcal（METs×体重×時間×1.05）、筋トレはセット明細と総ボリューム付き。daysまたはfrom/toで期間指定',
       inputSchema: rangeShape,
       annotations: { readOnlyHint: true },
     },

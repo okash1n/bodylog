@@ -10,7 +10,30 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  # デプロイ用Secrets未設定のFork/clone環境では、mainへのpushでも失敗ではなくスキップにする
+  # （secretsコンテキストはjobレベルのifで参照できないため、判定ジョブを挟んでneedsで渡す）
+  precheck:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.check.outputs.deploy }}
+    steps:
+      - name: デプロイ用Secretsの有無を確認
+        id: check
+        env:
+          WRANGLER_TOML: ${{ secrets.WRANGLER_TOML }}
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -n "$WRANGLER_TOML" ] && [ -n "$CF_TOKEN" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "WRANGLER_TOML / CLOUDFLARE_API_TOKEN が未設定のためデプロイをスキップします（READMEの「自動デプロイ」参照）" >> "$GITHUB_STEP_SUMMARY"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -36,8 +59,8 @@ jobs:
       - run: npm test
 
   deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.precheck.outputs.deploy == 'true'
+    needs: [test, precheck]
     runs-on: ubuntu-latest
     concurrency: deploy-production
     steps:

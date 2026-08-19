@@ -14,7 +14,7 @@ AIコーディングエージェント向けのリポジトリ固有ルール（
 ルール:
 
 - ドキュメント・テストのURL例は `weight.example.com`（`wrangler.toml.example` と同じ）を使う
-- 実値は gitignore 済みのローカル `wrangler.toml` と GitHub Secrets（`WRANGLER_TOML` / `CLOUDFLARE_API_TOKEN`）にのみ置く
+- 実値は gitignore 済みのローカル `wrangler.toml` と GitHub Secrets（`WRANGLER_TOML` / `CLOUDFLARE_API_TOKEN`、AIコーチング用の `BODYLOG_BASE_URL` / `COACHING_API_SECRET` / `CLAUDE_CODE_OAUTH_TOKEN`）にのみ置く
 - コミット前に実値の混入を検索で確認する（本番ドメイン・シークレット値・32桁hex/UUID形式のID）。実値そのものはこのファイルにも書かないこと
 - 誤ってコミットした場合: push 前なら amend で除去し、`git reflog expire --expire-unreachable=now --all && git gc --prune=now` で到達不能オブジェクトも消す。push 済みなら値のローテーションを含めてユーザーに相談する
 

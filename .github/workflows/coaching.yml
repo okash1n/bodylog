@@ -1,4 +1,5 @@
-# AIコーチング講評を毎朝生成する（生成はClaudeサブスク、保存先はbodylogのAPI）。
+# AIコーチング講評を毎晩23:30 JSTに生成する（生成はClaudeサブスク、保存先はbodylogのAPI）。
+# この機能は任意。Secrets未設定ならcheckジョブがスキップ判定するので、使わない場合は何もしなくてよい。
 #
 # 必要な GitHub Secrets:
 #   CLAUDE_CODE_OAUTH_TOKEN — `claude setup-token` で発行するサブスク用OAuthトークン（約1年有効）
@@ -24,7 +25,31 @@ permissions:
   contents: read
 
 jobs:
+  # AIコーチングは任意機能。Secrets未設定のFork環境では失敗ではなくスキップにする
+  # （スキップさせないと毎晩のschedule実行が失敗し続けて通知スパムになる）。
+  # secretsコンテキストはjobレベルのifでは参照できないため、判定ジョブを挟む
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: AIコーチング用Secretsの有無を確認
+        id: check
+        env:
+          TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          SECRET: ${{ secrets.COACHING_API_SECRET }}
+          BASE: ${{ secrets.BODYLOG_BASE_URL }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$SECRET" ] && [ -n "$BASE" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "AIコーチング用のSecrets（CLAUDE_CODE_OAUTH_TOKEN / COACHING_API_SECRET / BODYLOG_BASE_URL）が未設定のためスキップします（任意機能）" >> "$GITHUB_STEP_SUMMARY"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
   coaching:
+    needs: check
+    if: needs.check.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
