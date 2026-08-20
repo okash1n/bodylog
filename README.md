@@ -50,7 +50,7 @@ Webhook は受信内容を即座に D1 の inbox テーブルへ永続化して 
 
 - Cloudflare アカウント（無料プランで OK）
 - 通知先 Slack ワークスペースで App 作成・Webhook 発行ができる権限
-- Google アカウントと Google Cloud プロジェクト（食事・運動記録・体重の手動記録など書き込み機能で OAuth クライアントを作成する場合。読み取りのみなら不要）
+- Google アカウントと Google Cloud プロジェクト（食事・運動記録・体重の手動記録など書き込み機能で OAuth クライアントを作成する場合。**Withings を使わない場合は体重の記録にも必要**。閲覧だけなら不要）
 - Node.js（npm）とターミナル
 - **任意**: Withings アカウント（体重計連携を使う場合のみ。**体重計が無くても使える**: 無料の Withings アプリから体重を手入力すれば同じ経路で取り込まれる（手入力 attrib=2 も機器計測 attrib=0 と同様に採用）。Withings をまったく使わない場合も、MCP の `log_weight` か `POST /api/weight` で体重を手動記録すれば全機能が動く）
 
@@ -126,12 +126,12 @@ npx wrangler kv namespace create OAUTH_KV
 
 ```sh
 npx wrangler secret put SLACK_WEBHOOKS          # 通知先の JSON 配列（下記）
-npx wrangler secret put SETUP_SECRET            # /auth/start の保護キー。openssl rand -hex 32 などで生成
 npx wrangler secret put ADMIN_SLACK_WEBHOOK     # 任意: 管理者アラート送信先。未設定時は SLACK_WEBHOOKS の先頭を使用
 
 # 任意: Withings 連携を使う場合のみ（未設定でも他機能はすべて動く）
 npx wrangler secret put WITHINGS_CLIENT_ID      # 手順2の Client ID
 npx wrangler secret put WITHINGS_CLIENT_SECRET  # 手順2の Client Secret
+npx wrangler secret put SETUP_SECRET            # Withings 認可の入口 /auth/start の保護キー。openssl rand -hex 32 などで生成
 ```
 
 `SLACK_WEBHOOKS` の形式（`id` は再送管理に使う安定した識別子。後から変えない。並べ替え・URL 差し替えをしても送達記録が壊れないようにするためのもの）:
@@ -191,9 +191,9 @@ npx wrangler d1 execute bodylog --remote \
 
 日付は `YYYY-MM-DD`。変更したいときも同じコマンドでよい（再デプロイ不要）。
 
-### 9. 食事・運動記録の書き込み機能のセットアップ
+### 9. 書き込み機能（食事・運動の記録と体重の手動記録）のセットアップ
 
-メニュー・食事記録・運動記録の**閲覧**（`/api/menus` `/api/meals` `/api/meals/daily` `/api/exercise/menus` `/api/exercise/logs` `/api/exercise/daily`、ダッシュボードの食事・運動タブ表示）は追加設定なしで動く。**記録の書き込み**（ダッシュボードでの入力、`{base}/api/*` の POST/PATCH/DELETE、MCP の書き込みツール）は Google アカウントによる OAuth 2.1 認可が必要で、以下を設定しないと `/authorize` が実行時エラーになる（KV ネームスペースは手順4で作成済み）。
+メニュー・食事記録・運動記録の**閲覧**（`/api/menus` `/api/meals` `/api/meals/daily` `/api/exercise/menus` `/api/exercise/logs` `/api/exercise/daily`、ダッシュボードの食事・運動タブ表示）は追加設定なしで動く。**記録の書き込み**（ダッシュボードでの入力、`{base}/api/*` の POST/PATCH/DELETE（`{base}/api/weight` を含む）、MCP の書き込みツール）は Google アカウントによる OAuth 2.1 認可が必要で、以下を設定しないと `/authorize` が実行時エラーになる（KV ネームスペースは手順4で作成済み）。**Withings を使わない場合、体重の記録にはこの手順が必須**。
 
 1. 新規の Google Cloud プロジェクトの場合は、先に **OAuth 同意画面**を構成する（User type: External、アプリ名等を入力）。公開ステータスが「テスト中（Testing）」の間は、`OWNER_EMAILS` に入れる予定の Google アカウントを**テストユーザーに追加**すること（追加しないとログインが 403 access_denied で拒否され、`OWNER_EMAILS` のチェック以前に失敗する）
 
@@ -204,8 +204,8 @@ npx wrangler d1 execute bodylog --remote \
 3. Secrets を登録する:
 
    ```sh
-   npx wrangler secret put GOOGLE_OAUTH_CLIENT_ID      # 手順2のクライアントID
-   npx wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET  # 手順2のクライアントシークレット
+   npx wrangler secret put GOOGLE_OAUTH_CLIENT_ID      # 上記 9-2 で発行したクライアントID
+   npx wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET  # 上記 9-2 で発行したクライアントシークレット
    npx wrangler secret put OWNER_EMAILS                # 書き込みを許可するGoogleアカウントのメール（カンマ区切り。例: "me@example.com"）
    ```
 
@@ -224,6 +224,8 @@ npx wrangler d1 execute bodylog --remote \
     -d '{"weight_kg": 83.4, "fat_ratio": 28.3}'   # fat_ratio と measured_at は任意
   ```
 
+  （`DASHBOARD_SLUG` 設定時のパスは `https://<ホスト>/d/{slug}/api/weight`）
+
 手動記録は `measurements` に `source='manual'`（IDは負の整数）で保存され、グラフ・通知・BMR・実効消費の推定など読み取り側はすべて Withings 由来の計測と同じ扱いになる。入力ミスは `DELETE {base}/api/weight/{id}` で消せる（Withings 由来の行は削除不可）。
 
 ## カスタムドメイン運用（任意）
@@ -240,8 +242,8 @@ npx wrangler d1 execute bodylog --remote \
    ```
 
 2. `DASHBOARD_SLUG = ""` にするとダッシュボードがドメイン直下（`https://weight.example.com/`）で配信される
-3. Withings アプリの REGISTERED URLS を新ドメインに更新する
-4. notify 購読の付け替えは日次 cron が自動で行う（`settings.public_origin` は認可時・通知時のリクエスト origin から更新される。即時に切り替えたい場合は再認可する）
+3. （Withings 連携時のみ）Withings アプリの REGISTERED URLS を新ドメインに更新する
+4. （Withings 連携時のみ）notify 購読の付け替えは日次 cron が自動で行う（`settings.public_origin` は認可時・通知時のリクエスト origin から更新される。即時に切り替えたい場合は再認可する）
 
 ## エンドポイント一覧
 
@@ -364,7 +366,7 @@ npx wrangler d1 execute bodylog --remote \
 
 ## 動作確認チェックリスト
 
-- [ ] ダッシュボードを開くと、初期インポートされた過去データの推移グラフが表示される
+- [ ] ダッシュボードを開くとグラフが表示される（Withings 利用時は初期インポート済みの過去データ、Withings 無しなら手順10 で記録した分）
 - [ ] `{base}/api/measurements?from=<開始日>&to=<終了日>` が JSON を返す
 - [ ] （Withings利用時）体重計に載る → 数分以内に全チャンネルへ Slack 通知（グラフ画像付き）が届き、D1 にも行が増えている:
 
@@ -398,9 +400,9 @@ npx wrangler d1 execute bodylog --remote \
 
 ## 運用
 
-### 日次バックフィル
+### 日次バックフィル（Withings 連携時のみ）
 
-日次 cron が Withings の `lastupdate` API（前回同期時刻以降の差分取得）で取りこぼしを回収する。Webhook が落ちた期間があっても翌日には自動で埋まるため、通常は手動対応不要。
+日次 cron が Withings の `lastupdate` API（前回同期時刻以降の差分取得）で取りこぼしを回収する。Webhook が落ちた期間があっても翌日には自動で埋まるため、通常は手動対応不要。Withings 未連携（トークン未保存）の環境ではこのステップと購読確認は静かにスキップされる。
 
 ### 再認可と refresh_token の 8 時間ルール
 
@@ -478,6 +480,7 @@ npx wrangler secret put SETUP_SECRET   # 新しい値を入力
 - **Slack 通知は来るがグラフが空**: 初期インポートが未完了（ダッシュボードの取り込み状態を確認）、または表示期間にデータがないのが典型。期間プリセットを変えて確認する。データが 1 日分しかない間は点のみの表示になる
 - **通知が一部のチャンネルだけ届かない**: Slack 側の 429/5xx は自動で再試行されるので少し待つ。再試行上限を超えると管理者向けアラートが届くので、Webhook URL の失効を確認して `SLACK_WEBHOOKS` を更新する
 - **CI のデプロイで手元の変更が巻き戻った**: `WRANGLER_TOML` Secret が古い。`gh secret set WRANGLER_TOML < wrangler.toml` で更新して再実行する
+- **体重を手動記録できない**: `OWNER_EMAILS` に含まれないアカウントでログインしていると 403（Google 認証自体は成功する点に注意）。Bearer トークンが切れていると 401（MCP クライアントは再接続、API は再認可でトークンを取り直す）。400 はバリデーション（`weight_kg` 20-300 / `fat_ratio` 3-75% / `measured_at` が未来）を確認
 
 ## 開発
 

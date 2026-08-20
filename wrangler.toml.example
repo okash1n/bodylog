@@ -7,9 +7,9 @@
 #   wrangler secret put WITHINGS_CLIENT_ID      # 任意: Withings連携を使う場合のみ。開発者ポータルのClient ID
 #   wrangler secret put WITHINGS_CLIENT_SECRET  # 任意: 同 Client Secret（未設定でも手動記録で全機能が動く）
 #   wrangler secret put SLACK_WEBHOOKS          # 例: [{"id":"main","url":"https://hooks.slack.com/services/..."}]
-#   wrangler secret put SETUP_SECRET            # /auth/start の保護キー（ランダム文字列）
+#   wrangler secret put SETUP_SECRET            # 任意: Withings連携時のみ。/auth/start の保護キー（ランダム文字列）
 #   wrangler secret put ADMIN_SLACK_WEBHOOK     # 任意: 管理者アラート送信先（未設定時はSLACK_WEBHOOKSの先頭）
-#   wrangler secret put GOOGLE_OAUTH_CLIENT_ID      # 食事記録の書き込みAPI用。Google CloudのOAuthクライアントID
+#   wrangler secret put GOOGLE_OAUTH_CLIENT_ID      # 書き込みAPI（食事・運動・体重の記録）とMCP用。Google CloudのOAuthクライアントID
 #   wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET  # 同 Client Secret
 #   wrangler secret put OWNER_EMAILS                # 書き込みを許可するGoogleアカウントのメール（カンマ区切り、例: "a@example.com,b@example.com"）
 #   wrangler secret put COACHING_API_SECRET         # 任意: AIコーチング（GitHub Actions）用。GitHub Secrets側と同値を登録
@@ -28,7 +28,7 @@ binding = "DB"
 database_name = "bodylog"
 database_id = "YOUR_D1_DATABASE_ID" # wrangler d1 create bodylog で表示されるID
 
-# OAuth 2.1（食事記録の書き込みAPI用）のトークン・認可フロー保存先
+# OAuth 2.1（書き込みAPI / MCP用）のトークン・認可フロー保存先
 [[kv_namespaces]]
 binding = "OAUTH_KV"
 id = "YOUR_OAUTH_KV_NAMESPACE_ID" # wrangler kv namespace create OAUTH_KV で表示されるID
