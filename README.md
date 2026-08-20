@@ -80,6 +80,7 @@ openssl rand -hex 8    # → DASHBOARD_SLUG（ダッシュボード URL の slug
 | `WEBHOOK_PATH_SECRET` | Webhook パス `/webhook/withings-{WEBHOOK_PATH_SECRET}` のランダム部分。推測防止用 |
 | `DASHBOARD_SLUG` | ダッシュボード URL `/d/{DASHBOARD_SLUG}/` の slug。URL を知っている人だけが見られる。**空文字（`""`）にするとドメイン直下（`/`）で配信**（カスタムドメイン運用向け。ホスト名は証明書の透明性ログ等で公開されるため、アクセス制限が必要なら Cloudflare Access などをドメインに後付けする） |
 | `TZ_OFFSET_HOURS` | 集計・表示のタイムゾーンオフセット（時間）。既定 `9`（JST）。変更不要ならそのまま |
+| `READ_ACCESS` | 閲覧範囲。既定 `"public"`（誰でも閲覧可）のままでよい。閲覧もログイン必須にしたい場合だけ `"private"` にする（前提として手順9のOAuthセットアップが必要。詳細は後述「アクセス制御」） |
 
 D1 のバインディング名（`DB`）と KV のバインディング名（`OAUTH_KV`）はコード・CI が参照するため変更しないこと。`database_name` は手順4で `wrangler d1 create` に渡す名前（本手順では `bodylog`）と一致させる。
 
@@ -258,6 +259,7 @@ npx wrangler d1 execute bodylog --remote \
 
 `private` の動作と注意:
 
+- **前提**: 手順9（Google OAuth）のセットアップが必要（ログインの仕組み自体がそれなので、未設定だと誰も閲覧できなくなる）
 - ダッシュボードを開くとログイン画面になり、`OWNER_EMAILS` のアカウントでログインすると閲覧できる。アプリの外枠（HTML/JS）は配信されるが、データは一切出ない
 - 保護されるのは `{base}/api/*` の読み取り・`llms.txt`・`openapi.json`・`og.png`。MCP・書き込み・Withings webhook・ログイン用エンドポイントは従来どおり
 - **Slack通知のグラフ画像を維持するには** `npx wrangler secret put OG_ACCESS_TOKEN`（`openssl rand -hex 32` 等）を登録する。通知内の画像URLにこのキーが付いて例外的に通る（露出先は自分のSlackチャンネルのみ。漏れた疑いがあればローテーションすれば旧URLは無効になる）。未設定の場合、通知は画像なしで送られる（それ以外は正常動作）
