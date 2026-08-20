@@ -136,8 +136,9 @@
       history.replaceState(null, '', base);
       return;
     }
+    let ok = false;
     try {
-      await exchangeToken({
+      ok = await exchangeToken({
         grant_type: 'authorization_code', code: q.get('code'), redirect_uri: base,
         client_id: localStorage.getItem(LS.client), code_verifier: localStorage.getItem(LS.verifier),
       });
@@ -145,12 +146,22 @@
       localStorage.removeItem(LS.verifier);
       localStorage.removeItem(LS.state);
     }
+    // 交換失敗時は失効トークンを残さない（残すと各タブのloggedIn()判定が実状とズレる）
+    if (!ok) localStorage.removeItem(LS.token);
     history.replaceState(null, '', base);
     // 認証状態の変化を全タブへ通知（private時は体重タブがこれを受けてデータを再読込する）
     document.dispatchEvent(new CustomEvent('authchanged'));
     const backTo = sessionStorage.getItem('postLoginTab');
     sessionStorage.removeItem('postLoginTab');
     showTab(backTo || 'meals');
+  }
+  /** refresh_tokenでアクセストークンを再交換する。成功でtrue（apiGet/rw共用） */
+  async function refreshAuth() {
+    if (!localStorage.getItem(LS.refresh)) return false;
+    return exchangeToken({
+      grant_type: 'refresh_token', refresh_token: localStorage.getItem(LS.refresh),
+      client_id: localStorage.getItem(LS.client),
+    });
   }
   /** 認証付き書き込み（/api の POST/PATCH/DELETE）。401はリフレッシュ→再試行、失効時はauthchangedを発火 */
   async function rw(path, method, body) {
@@ -161,17 +172,29 @@
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     let res = await call();
-    if (res.status === 401 && localStorage.getItem(LS.refresh)) {
-      const ok = await exchangeToken({
-        grant_type: 'refresh_token', refresh_token: localStorage.getItem(LS.refresh),
-        client_id: localStorage.getItem(LS.client),
-      });
-      if (ok) res = await call();
+    if (res.status === 401 && (await refreshAuth())) {
+      res = await call();
     }
     if (res.status === 401) {
       localStorage.removeItem(LS.token);
       // 各タブが購読して自分の認証UIを更新する
       document.dispatchEvent(new CustomEvent('authchanged'));
+    }
+    return res;
+  }
+  /**
+   * 読み取りGET（READ_ACCESS=private対応）。ログイン済みならBearerを付け、
+   * 401はリフレッシュ→一度だけ再試行する。publicモードではヘッダー付き素通し。
+   * 書き込みのrw()と違い、最終的に401でもトークンは消さない（判断は呼び出し側）
+   */
+  async function apiGet(path) {
+    const call = () => {
+      const t = localStorage.getItem(LS.token);
+      return fetch(`${base}api/${path}`, t ? { headers: { Authorization: `Bearer ${t}` } } : undefined);
+    };
+    let res = await call();
+    if (res.status === 401 && localStorage.getItem(LS.token) && (await refreshAuth())) {
+      res = await call();
     }
     return res;
   }
@@ -339,6 +362,8 @@
     showTab,
     toast,
     rw,
+    apiGet,
+    refreshAuth,
     login,
     loggedIn,
     handleCallback,

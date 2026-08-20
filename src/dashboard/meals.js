@@ -1,7 +1,7 @@
 /* 食事タブ: 公開READは無認証、書き込みはOAuth(PKCE)のトークンで /api の POST/PATCH/DELETE を呼ぶ。
    タブ切替・OAuth・トースト・ピッカーは shared.js（window.__dash）を使う */
 (() => {
-  const { base, $, esc, todayJst, localDateOf, HISTORY_DAYS, toast, rw, login, loggedIn, handleCallback, createPicker } = window.__dash;
+  const { base, $, esc, todayJst, localDateOf, HISTORY_DAYS, toast, rw, apiGet, login, loggedIn, handleCallback, createPicker } = window.__dash;
 
   // 表示・記録の対象日（空なら今日）
   const selectedDate = () => $('meal-date').value || todayJst();
@@ -50,10 +50,11 @@
   document.addEventListener('tabshown', (e) => {
     if (e.detail === 'meals') refresh();
   });
-  // 履歴の削除ボタンは描画時のloggedIn()で出し分けるため、認証状態が変わったら再描画も行う
+  // 履歴の削除ボタンは描画時のloggedIn()で出し分けるため、認証状態が変わったら再描画も行う。
+  // 再描画は自パネル表示中のみ（非表示タブは次のtabshownで必ずrefreshされるため二重取得を避ける）
   document.addEventListener('authchanged', () => {
     updateAuthUi();
-    refresh();
+    if (!$('panel-meals').hidden) refresh();
   });
   $('meals-login').addEventListener('click', () => {
     login().catch((e) => toast(`ログインを開始できませんでした: ${e.message}`, { tone: 'error' }));
@@ -67,9 +68,10 @@
     const hist = $('meals-history');
     if (!hist.innerHTML) hist.innerHTML = '<p class="meals-empty">読み込み中…</p>';
     try {
+      // apiGet: READ_ACCESS=private のサーバーでもログイン済みなら読めるようBearerを付ける
       const [mealsRes, menusRes] = await Promise.all([
-        fetch(`${base}api/meals?days=${HISTORY_DAYS}`),
-        fetch(`${base}api/menus`),
+        apiGet(`meals?days=${HISTORY_DAYS}`),
+        apiGet('menus'),
       ]);
       // 失敗を空データ扱いすると「まだ記録がありません」に化けて実データが消えたように見える
       if (!mealsRes.ok || !menusRes.ok) throw new Error(`HTTP ${mealsRes.status}/${menusRes.status}`);
@@ -226,7 +228,8 @@
     if (!$('meal-date').value || $('meal-date').value > todayJst()) $('meal-date').value = todayJst();
   });
 
-  // OAuthリダイレクト処理はリスナー登録後に（ログイン完了時にshowTab('meals')→tabshown→refreshが走る）
+  // OAuthリダイレクト処理はリスナー登録後に。ログイン完了時はauthchanged（表示中パネルのrefresh）
+  // →showTab(ログイン前のタブ)→tabshown、の順で再読込される
   handleCallback();
   updateAuthUi();
 })();

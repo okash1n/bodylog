@@ -32,7 +32,7 @@ import chartVendorJs from './dashboard/vendor/chart.umd.js';
 import { appleTouchIconPng } from './dashboard/icon';
 
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
-export const ASSET_VERSION = '2026-08-20-36';
+export const ASSET_VERSION = '2026-08-20-37';
 
 /** バージョン無しURLで配信するasset用（manifest / apple-touch-icon）。immutableにしない */
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';
@@ -55,13 +55,18 @@ const serveIndex: Handler = async (c) => {
   // og:imageは最新計測日のキャッシュバスター付きにする。固定URLだとSlack等の
   // 画像プロキシが一度キャッシュした古いグラフを返し続けるため
   let ogVersion = localToday(c.env);
-  try {
-    const status = await getImportStatus(c.env);
-    if (status.latest_measured_at) {
-      ogVersion = ymdWithOffset(status.latest_measured_at, offsetHours(c.env));
+  // private時は最新計測日を使わない: このHTMLは無認証で配信されるため、?v= に計測日を
+  // 埋めると保護対象のメタデータ（計測の有無・時期）が漏れる。private時のog.pngはどのみち
+  // 401でプレビューに使われないので、キャッシュバスターの精度を落としても機能低下はない
+  if (!isPrivateRead(c.env)) {
+    try {
+      const status = await getImportStatus(c.env);
+      if (status.latest_measured_at) {
+        ogVersion = ymdWithOffset(status.latest_measured_at, offsetHours(c.env));
+      }
+    } catch (err) {
+      console.error('[dashboard] failed to resolve og version (falling back to today)', err);
     }
-  } catch (err) {
-    console.error('[dashboard] failed to resolve og version (falling back to today)', err);
   }
   const html = indexHtmlTpl
     .replaceAll('{{BASE}}', base)
@@ -161,7 +166,7 @@ const serveSummary: Handler = async (c) => {
 
 const serveLlmsTxt: Handler = (c) =>
   c.body(
-    llmsTxt(new URL(c.req.url).origin, dashboardBase(c.env), offsetHours(c.env)),
+    llmsTxt(new URL(c.req.url).origin, dashboardBase(c.env), offsetHours(c.env), isPrivateRead(c.env)),
     200,
     noindexHeaders({
       'Content-Type': 'text/plain; charset=utf-8',
@@ -171,7 +176,7 @@ const serveLlmsTxt: Handler = (c) =>
 
 const serveOpenapi: Handler = (c) =>
   c.json(
-    openapiSpec(new URL(c.req.url).origin, dashboardBase(c.env), offsetHours(c.env)),
+    openapiSpec(new URL(c.req.url).origin, dashboardBase(c.env), offsetHours(c.env), isPrivateRead(c.env)),
     200,
     noindexHeaders({ 'Cache-Control': STATIC_CACHE_CONTROL }),
   );

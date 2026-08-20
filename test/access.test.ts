@@ -2,7 +2,7 @@ import { createExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/types';
 import worker from '../src/index';
-import { runDailyDigest } from '../src/slack';
+import { processNotificationBatches, runDailyDigest } from '../src/slack';
 import {
   insertMeasurement, localYmdDaysAgo, obtainAccessToken, resetTables, rootTestEnv, stubFetch, testEnv,
 } from './helpers';
@@ -76,6 +76,33 @@ describe('READ_ACCESS=private の読み取り保護', () => {
     expect((await get(privateEnv, '/api/summary', { Authorization: 'Bearer wrong' })).status).toBe(401);
   });
 
+  it('llms.txt / openapi.json は認可付きで取得でき、private向けの文言になる', async () => {
+    const llms = await get(privateEnv, '/llms.txt', { Authorization: `Bearer ${COACH_SECRET}` });
+    expect(llms.status).toBe(200);
+    const text = await llms.text();
+    expect(text).toContain('READ_ACCESS=private');
+    expect(text).not.toContain('認証不要');
+    const spec = await get(privateEnv, '/openapi.json', { Authorization: `Bearer ${COACH_SECRET}` });
+    const body = (await spec.json()) as {
+      info: { description: string };
+      components: { securitySchemes?: Record<string, unknown> };
+      security?: unknown[];
+    };
+    expect(body.info.description).not.toContain('認証不要');
+    expect(body.components.securitySchemes).toHaveProperty('bearerAuth');
+    expect(body.security).toEqual([{ bearerAuth: [] }]);
+  });
+
+  it('シェルHTMLのog:image ?v= に最新計測日を埋めない（無認証HTMLからの計測メタデータ漏洩防止）', async () => {
+    // beforeEachのseedは昨日の計測。privateでは ?v= が計測日由来にならないこと
+    const yesterday = localYmdDaysAgo(1);
+    const privateHtml = await (await get(privateEnv, '/')).text();
+    expect(privateHtml).not.toContain(`og.png?v=${yesterday}`);
+    // publicでは従来どおり最新計測日がキャッシュバスターに使われる（回帰確認）
+    const publicHtml = await (await get(rootTestEnv, '/')).text();
+    expect(publicHtml).toContain(`og.png?v=${yesterday}`);
+  });
+
   it('og.png は key 一致で通り、不一致・欠落は401', async () => {
     expect((await get(privateEnv, `/og.png?v=x&key=${OG_TOKEN}`)).status).toBe(200);
     expect((await get(privateEnv, '/og.png?v=x&key=wrong')).status).toBe(401);
@@ -138,6 +165,25 @@ describe('private時のSlack画像URL', () => {
     const env: Env = { ...privateEnv, SLACK_WEBHOOKS: dailyWebhooks };
     const stub = stubFetch().on({ host: SLACK_HOST, method: 'POST', times: 1, reply: () => new Response('ok') });
     await runDailyDigest(env, 'https://origin.example');
+    const posts = stub.requests({ host: SLACK_HOST });
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toContain(`key=${OG_TOKEN}`);
+  });
+
+  it('即時通知（processNotificationBatches）の画像URLにも key が付く', async () => {
+    await seedToday();
+    const env: Env = {
+      ...privateEnv,
+      SLACK_WEBHOOKS: '[{"id":"main","url":"https://hooks.slack.com/services/T0/B0/X","mode":"immediate"}]',
+    };
+    await testEnv.DB.prepare(
+      'INSERT INTO notification_batch_items (measurement_id, batch_id) VALUES (7201, ?1)',
+    ).bind('b-imm').run();
+    await testEnv.DB.prepare(
+      "INSERT INTO notification_batches (batch_id, destination_id, status, next_attempt_at) VALUES (?1, 'main', 'pending', datetime('now', '-5 seconds'))",
+    ).bind('b-imm').run();
+    const stub = stubFetch().on({ host: SLACK_HOST, method: 'POST', times: 1, reply: () => new Response('ok') });
+    await processNotificationBatches(env, 'https://origin.example');
     const posts = stub.requests({ host: SLACK_HOST });
     expect(posts).toHaveLength(1);
     expect(posts[0].body).toContain(`key=${OG_TOKEN}`);

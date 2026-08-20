@@ -106,7 +106,18 @@ ${warn}<p>計測データの初期インポートを開始しました。</p>
   const url = ${JSON.stringify(statusPath)};
   const poll = async () => {
     try {
-      const res = await fetch(url, { cache: 'no-store' });
+      // READ_ACCESS=private でも進捗が見えるよう、ダッシュボードのログイントークンがあれば付ける
+      let token = null;
+      try { token = localStorage.getItem('meals.token'); } catch {}
+      const res = await fetch(url, {
+        cache: 'no-store',
+        headers: token ? { Authorization: 'Bearer ' + token } : {},
+      });
+      if (res.status === 401) {
+        // private かつ未ログイン。無限に再試行しても通らないため案内に切り替えて停止する
+        el.textContent = '進捗の表示にはログインが必要です。ダッシュボードを開いてログイン後に確認してください（インポート自体は進行しています）';
+        return;
+      }
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const s = await res.json();
       if (s.import_status === 'done') { el.textContent = '初期インポート完了'; return; }

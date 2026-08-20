@@ -9,13 +9,16 @@ function apiRoot(origin: string, base: string): string {
   return `${origin}${base.replace(/\/$/, '')}`;
 }
 
-export function llmsTxt(origin: string, base: string, tzOffsetHours: number): string {
+export function llmsTxt(origin: string, base: string, tzOffsetHours: number, isPrivate = false): string {
   const root = apiRoot(origin, base);
+  const accessLine = isPrivate
+    ? 'このデプロイは非公開設定（READ_ACCESS=private）: REST（GET）を含む全データアクセスに Authorization: Bearer（オーナーのOAuthトークン）が必要。AI連携はMCP（OAuth 2.1）を使うこと。'
+    : 'REST（GET）はすべて読み取り専用・認証不要。書き込みはOAuth 2.1で保護された /mcp と /api/*（POST/DELETE等）。';
   return `# bodylog
 
 個人の体重・体組成・食事・運動（1ユーザー分）を記録しているサービスのAPI。
 体重はWithings体重計連携または手動記録（source: withings | manual）で入る。
-REST（GET）はすべて読み取り専用・認証不要。書き込みはOAuth 2.1で保護された /mcp と /api/*（POST/DELETE等）。
+${accessLine}
 
 ## データの読み方
 
@@ -68,6 +71,7 @@ export function openapiSpec(
   origin: string,
   base: string,
   tzOffsetHours: number,
+  isPrivate = false,
 ): Record<string, unknown> {
   const rangeParams = [
     {
@@ -110,10 +114,20 @@ export function openapiSpec(
       title: 'bodylog API',
       version: '1.0.0',
       description:
-        `個人の体重・体組成・食事・運動（1ユーザー分）の読み取り専用API。認証不要。体重はWithings連携または手動記録で入る。` +
+        `個人の体重・体組成・食事・運動（1ユーザー分）の読み取り専用API。` +
+        (isPrivate
+          ? '非公開設定（READ_ACCESS=private）のため全パスに Authorization: Bearer（オーナーのOAuthトークン）が必要。'
+          : '認証不要。') +
+        `体重はWithings連携または手動記録で入る。` +
         `質量の単位はkg（fat_ratioのみ%）。fat_massは weight - fat_free_mass の導出値。` +
         `日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours}のローカル日付。`,
     },
+    // private時はBearer必須をspecとしても宣言する（Actions等のクライアントが誤って無認証で叩かないように）
+    ...(isPrivate
+      ? {
+          security: [{ bearerAuth: [] }],
+        }
+      : {}),
     servers: [{ url: apiRoot(origin, base) }],
     paths: {
       '/api/summary': {
@@ -502,6 +516,9 @@ export function openapiSpec(
       },
     },
     components: {
+      ...(isPrivate
+        ? { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } } }
+        : {}),
       schemas: {
         MetricTriple: metricTripleSchema,
         DayPoint: {

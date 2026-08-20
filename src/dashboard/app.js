@@ -264,8 +264,40 @@
   }
 
   function apiFetch(url) {
-    var t = authToken();
-    return fetch(url, t ? { headers: { Authorization: 'Bearer ' + t } } : undefined);
+    var call = function () {
+      var t = authToken();
+      return fetch(url, t ? { headers: { Authorization: 'Bearer ' + t } } : undefined);
+    };
+    return call().then(function (res) {
+      // アクセストークン失効はリフレッシュ→一度だけ再試行（書き込みrw()と同じ回復性）
+      if (res.status !== 401 || !authToken()) return res;
+      var dash = window.__dash;
+      if (!dash || !dash.refreshAuth) return res;
+      return dash.refreshAuth().then(function (ok) {
+        return ok ? call() : res;
+      });
+    });
+  }
+
+  /* private時: 未認証でログイン画面に落ちたら、SWが貯めたAPI応答を消す
+     （Cache APIはno-storeを無視して保存するため、放置するとオフライン時に旧データが無認証で見える） */
+  function purgeApiCaches() {
+    if (!('caches' in window)) return;
+    caches
+      .keys()
+      .then(function (names) {
+        names.forEach(function (name) {
+          if (name.indexOf('weight-dash-') !== 0) return;
+          caches.open(name).then(function (cache) {
+            cache.keys().then(function (reqs) {
+              reqs.forEach(function (req) {
+                if (req.url.indexOf('/api/') !== -1) cache.delete(req);
+              });
+            });
+          });
+        });
+      })
+      .catch(function () {});
   }
 
   function updateOnlineState() {
@@ -299,6 +331,8 @@
       clearTimeout(importPollTimer);
       importPollTimer = null;
     }
+    // レース対策: リクエスト発射後にログインコールバックがトークンを取得したケースを検出する
+    var tokenAtStart = authToken();
     showState('loading');
     var r = rangeForPeriod();
     var url = BASE + 'api/measurements?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
@@ -381,6 +415,14 @@
       })
       .catch(function (err) {
         if (err && err.authRequired) {
+          // 発射後にトークンが変わっていたら（ログイン完了とのレース）一度だけ再試行。
+          // 変わっていなければ本当に未認証なのでログイン画面へ（再帰は次回tokenAtStart一致で止まる）
+          if (authToken() !== tokenAtStart) {
+            loadData();
+            loadCoaching();
+            return;
+          }
+          purgeApiCaches();
           showState('auth');
           return;
         }

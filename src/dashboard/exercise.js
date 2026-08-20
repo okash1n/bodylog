@@ -1,7 +1,7 @@
 /* 運動タブ: 公開READは無認証、書き込みはOAuth(PKCE)のトークンで /api の POST/DELETE を呼ぶ。
    タブ切替・OAuth・トースト・ピッカーは shared.js（window.__dash）を使う */
 (() => {
-  const { base, $, esc, todayJst, localDateOf, HISTORY_DAYS, toast, rw, login, loggedIn, createPicker } = window.__dash;
+  const { base, $, esc, todayJst, localDateOf, HISTORY_DAYS, toast, rw, apiGet, login, loggedIn, createPicker } = window.__dash;
 
   const selectedDate = () => $('exercise-date').value || todayJst();
 
@@ -36,10 +36,11 @@
     $('exercise-add-form').hidden = !loggedIn();
     $('exercise-menus-manage').hidden = !loggedIn();
   }
-  // 履歴の削除ボタンは描画時のloggedIn()で出し分けるため、認証状態が変わったら再描画も行う
+  // 履歴の削除ボタンは描画時のloggedIn()で出し分けるため、認証状態が変わったら再描画も行う。
+  // 再描画は自パネル表示中のみ（非表示タブは次のtabshownで必ずrefreshされるため二重取得を避ける）
   document.addEventListener('authchanged', () => {
     updateAuthUi();
-    refresh();
+    if (!$('panel-exercise').hidden) refresh();
   });
   $('exercise-login').addEventListener('click', () => {
     login().catch((e) => toast(`ログインを開始できませんでした: ${e.message}`, { tone: 'error' }));
@@ -51,11 +52,12 @@
     const hist = $('exercise-history');
     if (!hist.innerHTML) hist.innerHTML = '<p class="meals-empty">読み込み中…</p>';
     try {
+      // apiGet: READ_ACCESS=private のサーバーでもログイン済みなら読めるようBearerを付ける
       const responses = await Promise.all([
-        fetch(`${base}api/exercise/logs?days=${HISTORY_DAYS}`),
-        fetch(`${base}api/exercise/menus`),
-        fetch(`${base}api/exercise/daily?days=${HISTORY_DAYS}`),
-        fetch(`${base}api/measurements?days=${HISTORY_DAYS}`),
+        apiGet(`exercise/logs?days=${HISTORY_DAYS}`),
+        apiGet('exercise/menus'),
+        apiGet(`exercise/daily?days=${HISTORY_DAYS}`),
+        apiGet(`measurements?days=${HISTORY_DAYS}`),
       ]);
       // 失敗を空データ扱いすると「まだ記録がありません」に化けて実データが消えたように見える
       if (responses.some((r) => !r.ok)) throw new Error(`HTTP ${responses.map((r) => r.status).join('/')}`);

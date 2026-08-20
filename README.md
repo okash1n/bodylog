@@ -1,6 +1,6 @@
 # bodylog
 
-体重・体組成に加え、食事・運動の記録も扱うシングルユーザー向けの「からだ」トラッキングアプリ。Cloudflare Workers で受け取り、D1 に保存し、Slack 通知と公開ダッシュボードで可視化する。体重の入力は **Withings 体重計連携（任意）** と **手動記録（MCP / REST API）** の2経路がある。
+体重・体組成に加え、食事・運動の記録も扱うシングルユーザー向けの「からだ」トラッキングアプリ。Cloudflare Workers で受け取り、D1 に保存し、Slack 通知とダッシュボード（既定は公開。`READ_ACCESS` で要ログインにもできる）で可視化する。体重の入力は **Withings 体重計連携（任意）** と **手動記録（MCP / REST API）** の2経路がある。
 
 Fork/clone して設定値を差し替えるだけで動く（コード変更不要）。Cloudflare 無料枠内で動作する。
 
@@ -8,7 +8,7 @@ Fork/clone して設定値を差し替えるだけで動く（コード変更不
 - エネルギー収支: 消費 = 基礎代謝（BMR。Katch-McArdle: 370 + 21.6 × 実測除脂肪体重。その日以前で最新の実測FFMを carry-forward し、実測が一度も無い期間は算出しない。**基礎代謝を体重や年齢・性別ではなく実測の除脂肪体重から算定する**ため、同じ体重でも体組成の違いがそのまま反映され、一般式（Harris-Benedict 等）より個人に即したかなり正確な推定になる） + 運動消費（有酸素のみ、METs×体重×時間×1.05。筋トレはkcalではなく総ボリュームで追跡し、ダッシュボードで除脂肪体重の推移と重ねて見られる）。カロリー収支 = 摂取 − 総消費（日常活動・食事誘発性熱産生は含まない推定値）
 - 通知: Slack Incoming Webhook（複数送信先対応）。最新計測値・7日間平均（前ターム比）・基準日からの変化に加え、**直近30日のグラフ画像を通知に直接埋め込む**
 - ダッシュボード: PWA 対応・noindex。実測⇔7日平均のワンクリック切替、期間プリセット（1M/3M/1Y/カスタム）、日次集計⇔計測明細の表、ライト/ダークテーマ、OGP 画像を Worker 内で生成。食事・運動タブから記録の閲覧・入力もでき、体重グラフには摂取/消費（基礎代謝＋運動）/カロリー収支を重ねられる
-- 食事記録: 登録済みメニュー（マスタ）からのみ記録する方式（自由入力ではない）。PFC比率はP×4/F×9/C×4kcal換算による3者内正規化で算出する（登録kcalでは割らない）。閲覧は公開API・認証不要、記録・メニュー登録はオーナーの Google アカウントによる OAuth 2.1 認可が必要
+- 食事記録: 登録済みメニュー（マスタ）からのみ記録する方式（自由入力ではない）。PFC比率はP×4/F×9/C×4kcal換算による3者内正規化で算出する（登録kcalでは割らない）。閲覧は既定（`READ_ACCESS=public`）では認証不要、記録・メニュー登録はオーナーの Google アカウントによる OAuth 2.1 認可が必要
 - インフラ: Cloudflare Workers + D1 + KV（KV は食事・運動記録の書き込みAPI、および MCP の書き込みツール用 OAuth の認可フロー・トークン保存にのみ使用。Queues / Durable Objects は不使用）。外部依存は Hono / Chart.js / `@cloudflare/workers-oauth-provider` / `@modelcontextprotocol/sdk` / `@hono/mcp` / zod
 - 動作確認済みバージョン: Node.js 22+ / wrangler 4.122（大きく異なるバージョンでは手順が変わることがある）
 
@@ -52,7 +52,7 @@ Webhook は受信内容を即座に D1 の inbox テーブルへ永続化して 
 
 - Cloudflare アカウント（無料プランで OK）
 - 通知先 Slack ワークスペースで App 作成・Webhook 発行ができる権限
-- Google アカウントと Google Cloud プロジェクト（食事・運動記録・体重の手動記録など書き込み機能で OAuth クライアントを作成する場合。**Withings を使わない場合は体重の記録にも必要**。閲覧だけなら不要）
+- Google アカウントと Google Cloud プロジェクト（食事・運動記録・体重の手動記録など書き込み機能で OAuth クライアントを作成する場合。**Withings を使わない場合は体重の記録にも必要**。閲覧だけなら不要だが、`READ_ACCESS=private`（閲覧も要ログイン）にする場合は必要）
 - Node.js（npm）とターミナル
 - **任意**: Withings アカウント（体重計連携を使う場合のみ。**体重計が無くても使える**: 無料の Withings アプリから体重を手入力すれば同じ経路で取り込まれる（手入力 attrib=2 も機器計測 attrib=0 と同様に採用）。Withings をまったく使わない場合も、MCP の `log_weight` か `POST /api/weight` で体重を手動記録すれば全機能が動く）
 
@@ -195,7 +195,7 @@ npx wrangler d1 execute bodylog --remote \
 
 ### 9. 書き込み機能（食事・運動の記録と体重の手動記録）のセットアップ
 
-メニュー・食事記録・運動記録の**閲覧**（`/api/menus` `/api/meals` `/api/meals/daily` `/api/exercise/menus` `/api/exercise/logs` `/api/exercise/daily`、ダッシュボードの食事・運動タブ表示）は追加設定なしで動く。**記録の書き込み**（ダッシュボードでの入力、`{base}/api/*` の POST/PATCH/DELETE（`{base}/api/weight` を含む）、MCP の書き込みツール）は Google アカウントによる OAuth 2.1 認可が必要で、以下を設定しないと `/authorize` が実行時エラーになる（KV ネームスペースは手順4で作成済み）。**Withings を使わない場合、体重の記録にはこの手順が必須**。
+メニュー・食事記録・運動記録の**閲覧**（`/api/menus` `/api/meals` `/api/meals/daily` `/api/exercise/menus` `/api/exercise/logs` `/api/exercise/daily`、ダッシュボードの食事・運動タブ表示）は既定（`READ_ACCESS=public`）では追加設定なしで動く。**記録の書き込み**（ダッシュボードでの入力、`{base}/api/*` の POST/PATCH/DELETE（`{base}/api/weight` を含む）、MCP の書き込みツール）は Google アカウントによる OAuth 2.1 認可が必要で、以下を設定しないと `/authorize` が実行時エラーになる（KV ネームスペースは手順4で作成済み）。**Withings を使わない場合、体重の記録にはこの手順が必須**。
 
 1. 新規の Google Cloud プロジェクトの場合は、先に **OAuth 同意画面**を構成する（User type: External、アプリ名等を入力）。公開ステータスが「テスト中（Testing）」の間は、`OWNER_EMAILS` に入れる予定の Google アカウントを**テストユーザーに追加**すること（追加しないとログインが 403 access_denied で拒否され、`OWNER_EMAILS` のチェック以前に失敗する）
 
@@ -264,10 +264,11 @@ npx wrangler d1 execute bodylog --remote \
 - AIコーチングは対応済み（ジョブが `COACHING_API_SECRET` で読み取る）。追加設定不要
 - **使えなくなるもの**: ChatGPT カスタムGPT（Actions）と `llms.txt` のURL渡しなど無認証のAI読み取り、リンクプレビューのグラフ画像（OGP）。AIからの照会は MCP（OAuth）を使う
 - 「アプリが存在すること」自体は隠れない（ホスト名は証明書の透明性ログ等で公開される）。存在ごと隠したい場合は Cloudflare Access などドメイン前段の保護を検討する
+- public から private へ切り替えた場合、過去にブラウザへ配信されたデータが端末内キャッシュ（PWAのService Worker）に残っていることがある。ログイン画面が表示された時点でAPIキャッシュは自動削除されるが、確実に消すにはそのブラウザのサイトデータを削除する
 
 ## エンドポイント一覧
 
-ダッシュボード配下のパスは、`DASHBOARD_SLUG` 設定時は `/d/{DASHBOARD_SLUG}/` 配下、空文字時はドメイン直下（`/`）になる。書き込み（POST/PATCH/DELETE）は読み取りと同じ `{base}/api/*` パスにメソッドで同居し、ハンドラごとに Bearer トークン（OAuth）を検証して個別に保護する。MCP（`/mcp`）と OAuth 認可フロー（`/authorize` `/token` `/register`）は `DASHBOARD_SLUG` の設定にかかわらず常にドメイン直下で動く。
+ダッシュボード配下のパスは、`DASHBOARD_SLUG` 設定時は `/d/{DASHBOARD_SLUG}/` 配下、空文字時はドメイン直下（`/`）になる。書き込み（POST/PATCH/DELETE）は読み取りと同じ `{base}/api/*` パスにメソッドで同居し、ハンドラごとに Bearer トークン（OAuth）を検証して個別に保護する。表中の「認証不要」は既定（`READ_ACCESS=public`）の場合で、`private` では GET のデータ読み取りにもオーナーの Bearer が必要（前述「アクセス制御」参照）。MCP（`/mcp`）と OAuth 認可フロー（`/authorize` `/token` `/register`）は `DASHBOARD_SLUG` の設定にかかわらず常にドメイン直下で動く。
 
 | ルート | 役割 |
 |---|---|
@@ -298,7 +299,7 @@ npx wrangler d1 execute bodylog --remote \
 | `POST {base}/api/weight` / `DELETE {base}/api/weight/:id` | 認証必須。体重の手動記録の作成・削除（`weight_kg` 必須 20-300、`fat_ratio` 任意 3-75%、`measured_at` 任意 ISO8601。削除は `source='manual'` の行のみ） |
 | `GET {base}/llms.txt` | AI向けのAPI案内（プレーンテキスト） |
 | `GET {base}/openapi.json` | OpenAPI 3.1 定義（ChatGPT カスタムGPTの Actions 登録用） |
-| `GET {base}/og.png` | OGP 画像（直近30日の体重グラフを PNG 生成。依存ライブラリなしの自前エンコーダ） |
+| `GET {base}/og.png` | OGP 画像（直近30日の体重グラフを PNG 生成。依存ライブラリなしの自前エンコーダ）。`READ_ACCESS=private` では `?key={OG_ACCESS_TOKEN}` でも取得可（Slack 埋め込み用の例外） |
 | 上記以外 | 404（全レスポンスに `X-Robots-Tag: noindex` 付与） |
 
 cron トリガー:
@@ -323,7 +324,7 @@ cron トリガー:
 
 ## AI から使う
 
-ChatGPT・Claude などのAIクライアントから体重推移・食事記録・運動記録を照会できる。**読み取りはすべて認証不要**（公開範囲はダッシュボードと同じ）。食事・運動の**記録・メニュー/種目登録**（書き込み）はオーナーの Google アカウントによる OAuth 2.1 認可が必要。
+ChatGPT・Claude などのAIクライアントから体重推移・食事記録・運動記録を照会できる。**既定（`READ_ACCESS=public`）では読み取りは認証不要**（公開範囲はダッシュボードと同じ）。食事・運動の**記録・メニュー/種目登録**（書き込み）はオーナーの Google アカウントによる OAuth 2.1 認可が必要。`READ_ACCESS=private` の場合、以下の「URLを渡して読ませる」「ChatGPT カスタムGPT（Actions）」は使えない（AI照会は MCP のみ。「アクセス制御」参照）。
 
 - **URLを渡して読ませる**: `https://weight.example.com/llms.txt` にエンドポイント一覧と使い方が載っているので、「このURLを見て最近の体重推移を教えて」だけで動く。要約は `/api/summary`、時系列は `/api/measurements?days=90` のように相対期間で取れる。食事記録は `/api/menus` `/api/meals` `/api/meals/daily`、運動記録は `/api/exercise/menus` `/api/exercise/logs` `/api/exercise/daily` で照会できる
 - **ChatGPT カスタムGPT（Actions）**: GPT編集画面の Actions で「URLからインポート」に `https://weight.example.com/openapi.json` を指定する。認証は「なし」（読み取り専用）
@@ -388,6 +389,7 @@ npx wrangler d1 execute bodylog --remote \
 
 - [ ] ダッシュボードを開くとグラフが表示される（Withings 利用時は初期インポート済みの過去データ、Withings 無しなら手順10 で記録した分）
 - [ ] `{base}/api/measurements?from=<開始日>&to=<終了日>` が JSON を返す
+- [ ] （`READ_ACCESS=private` 利用時）無認証ではダッシュボードがログイン画面になり、上記APIは 401 `{"error":"unauthorized"}` を返す。`OWNER_EMAILS` のアカウントでログインするとグラフ・データが見える
 - [ ] （Withings利用時）体重計に載る → 数分以内に全チャンネルへ Slack 通知（グラフ画像付き）が届き、D1 にも行が増えている:
 
   ```sh
@@ -486,7 +488,7 @@ npx wrangler secret put SETUP_SECRET   # 新しい値を入力
 
 ### レート制限（推奨）
 
-カスタムドメイン運用（自分のゾーンに Worker を載せている場合）が前提。`*.workers.dev` のみの運用ではゾーンの WAF/レート制限は設定できない。`/authorize` `/register` `/token`（OAuth 認可フロー）は総当たり・乱用の対象になりうるため、Cloudflare のゾーンのレート制限ルールを設定することを推奨する（無料プランでもゾーンごとに1ルールまで利用できる）。余裕があれば公開 GET API 全般にも広げるとよい。これはアプリのコードではなく Cloudflare ダッシュボード側（ゾーンの Security / WAF）で設定するもので、Fork したユーザーが自分のゾーンに対して個別に行う必要がある。しきい値は実際のトラフィックに合わせて調整すること。
+カスタムドメイン運用（自分のゾーンに Worker を載せている場合）が前提。`*.workers.dev` のみの運用ではゾーンの WAF/レート制限は設定できない。`/authorize` `/register` `/token`（OAuth 認可フロー）は総当たり・乱用の対象になりうるため、Cloudflare のゾーンのレート制限ルールを設定することを推奨する（無料プランでもゾーンごとに1ルールまで利用できる）。余裕があればデータ読み取りの GET API 全般にも広げるとよい（`READ_ACCESS=private` でも、401応答の invocation 消費や `og.png?key=` の総当たり対策として有効）。これはアプリのコードではなく Cloudflare ダッシュボード側（ゾーンの Security / WAF）で設定するもので、Fork したユーザーが自分のゾーンに対して個別に行う必要がある。しきい値は実際のトラフィックに合わせて調整すること。
 
 ## うまくいかないとき
 
@@ -501,6 +503,8 @@ npx wrangler secret put SETUP_SECRET   # 新しい値を入力
 - **通知が一部のチャンネルだけ届かない**: Slack 側の 429/5xx は自動で再試行されるので少し待つ。再試行上限を超えると管理者向けアラートが届くので、Webhook URL の失効を確認して `SLACK_WEBHOOKS` を更新する
 - **CI のデプロイで手元の変更が巻き戻った**: `WRANGLER_TOML` Secret が古い。`gh secret set WRANGLER_TOML < wrangler.toml` で更新して再実行する
 - **体重を手動記録できない**: `OWNER_EMAILS` に含まれないアカウントでログインしていると 403（Google 認証自体は成功する点に注意）。Bearer トークンが切れていると 401（MCP クライアントは再接続、API は再認可でトークンを取り直す）。400 はバリデーション（`weight_kg` 20-300 / `fat_ratio` 3-75% / `measured_at` が未来）を確認
+- **（private時）Slack 通知に画像が付かない**: `READ_ACCESS=private` で `OG_ACCESS_TOKEN` 未設定のときの意図的な動作（「Slack 通知は来るがグラフが空」とは別の症状）。画像を維持するには `npx wrangler secret put OG_ACCESS_TOKEN` を登録する（「アクセス制御」参照）
+- **（private時）llms.txt の URL 渡しや ChatGPT Actions が 401 になる**: `READ_ACCESS=private` では無認証のAI読み取りは仕様上使えない。AIからの照会は MCP（OAuth）を使う（「アクセス制御」参照）
 
 ## 開発
 
