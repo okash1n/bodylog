@@ -9,7 +9,9 @@ import type {
   NotifyMode,
   SlackDestination,
 } from './types';
-import { LIMITS, assertSecret, dashboardBase, isoNow, offsetHours, ymdWithOffset } from './util';
+import {
+  LIMITS, assertSecret, dashboardBase, isPrivateRead, isoNow, offsetHours, ymdWithOffset,
+} from './util';
 import {
   composeStats, getDailySeries, getDayMeasurementCount, getLatestForBatch, getNotificationStats, getStatsParts,
 } from './queries';
@@ -395,6 +397,17 @@ export async function runDailyDigest(env: Env, origin: string): Promise<{ queued
   );
 }
 
+/**
+ * Slackメッセージに埋め込む og.png のURL。READ_ACCESS=private では OG_ACCESS_TOKEN 付きURLで
+ * 例外的に通す（Slackの画像プロキシは認証ヘッダーを付けられない）。トークン未設定なら
+ * undefined を返し、呼び出し側のビルダーが画像ブロック自体を省略する（機能degrade、障害ではない）。
+ */
+function ogImageUrlFor(env: Env, base: string, v: string): string | undefined {
+  if (!isPrivateRead(env)) return `${base}og.png?v=${v}`;
+  if (!env.OG_ACCESS_TOKEN) return undefined;
+  return `${base}og.png?v=${v}&key=${encodeURIComponent(env.OG_ACCESS_TOKEN)}`;
+}
+
 async function buildDailyDigestMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
   try {
     const date = batchId.slice(DAILY_BATCH_PREFIX.length);
@@ -433,7 +446,7 @@ async function buildDailyDigestMessage(env: Env, origin: string, batchId: string
         exercise,
         coaching,
         dashboardUrl: `${base}?v=${date}`,
-        ogImageUrl: `${base}og.png?v=${v}`,
+        ogImageUrl: ogImageUrlFor(env, base, v),
       }),
     };
   } catch (e) {
@@ -574,7 +587,7 @@ async function buildBatchMessage(env: Env, origin: string, batchId: string): Pro
         stats,
         dashboardUrl: `${base}?v=${v}`,
         tzOffset,
-        ogImageUrl: `${base}og.png?v=${v}-r${OG_RENDERER_VERSION}`,
+        ogImageUrl: ogImageUrlFor(env, base, `${v}-r${OG_RENDERER_VERSION}`),
       }),
     };
   } catch (e) {

@@ -247,6 +247,24 @@ npx wrangler d1 execute bodylog --remote \
 3. （Withings 連携時のみ）Withings アプリの REGISTERED URLS を新ドメインに更新する
 4. （Withings 連携時のみ）notify 購読の付け替えは日次 cron が自動で行う（`settings.public_origin` は認可時・通知時のリクエスト origin から更新される。即時に切り替えたい場合は再認可する）
 
+## アクセス制御（READ_ACCESS）
+
+閲覧範囲を `wrangler.toml` の `READ_ACCESS` で選べる（変更後は再デプロイ。CI利用時は `WRANGLER_TOML` Secret も更新）:
+
+| モード | 閲覧（グラフ・API読み取り） | 記録（書き込み） |
+|---|---|---|
+| `"public"`（既定） | 誰でも可（URLを知っている人。従来どおり） | オーナーの Google ログイン必須 |
+| `"private"` | **オーナーの Google ログイン必須** | 同左 |
+
+`private` の動作と注意:
+
+- ダッシュボードを開くとログイン画面になり、`OWNER_EMAILS` のアカウントでログインすると閲覧できる。アプリの外枠（HTML/JS）は配信されるが、データは一切出ない
+- 保護されるのは `{base}/api/*` の読み取り・`llms.txt`・`openapi.json`・`og.png`。MCP・書き込み・Withings webhook・ログイン用エンドポイントは従来どおり
+- **Slack通知のグラフ画像を維持するには** `npx wrangler secret put OG_ACCESS_TOKEN`（`openssl rand -hex 32` 等）を登録する。通知内の画像URLにこのキーが付いて例外的に通る（露出先は自分のSlackチャンネルのみ。漏れた疑いがあればローテーションすれば旧URLは無効になる）。未設定の場合、通知は画像なしで送られる（それ以外は正常動作）
+- AIコーチングは対応済み（ジョブが `COACHING_API_SECRET` で読み取る）。追加設定不要
+- **使えなくなるもの**: ChatGPT カスタムGPT（Actions）と `llms.txt` のURL渡しなど無認証のAI読み取り、リンクプレビューのグラフ画像（OGP）。AIからの照会は MCP（OAuth）を使う
+- 「アプリが存在すること」自体は隠れない（ホスト名は証明書の透明性ログ等で公開される）。存在ごと隠したい場合は Cloudflare Access などドメイン前段の保護を検討する
+
 ## エンドポイント一覧
 
 ダッシュボード配下のパスは、`DASHBOARD_SLUG` 設定時は `/d/{DASHBOARD_SLUG}/` 配下、空文字時はドメイン直下（`/`）になる。書き込み（POST/PATCH/DELETE）は読み取りと同じ `{base}/api/*` パスにメソッドで同居し、ハンドラごとに Bearer トークン（OAuth）を検証して個別に保護する。MCP（`/mcp`）と OAuth 認可フロー（`/authorize` `/token` `/register`）は `DASHBOARD_SLUG` の設定にかかわらず常にドメイン直下で動く。

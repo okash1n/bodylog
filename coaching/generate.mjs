@@ -43,7 +43,11 @@ function localYmd(daysAgo = 0) {
 }
 
 async function getJson(path) {
-  const res = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(15_000) });
+  // READ_ACCESS=private のWorkerでも読めるよう常にBearerを付ける（publicモードでは無視される）
+  const res = await fetch(`${base}${path}`, {
+    headers: { Authorization: `Bearer ${secret}` },
+    signal: AbortSignal.timeout(15_000),
+  });
   if (!res.ok) throw new Error(`GET ${path} -> HTTP ${res.status}`);
   return res.json();
 }

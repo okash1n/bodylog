@@ -13,6 +13,7 @@
 #   wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET  # 同 Client Secret
 #   wrangler secret put OWNER_EMAILS                # 書き込みを許可するGoogleアカウントのメール（カンマ区切り、例: "a@example.com,b@example.com"）
 #   wrangler secret put COACHING_API_SECRET         # 任意: AIコーチング（GitHub Actions）用。GitHub Secrets側と同値を登録
+#   wrangler secret put OG_ACCESS_TOKEN             # 任意: READ_ACCESS=private時にSlack通知のグラフ画像を通すキー（openssl rand -hex 32）
 
 name = "bodylog"
 main = "src/index.ts"
@@ -45,6 +46,9 @@ WEBHOOK_PATH_SECRET = "CHANGE_ME_RANDOM_HEX"
 DASHBOARD_SLUG = "CHANGE_ME_RANDOM_SLUG"
 # 集計・表示のタイムゾーンオフセット（時間）。固定オフセットでDST非対応。既定 9 = JST
 TZ_OFFSET_HOURS = "9"
+# 読み取りアクセス制御: "public"（既定）= 誰でも閲覧可 / "private" = データの閲覧もオーナーのGoogleログイン必須
+# private時の注意はREADMEの「アクセス制御」参照（Slack画像用のOG_ACCESS_TOKEN、ChatGPT Actions不可 等）
+READ_ACCESS = "public"
 
 [triggers]
 # 5分毎: inbox回収・通知再送・初期インポート再開・日次ダイジェスト送信判定

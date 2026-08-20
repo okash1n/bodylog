@@ -145,6 +145,7 @@
 
   var els = {
     skeleton: $('state-skeleton'),
+    auth: $('state-auth'),
     empty: $('state-empty'),
     emptyMessage: $('empty-message'),
     emptyReload: $('empty-reload'),
@@ -245,9 +246,26 @@
 
   function showState(name) {
     els.skeleton.classList.toggle('hidden', name !== 'loading');
+    els.auth.classList.toggle('hidden', name !== 'auth');
     els.empty.classList.toggle('hidden', name !== 'empty');
     els.error.classList.toggle('hidden', name !== 'error');
     els.content.classList.toggle('hidden', name !== 'ready');
+  }
+
+  /* READ_ACCESS=private のサーバー向け: ログイン済みなら読み取りにもBearerを付ける。
+     app.jsは同期実行でshared.js（defer）より先に動くため、localStorageを直接参照する
+     （キー名はshared.jsのLS.tokenと同じ。publicモードではヘッダーが付いても無害） */
+  function authToken() {
+    try {
+      return localStorage.getItem('meals.token');
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function apiFetch(url) {
+    var t = authToken();
+    return fetch(url, t ? { headers: { Authorization: 'Bearer ' + t } } : undefined);
   }
 
   function updateOnlineState() {
@@ -265,7 +283,7 @@
   }
 
   function fetchStatus() {
-    return fetch(BASE + 'api/status')
+    return apiFetch(BASE + 'api/status')
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
@@ -292,7 +310,7 @@
     var exUrl = BASE + 'api/exercise/daily?from=' + encodeURIComponent(calFrom) + '&to=' + encodeURIComponent(r.to);
     // カロリー系の日次は取得失敗しても体重表示を壊さない（空扱い）
     var tolerantDays = function (u, label) {
-      return fetch(u)
+      return apiFetch(u)
         .then(function (res) {
           return res.ok ? res.json() : { days: [] };
         })
@@ -303,7 +321,7 @@
     };
     // 目標・実効代謝は取得失敗しても体重表示を壊さない（null扱い）
     var tolerantJson = function (u, label) {
-      return fetch(u)
+      return apiFetch(u)
         .then(function (res) {
           return res.ok ? res.json() : null;
         })
@@ -327,7 +345,13 @@
           return m;
         });
     Promise.all([
-      fetch(url).then(function (res) {
+      apiFetch(url).then(function (res) {
+        if (res.status === 401) {
+          // READ_ACCESS=private でログインしていない（またはトークン失効）
+          var authErr = new Error('unauthorized');
+          authErr.authRequired = true;
+          throw authErr;
+        }
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
       }),
@@ -356,6 +380,10 @@
         renderAll(days, mealsDays, exDays, r.from, r.to);
       })
       .catch(function (err) {
+        if (err && err.authRequired) {
+          showState('auth');
+          return;
+        }
         console.error('[dashboard] load failed', err);
         showState('error');
       });
@@ -364,7 +392,7 @@
   /* ---- AIコーチ講評（生成はサーバー側の定期ジョブ。ここは最新を表示するだけ） ---- */
 
   function loadCoaching() {
-    fetch(BASE + 'api/coaching/latest')
+    apiFetch(BASE + 'api/coaching/latest')
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
@@ -390,7 +418,7 @@
   function loadCoachingHistory() {
     if (coachingHistoryLoaded) return;
     coachingHistoryLoaded = true;
-    fetch(BASE + 'api/coaching?days=30')
+    apiFetch(BASE + 'api/coaching?days=30')
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
@@ -1314,7 +1342,7 @@
     }
     var r = rangeForPeriod();
     var url = BASE + 'api/raw?from=' + encodeURIComponent(r.from) + '&to=' + encodeURIComponent(r.to);
-    fetch(url)
+    apiFetch(url)
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
@@ -1560,8 +1588,23 @@
   loadData();
   loadCoaching();
 
-  // トークン失効（rwの401）で削除ボタンの出し分けが変わるため、明細表示中なら再描画する
+  // トークン失効（rwの401）で削除ボタンの出し分けが変わるため、明細表示中なら再描画する。
+  // ログイン画面（private時の401）を表示中にトークンを得たら（ログインコールバック完了）再読込する
   document.addEventListener('authchanged', function () {
+    if (!els.auth.classList.contains('hidden') && authToken()) {
+      loadData();
+      loadCoaching();
+      return;
+    }
     if (tableMode === 'raw' && rawRows) renderRawTable(rawRows);
+  });
+
+  // private時のログインボタン（shared.jsのPKCEフローを再利用。defer読込完了前のクリックはガード）
+  $('auth-login-btn').addEventListener('click', function () {
+    if (window.__dash && window.__dash.login) {
+      window.__dash.login().catch(function (err) {
+        console.error('[dashboard] login failed to start', err);
+      });
+    }
   });
 })();

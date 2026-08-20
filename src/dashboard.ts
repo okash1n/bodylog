@@ -4,6 +4,7 @@ import type { Env } from './types';
 import {
   addDaysYmd,
   dashboardBase,
+  isPrivateRead,
   localToday,
   noindexHeaders,
   offsetHours,
@@ -14,8 +15,9 @@ import { getDailySeries, getImportStatus, getRawMeasurements, getSummary } from 
 import { llmsTxt, openapiSpec } from './ai';
 import { serveMealsDaily, serveMealsList, serveMenus } from './meals-api';
 import { serveExerciseDaily, serveExerciseLogs, serveExerciseMenus } from './exercise-api';
-import { serveCoachingLatest, serveCoachingList } from './coaching';
+import { coachingTokenMatches, serveCoachingLatest, serveCoachingList } from './coaching';
 import { serveMetabolism } from './stats';
+import { isOwner } from './auth';
 import { registerWriteRoutes } from './writes';
 import { OG_RENDERER_VERSION, renderOgPng } from './og';
 import indexHtmlTpl from './dashboard/index.html';
@@ -30,7 +32,7 @@ import chartVendorJs from './dashboard/vendor/chart.umd.js';
 import { appleTouchIconPng } from './dashboard/icon';
 
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
-export const ASSET_VERSION = '2026-08-20-35';
+export const ASSET_VERSION = '2026-08-20-36';
 
 /** バージョン無しURLで配信するasset用（manifest / apple-touch-icon）。immutableにしない */
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';
@@ -235,6 +237,53 @@ export const READ_ROUTES: ReadonlyArray<readonly [string, Handler]> = [
   ['og.png', serveOg],
 ];
 
+/**
+ * READ_ACCESS=private のとき保護しない「アプリ外枠」のパス。
+ * データを含まない静的アセットのみ（データはすべてAPI経由なので、外枠を配っても漏れない）。
+ */
+const SHELL_PATHS: ReadonlySet<string> = new Set([
+  '',
+  'styles.css',
+  'app.js',
+  'shared.js',
+  'meals.js',
+  'exercise.js',
+  'vendor/chart.umd.js',
+  'manifest.webmanifest',
+  'apple-touch-icon.png',
+  'sw.js',
+]);
+
+/** 読み取りの認可: オーナーのOAuth Bearer、またはAIコーチングジョブのCOACHING_API_SECRET Bearer */
+async function readAuthorized(c: DashboardContext): Promise<boolean> {
+  const m = /^Bearer (.+)$/.exec(c.req.header('Authorization') ?? '');
+  const secret = c.env.COACHING_API_SECRET;
+  if (secret && m && coachingTokenMatches(m[1], secret)) return true;
+  return isOwner(c);
+}
+
+/**
+ * READ_ACCESS=private のときデータ系読み取りルートを保護するラッパー。
+ * publicモード（既定）では素通しで挙動変更ゼロ。og.pngだけは ?key={OG_ACCESS_TOKEN} でも
+ * 通す（Slackの画像プロキシは認証ヘッダーを付けられないため。露出先は自分のチャンネルのみ）。
+ */
+function withReadAccess(path: string, handler: Handler): Handler {
+  return async (c) => {
+    if (!isPrivateRead(c.env) || SHELL_PATHS.has(path)) return handler(c);
+    if (path === 'og.png') {
+      const key = c.req.query('key') ?? '';
+      const token = c.env.OG_ACCESS_TOKEN;
+      if (token && key && coachingTokenMatches(key, token)) return handler(c);
+    }
+    if (await readAuthorized(c)) return handler(c);
+    return c.json(
+      { error: 'unauthorized' },
+      401,
+      noindexHeaders({ 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer' }),
+    );
+  };
+}
+
 /** /d/{slug}/ 配下でダッシュボードを配信する（DASHBOARD_SLUG が非空のとき有効） */
 export function createDashboardRouter(): Hono<{ Bindings: Env }> {
   const app = new Hono<{ Bindings: Env }>();
@@ -251,7 +300,7 @@ export function createDashboardRouter(): Hono<{ Bindings: Env }> {
     });
   });
   for (const [path, handler] of READ_ROUTES) {
-    app.get(`/:slug/${path}`, guarded(handler));
+    app.get(`/:slug/${path}`, guarded(withReadAccess(path, handler)));
   }
   // 書き込み（POST/PATCH/DELETE）は同じ /api 名前空間にメソッドで同居し、withAuthで保護する
   registerWriteRoutes(app, guarded, '/:slug');
@@ -266,7 +315,7 @@ export function createRootDashboardRouter(): Hono<{ Bindings: Env }> {
   const app = new Hono<{ Bindings: Env }>();
   const guarded = (h: Handler): Handler => (c) => (c.env.DASHBOARD_SLUG === '' ? h(c) : notFound(c));
   for (const [path, handler] of READ_ROUTES) {
-    app.get(`/${path}`, guarded(handler));
+    app.get(`/${path}`, guarded(withReadAccess(path, handler)));
   }
   registerWriteRoutes(app, guarded, '');
   return app;

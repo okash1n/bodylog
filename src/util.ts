@@ -42,6 +42,11 @@ export function newId(): string {
   return crypto.randomUUID();
 }
 
+/** READ_ACCESS=private（データ系読み取りをオーナー認証必須にするモード）か */
+export function isPrivateRead(env: Env): boolean {
+  return env.READ_ACCESS === 'private';
+}
+
 /**
  * settings.public_origin が未設定なら初期化する（設定済みは上書きしない）。
  * 通知系の起点originはWithings認証時にしか入らなかったため、認証済み書き込みの

@@ -9,6 +9,8 @@ export interface Env {
   WEBHOOK_PATH_SECRET: string;
   DASHBOARD_SLUG: string;
   TZ_OFFSET_HOURS?: string;
+  /** 読み取りアクセス制御: 'public'（既定）=無認証読み取り / 'private'=データ系読み取りをオーナー認証必須に */
+  READ_ACCESS?: string;
   // Secrets（未設定でもWorker自体は起動できるようoptionalにし、使用箇所で明示エラーにする）
   WITHINGS_CLIENT_ID?: string;
   WITHINGS_CLIENT_SECRET?: string;
@@ -19,6 +21,7 @@ export interface Env {
   GOOGLE_OAUTH_CLIENT_SECRET?: string;
   OWNER_EMAILS?: string; // カンマ区切りの許可メール
   COACHING_API_SECRET?: string; // POST /api/coaching（AI講評保存）のサーバー間Bearer認証。未設定なら機能無効
+  OG_ACCESS_TOKEN?: string; // READ_ACCESS=private時、Slack埋め込み用に og.png?key= を通す任意トークン
 }
 
 /** immediate=計測ごとに通知（既定） / daily=日次ダイジェストのみ / both=両方 */

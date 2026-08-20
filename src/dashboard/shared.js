@@ -97,6 +97,9 @@
     return id;
   }
   async function login() {
+    // ログイン完了後に元のタブへ戻す（private時は体重タブからもログインするため）
+    const activeTab = document.querySelector('nav.tabs .tab.active');
+    if (activeTab) sessionStorage.setItem('postLoginTab', activeTab.dataset.panel);
     const clientId = await ensureClient();
     const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
     localStorage.setItem(LS.verifier, verifier);
@@ -143,7 +146,11 @@
       localStorage.removeItem(LS.state);
     }
     history.replaceState(null, '', base);
-    showTab('meals');
+    // 認証状態の変化を全タブへ通知（private時は体重タブがこれを受けてデータを再読込する）
+    document.dispatchEvent(new CustomEvent('authchanged'));
+    const backTo = sessionStorage.getItem('postLoginTab');
+    sessionStorage.removeItem('postLoginTab');
+    showTab(backTo || 'meals');
   }
   /** 認証付き書き込み（/api の POST/PATCH/DELETE）。401はリフレッシュ→再試行、失効時はauthchangedを発火 */
   async function rw(path, method, body) {
