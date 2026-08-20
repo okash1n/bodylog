@@ -10,7 +10,9 @@ import type {
   SlackDestination,
 } from './types';
 import { LIMITS, assertSecret, dashboardBase, isoNow, offsetHours, ymdWithOffset } from './util';
-import { getDailySeries, getDayMeasurementCount, getLatestForBatch, getNotificationStats } from './queries';
+import {
+  composeStats, getDailySeries, getDayMeasurementCount, getLatestForBatch, getNotificationStats, getStatsParts,
+} from './queries';
 import { getIntakeForDay } from './meals';
 import { getExerciseForDay } from './exercise';
 import { coachingDigestBlocks, getCoachingNote } from './coaching';
@@ -396,12 +398,14 @@ export async function runDailyDigest(env: Env, origin: string): Promise<{ queued
 async function buildDailyDigestMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
   try {
     const date = batchId.slice(DAILY_BATCH_PREFIX.length);
-    const [series, count, intake, exercise, coaching] = await Promise.all([
+    // stats用のクエリ（terms/baseline）はその日の平均に依存しないので同じPromise.allに畳む
+    const [series, count, intake, exercise, coaching, statsParts] = await Promise.all([
       getDailySeries(env, date, date),
       getDayMeasurementCount(env, date),
       getIntakeForDay(env, date),
       getExerciseForDay(env, date),
       getCoachingNote(env, 'daily', date),
+      getStatsParts(env),
     ]);
     const day = series[series.length - 1];
     if (!day) {
@@ -415,7 +419,7 @@ async function buildDailyDigestMessage(env: Env, origin: string, batchId: string
       fat_free_mass: day.fat_free_mass,
       fat_ratio: null,
     };
-    const stats = await getNotificationStats(env, latestLike);
+    const stats = composeStats(latestLike, statsParts.terms, statsParts.baseline);
     const base = `${origin}${dashboardBase(env)}`;
     const v = `${date}-r${OG_RENDERER_VERSION}`;
     return {

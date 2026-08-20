@@ -209,6 +209,8 @@
   var tableMode = 'daily'; // 'daily'（日次集計） | 'raw'（計測明細）
   var lastDays = [];
   var rawRows = null; // 明細のキャッシュ（期間が変わったらnullに戻す）
+  var summaryCache = null; // /api/summary（期間非依存。手動記録の削除時に破棄）
+  var metabolismCache = null; // /api/metabolism（同上）
   var importPollTimer = null;
   var themeCache = readTheme();
   var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -310,6 +312,20 @@
           return null;
         });
     };
+    // summary / metabolism は選択期間に依存しないため初回のみ取得する
+    // （期間切替のたびに叩き直さない。失敗時(null)はキャッシュせず次回再試行）
+    var summaryPromise = summaryCache
+      ? Promise.resolve(summaryCache)
+      : tolerantJson(BASE + 'api/summary', 'summary').then(function (s) {
+          if (s) summaryCache = s;
+          return s;
+        });
+    var metabolismPromise = metabolismCache
+      ? Promise.resolve(metabolismCache)
+      : tolerantJson(BASE + 'api/metabolism', 'metabolism').then(function (m) {
+          if (m) metabolismCache = m;
+          return m;
+        });
     Promise.all([
       fetch(url).then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -318,8 +334,8 @@
       tolerantDays(mealsUrl, 'meals/daily'),
       tolerantDays(exUrl, 'exercise/daily'),
       fetchStatus(),
-      tolerantJson(BASE + 'api/summary', 'summary'),
-      tolerantJson(BASE + 'api/metabolism', 'metabolism'),
+      summaryPromise,
+      metabolismPromise,
     ])
       .then(function (results) {
         var days = (results[0] && results[0].days) || [];
@@ -1270,8 +1286,10 @@
       .then(function (res) {
         if (dash.toast) dash.toast(res.ok ? '削除しました' : '削除に失敗しました', res.ok ? undefined : { tone: 'error' });
         if (res.ok) {
-          // 日次集計・カード・グラフも変わるため明細キャッシュごと再取得する
+          // 日次集計・カード・グラフ・summary系も変わるためキャッシュごと再取得する
           rawRows = null;
+          summaryCache = null;
+          metabolismCache = null;
           loadData();
         }
       })

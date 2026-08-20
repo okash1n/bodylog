@@ -32,7 +32,10 @@ import { appleTouchIconPng } from './dashboard/icon';
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
 export const ASSET_VERSION = '2026-08-20-34';
 
+/** バージョン無しURLで配信するasset用（manifest / apple-touch-icon）。immutableにしない */
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';
+/** ?v={{ASSET_VERSION}} 付きで参照されるasset用。内容が変わればURLが変わるので長期キャッシュできる */
+const VERSIONED_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 const JS_CONTENT_TYPE = 'text/javascript; charset=utf-8';
 
 type DashboardContext = Context<{ Bindings: Env }>;
@@ -69,26 +72,26 @@ const serveStyles: Handler = (c) =>
   c.body(
     stylesCss,
     200,
-    noindexHeaders({ 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': STATIC_CACHE_CONTROL }),
+    noindexHeaders({ 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': VERSIONED_CACHE_CONTROL }),
   );
 
 const serveAppJs: Handler = (c) =>
-  c.body(appJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': STATIC_CACHE_CONTROL }));
+  c.body(appJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': VERSIONED_CACHE_CONTROL }));
 
 const serveSharedJs: Handler = (c) =>
-  c.body(sharedJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': STATIC_CACHE_CONTROL }));
+  c.body(sharedJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': VERSIONED_CACHE_CONTROL }));
 
 const serveMealsJs: Handler = (c) =>
-  c.body(mealsJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': STATIC_CACHE_CONTROL }));
+  c.body(mealsJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': VERSIONED_CACHE_CONTROL }));
 
 const serveExerciseJs: Handler = (c) =>
-  c.body(exerciseJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': STATIC_CACHE_CONTROL }));
+  c.body(exerciseJs, 200, noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': VERSIONED_CACHE_CONTROL }));
 
 const serveVendor: Handler = (c) =>
   c.body(
     chartVendorJs,
     200,
-    noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': STATIC_CACHE_CONTROL }),
+    noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': VERSIONED_CACHE_CONTROL }),
   );
 
 const serveManifest: Handler = (c) =>
