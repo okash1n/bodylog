@@ -226,7 +226,7 @@ npx wrangler d1 execute bodylog --remote \
 
   （`DASHBOARD_SLUG` 設定時のパスは `https://<ホスト>/d/{slug}/api/weight`）
 
-手動記録は `measurements` に `source='manual'`（IDは負の整数）で保存され、グラフ・通知・BMR・実効消費の推定など読み取り側はすべて Withings 由来の計測と同じ扱いになる。入力ミスは `DELETE {base}/api/weight/{id}` で消せる（Withings 由来の行は削除不可）。
+手動記録は `measurements` に `source='manual'`（IDは負の整数）で保存され、グラフ・通知・BMR・実効消費の推定など読み取り側はすべて Withings 由来の計測と同じ扱いになる。入力ミスは `DELETE {base}/api/weight/{id}` で消せる（Withings 由来の行は削除不可。`{id}` は記録時の応答か `{base}/api/raw` の明細で確認でき、ダッシュボードの「計測明細」表でもログイン中なら削除ボタンが出る）。
 
 ## カスタムドメイン運用（任意）
 

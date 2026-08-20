@@ -1,9 +1,10 @@
 import { createExecutionContext } from 'cloudflare:test';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Env, LatestMeasurement } from '../src/types';
+import type { Env, RawMeasurement } from '../src/types';
 import { createDashboardRouter } from '../src/dashboard';
 import { insertMeasurement, localYmdDaysAgo, resetTables, testEnv } from './helpers';
+import { logWeight } from '../src/weight';
 
 const slug = testEnv.DASHBOARD_SLUG;
 const app = new Hono<{ Bindings: Env }>().route('/d', createDashboardRouter());
@@ -24,13 +25,23 @@ describe('api/raw（計測明細）', () => {
     await insertMeasurement({ grpid: 2, measured_at: `${d}T03:30:00.000Z`, weight: 84.4, fat_free_mass: 64.6 });
     const res = await request(`/d/${slug}/api/raw?from=${d}&to=${d}`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { measurements: LatestMeasurement[] };
+    const body = (await res.json()) as { measurements: RawMeasurement[] };
     expect(body.measurements.length).toBe(2);
     // 新しい順
     expect(body.measurements[0].weight).toBe(84.4);
     expect(body.measurements[1].weight).toBe(85.0);
     expect(body.measurements[0].fat_mass).toBeCloseTo(19.8, 5); // weight - fat_free_mass
     expect(body.measurements[1].fat_mass).toBeNull();
+  });
+
+  it('id と source を返す（手動記録は負ID・manual）', async () => {
+    const d = localYmdDaysAgo(1);
+    await insertMeasurement({ grpid: 10, measured_at: `${d}T01:00:00.000Z`, weight: 85.0 });
+    await logWeight(testEnv, { weight: 83.4, fat_ratio: null, measured_at: `${d}T03:00:00.000Z` });
+    const res = await request(`/d/${slug}/api/raw?from=${d}&to=${d}`);
+    const body = (await res.json()) as { measurements: RawMeasurement[] };
+    expect(body.measurements[0]).toMatchObject({ id: -1, source: 'manual', weight: 83.4 });
+    expect(body.measurements[1]).toMatchObject({ id: 10, source: 'withings', weight: 85.0 });
   });
 
   it('期間バリデーションは api/measurements と同一', async () => {

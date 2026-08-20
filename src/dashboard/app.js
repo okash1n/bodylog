@@ -1222,17 +1222,63 @@
     els.tableColDate.textContent = '日時';
     // 計測明細は1計測=1行で日次カロリーとは粒度が違うため摂取/消費/ネット列ごと隠す
     els.tableWrap.classList.add('hide-kcal');
+    // shared.js（defer）より先に実行されるため、__dashは描画時に遅延参照する
+    var dash = window.__dash;
+    var canDel = Boolean(dash && dash.loggedIn && dash.loggedIn());
     var frag = document.createDocumentFragment();
     rows.forEach(function (m) {
       var ms = parseUtcMs(m.measured_at);
-      appendRow(frag, [
+      var tr = document.createElement('tr');
+      [
         ms == null ? '—' : formatLocalDateTime(ms),
         fmt(m.weight),
         fmt(m.fat_mass),
         fmt(m.fat_free_mass),
-      ]);
+      ].forEach(function (text) {
+        var td = document.createElement('td');
+        td.textContent = text;
+        tr.appendChild(td);
+      });
+      var srcTd = document.createElement('td');
+      srcTd.className = 'raw-col raw-source';
+      srcTd.textContent = m.source === 'manual' ? '手動' : m.source ? '体重計' : '—';
+      tr.appendChild(srcTd);
+      var actTd = document.createElement('td');
+      actTd.className = 'raw-col';
+      if (canDel && m.source === 'manual' && m.id != null) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'raw-del';
+        btn.textContent = '削除';
+        btn.addEventListener('click', function () {
+          deleteManualRow(m.id);
+        });
+        actTd.appendChild(btn);
+      }
+      tr.appendChild(actTd);
+      frag.appendChild(tr);
     });
     els.tableBody.replaceChildren(frag);
+  }
+
+  function deleteManualRow(id) {
+    var dash = window.__dash;
+    if (!dash || !dash.rw) return;
+    if (!window.confirm('この手動記録を削除しますか？')) return;
+    dash
+      .rw('weight/' + id, 'DELETE')
+      .then(function (res) {
+        if (dash.toast) dash.toast(res.ok ? '削除しました' : '削除に失敗しました', res.ok ? undefined : { tone: 'error' });
+        if (res.ok) {
+          // 日次集計・カード・グラフも変わるため明細キャッシュごと再取得する
+          rawRows = null;
+          loadData();
+        }
+      })
+      .catch(function (err) {
+        console.error('[dashboard] manual delete failed', err);
+        if (dash.toast) dash.toast('削除に失敗しました', { tone: 'error' });
+      });
   }
 
   function renderTable(days) {
@@ -1495,4 +1541,9 @@
   updateOnlineState();
   loadData();
   loadCoaching();
+
+  // トークン失効（rwの401）で削除ボタンの出し分けが変わるため、明細表示中なら再描画する
+  document.addEventListener('authchanged', function () {
+    if (tableMode === 'raw' && rawRows) renderRawTable(rawRows);
+  });
 })();

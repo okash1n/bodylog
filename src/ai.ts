@@ -30,7 +30,7 @@ REST（GET）はすべて読み取り専用・認証不要。書き込みはOAut
 
 - GET ${root}/api/summary — 最新計測・直近7日平均・前週比・基準日比・今日の食事摂取量・目標（goal）の要約。まずこれを見る
 - GET ${root}/api/measurements?days=90 — 日次平均と7日移動平均の時系列
-- GET ${root}/api/raw?days=30 — 計測1回ごとの明細（新しい順、最大2000件）
+- GET ${root}/api/raw?days=30 — 計測1回ごとの明細（新しい順、最大2000件。id と source: withings|manual 付き）
 - GET ${root}/api/status — データ同期状態（最終同期・最新計測日時）
 - GET ${root}/api/menus?q= — 食事メニュー（マスタ）一覧・検索（利用頻度順）
 - GET ${root}/api/meals?days=7 — 食事記録（メニュー名・倍率・実効kcal/PFC付き）
@@ -519,8 +519,11 @@ export function openapiSpec(
         },
         Measurement: {
           type: 'object',
-          description: '計測1回分。質量はkg、fat_ratioは%',
+          description:
+            '計測1回分。質量はkg、fat_ratioは%。sourceは出所（withings=体重計連携 / manual=手動記録）、idは手動記録の削除（DELETE /api/weight/{id}、OAuth必須）に使う',
           properties: {
+            id: { type: 'integer', description: 'withingsは正、manualは負の採番ID' },
+            source: { type: 'string', enum: ['withings', 'manual'] },
             measured_at: { type: 'string', format: 'date-time' },
             weight: { type: ['number', 'null'] },
             fat_mass: { type: ['number', 'null'] },

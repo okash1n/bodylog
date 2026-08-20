@@ -105,6 +105,12 @@ export interface LatestMeasurement {
   fat_ratio: number | null; // 計測時点の参考値（通知の計測結果行にのみ表示）
 }
 
+/** 計測明細（/api/raw）の1行。idは手動記録の削除（DELETE /api/weight/:id）に使う */
+export interface RawMeasurement extends LatestMeasurement {
+  id: number; // measurements.grpid（Withingsは正、手動記録は負の採番ID）
+  source: string; // 'withings' | 'manual'
+}
+
 /** 目標（体重・脂肪量、kg）。どちらも任意で未設定はnull。MCPツール set_goal で設定する */
 export interface Goal {
   weight_kg: number | null;
