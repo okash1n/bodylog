@@ -15,7 +15,8 @@ import {
 } from './exercise';
 import { withAuth } from './auth';
 import { coachingTokenMatches, parseCoachingInput, upsertCoachingNote } from './coaching';
-import { noindexHeaders } from './util';
+import { ensurePublicOrigin, noindexHeaders } from './util';
+import { deleteManualMeasurement, logWeight, parseWeightInput } from './weight';
 
 type Ctx = Context<{ Bindings: Env }>;
 type Handler = (c: Ctx) => Response | Promise<Response>;
@@ -46,7 +47,16 @@ export function registerWriteRoutes(
       return c.json({ error: 'internal error' }, 500, headers());
     }
   };
-  const w = (h: Handler): Handler => guarded(withAuth(guardedErrors(h)));
+  // 認証済み書き込みの到着時にpublic_originを初期化する（レイテンシ外・失敗しても本処理に影響しない）
+  const withOriginInit = (h: Handler): Handler => (c) => {
+    c.executionCtx.waitUntil(
+      ensurePublicOrigin(c.env, new URL(c.req.url).origin).catch((err) =>
+        console.error('[writes] ensurePublicOrigin failed', err),
+      ),
+    );
+    return h(c);
+  };
+  const w = (h: Handler): Handler => guarded(withAuth(guardedErrors(withOriginInit(h))));
   const p = (path: string): string => `${prefix}${path}`;
 
   // ---- 食事メニュー ----
@@ -127,6 +137,21 @@ export function registerWriteRoutes(
     (await deleteExerciseLog(c.env, pid(c)))
       ? c.json({ ok: true }, 200, headers())
       : c.json({ error: 'exercise log not found' }, 404, headers())));
+
+  // ---- 体重（手動記録。Withings由来の行はここでは触れない） ----
+  app.post(p('/api/weight'), w(async (c) => {
+    const parsed = parseWeightInput(await readJson(c));
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400, headers());
+    return c.json(await logWeight(c.env, parsed.value), 201, headers());
+  }));
+  app.delete(p('/api/weight/:id'), w(async (c) => {
+    const raw = pid(c);
+    const id = /^-?\d+$/.test(raw) ? Number(raw) : NaN;
+    if (!Number.isSafeInteger(id) || !(await deleteManualMeasurement(c.env, id))) {
+      return c.json({ error: 'manual measurement not found' }, 404, headers());
+    }
+    return c.json({ ok: true }, 200, headers());
+  }));
 
   // ---- AIコーチング講評 ----
   // GitHub Actions からのサーバー間書き込みのため、OAuth（withAuth）ではなく

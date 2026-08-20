@@ -42,6 +42,19 @@ export function newId(): string {
   return crypto.randomUUID();
 }
 
+/**
+ * settings.public_origin が未設定なら初期化する（設定済みは上書きしない）。
+ * 通知系の起点originはWithings認証時にしか入らなかったため、認証済み書き込みの
+ * 到着時にも初期化してWithings無し運用でもダイジェストが動くようにする。
+ */
+export async function ensurePublicOrigin(env: Env, origin: string): Promise<void> {
+  await env.DB.prepare(
+    "INSERT INTO settings (key, value) VALUES ('public_origin', ?1) ON CONFLICT(key) DO NOTHING",
+  )
+    .bind(origin)
+    .run();
+}
+
 /** Withingsレスポンス共通: HTTP 200でも status !== 0 はエラーとして扱う */
 export class WithingsApiError extends Error {
   constructor(
