@@ -15,23 +15,26 @@ Fork/clone して設定値を差し替えるだけで動く（コード変更不
 ## アーキテクチャ
 
 ```
-Withings 体重計
-      │ 計測（Wi-Fi 同期）
-      ▼
-Withings Cloud ──(notify webhook: POST /webhook/withings-{secret})──┐
-      ▲                                                             ▼
-      │ getmeas / oauth2                              Cloudflare Worker (Hono)
-      └──────────────────────────────────────────────  ├─ webhook_inbox に永続化 → 非同期処理
-                                                        ├─ 計測取得 → D1 に UPSERT
-                                                        ├─ 通知バッチ → Slack Webhook(複数)
-                                                        ├─ cron: 5分毎（inbox 回収・通知再送・初期インポート再開）
-                                                        ├─ cron: 日次（バックフィル・掃除・購読確認）
-                                                        └─ ダッシュボード（PWA + OGP 画像）
-                                                                │
-                                                                ▼
-                                                          Cloudflare D1
-                                          (measurements / tokens / settings /
-                                           webhook_inbox / notification_batches / 食事・運動・coaching系 ほか)
+体重の入力（2経路。どちらか一方でも併用でも動く）
+
+[A] 手動記録（MCP log_weight / POST /api/weight、OAuth 2.1）──────────────────┐
+                                                                              │
+[B] Withings 体重計/アプリ（任意）                                            │
+      │ 計測（Wi-Fi 同期 or アプリ手入力）                                    │
+      ▼                                                                       ▼
+    Withings Cloud ──(notify webhook: POST /webhook/withings-{secret})──▶ Cloudflare Worker (Hono)
+      ▲                                                                    ├─ webhook_inbox に永続化 → 非同期処理
+      └── getmeas / oauth2 ────────────────────────────────────────────────├─ 計測の取り込み/手動記録 → D1 へ保存
+                                                                           ├─ 通知バッチ → Slack Webhook(複数)
+                                                                           ├─ cron: 5分毎（inbox 回収・通知再送・初期インポート再開）
+                                                                           ├─ cron: 日次（Withingsバックフィル・掃除・購読確認）
+                                                                           └─ ダッシュボード（PWA + OGP 画像）
+                                                                                   │
+                                                                                   ▼
+                                                                             Cloudflare D1
+                                                             (measurements（source: withings|manual） /
+                                                              tokens / settings / webhook_inbox /
+                                                              notification_batches / 食事・運動・coaching系 ほか)
 ```
 
 体重トラッキング以外の主要経路:
@@ -41,7 +44,6 @@ GitHub Actions (coaching.yml, 毎晩23:30 JST・任意機能)
   └─ Claude Agent SDK で講評生成 ──POST /api/coaching──▶ Worker ─▶ D1 (coaching_notes)
                                                           └─ 23:55 の日次ダイジェストに差し込み ─▶ Slack
 AIクライアント / ダッシュボード ──OAuth 2.1 (Googleログイン)──▶ /mcp・/api/*(書き込み) ─▶ KV (OAUTH_KV: 認可フロー・トークン)
-体重の手動記録 ──MCP log_weight / POST /api/weight (OAuth)──▶ Worker ─▶ D1 (measurements, source='manual')
 ```
 
 Webhook は受信内容を即座に D1 の inbox テーブルへ永続化して 200 を返し、実際の取り込みは `waitUntil` と cron で非同期に行う。取り込みは Withings の `grpid` をキーにした UPSERT のため、再送・値修正にも冪等。通知は計測ID単位の claim（一意制約）で二重送信を防ぐ。
