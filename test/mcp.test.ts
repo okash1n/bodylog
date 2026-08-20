@@ -86,7 +86,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     );
     expect(authed.status).toBe(200);
     const body = (await authed.json()) as RpcResponse;
-    expect((body.result as { tools: unknown[] }).tools).toHaveLength(12);
+    expect((body.result as { tools: unknown[] }).tools).toHaveLength(13);
   });
 
   it('initializeに応答する（ステートレス・セッションIDなし）', async () => {
@@ -102,7 +102,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     expect(serverInfo.name).toBe('bodylog');
   });
 
-  it('tools/list が読み取り7＋書き込み5ツールを返す', async () => {
+  it('tools/list が読み取り7＋書き込み6ツールを返す', async () => {
     const res = await rwRpc(token, 'tools/list');
     expect(res.status).toBe(200);
     const body = (await res.json()) as RpcResponse;
@@ -117,10 +117,32 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
       'get_weight_summary',
       'log_exercise',
       'log_meal',
+      'log_weight',
       'search_exercise_menus',
       'search_menus',
       'set_goal',
     ]);
+  });
+
+  it('log_weight で手動体重を記録できる', async () => {
+    const res = await rwRpc(token, 'tools/call', {
+      name: 'log_weight',
+      arguments: { weight_kg: 83.4, fat_ratio: 28.3, measured_at: `${localYmdDaysAgo(1)}T03:00:00Z` },
+    });
+    const body = (await res.json()) as RpcResponse;
+    expect(body.error).toBeUndefined();
+    const saved = parseToolJson<{ id: number; source: string; fat_free_mass: number }>(
+      body.result as Record<string, unknown>,
+    );
+    expect(saved.source).toBe('manual');
+    expect(saved.id).toBeLessThan(0);
+    expect(saved.fat_free_mass).toBeCloseTo(83.4 * (1 - 0.283), 2);
+  });
+
+  it('log_weight のバリデーションエラーはisErrorで返る', async () => {
+    const res = await rwRpc(token, 'tools/call', { name: 'log_weight', arguments: { weight_kg: 10 } });
+    const body = (await res.json()) as RpcResponse;
+    expect((body.result as { isError?: boolean }).isError).toBe(true);
   });
 
   it('get_weight_summary が要約JSONを返す', async () => {
@@ -213,7 +235,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     const res = await rwRpc(token, 'tools/list', {}, { 'MCP-Protocol-Version': '2026-07-28' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as RpcResponse;
-    expect((body.result as { tools: unknown[] }).tools).toHaveLength(12);
+    expect((body.result as { tools: unknown[] }).tools).toHaveLength(13);
   });
 
   it('未対応バージョンヘッダ付きinitializeはサーバー対応版へ交渉される', async () => {

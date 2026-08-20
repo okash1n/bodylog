@@ -1,7 +1,7 @@
 /**
  * MCP（Model Context Protocol）サーバー。読み取り専用ツール7つ（体重3 / 食事2 / 運動2）を
- * 公開し、認証済みエンドポイント（/mcp）では書き込みツール5つ（log_meal / create_menu /
- * log_exercise / create_exercise_menu / set_goal）を追加で公開する。
+ * 公開し、認証済みエンドポイント（/mcp）では書き込みツール6つ（log_meal / create_menu /
+ * log_exercise / create_exercise_menu / set_goal / log_weight）を追加で公開する。
  * リクエストごとにサーバー/トランスポートを生成するステートレス構成
  * （セッションを持たないため、Durable Objects等の追加インフラが不要）。
  */
@@ -21,13 +21,14 @@ import {
   parseExerciseLogFields, parseExerciseMenuInput,
 } from './exercise';
 import type { Env } from './types';
-import { LIMITS, localToday, noindexHeaders, offsetHours, resolveRange } from './util';
+import { ensurePublicOrigin, LIMITS, localToday, noindexHeaders, offsetHours, resolveRange } from './util';
+import { logWeight, parseWeightInput } from './weight';
 
 const MCP_SERVER_VERSION = '1.0.0';
 
 function instructions(tzOffsetHours: number): string {
   return [
-    '個人の体重・体組成（Withings体重計、1ユーザー分）・食事・運動を照会・記録するサーバー（bodylog）。',
+    '個人の体重・体組成・食事・運動を照会・記録するサーバー（bodylog、1ユーザー分）。体重はWithings連携または手動記録（log_weight）で入る。',
     '単位: 質量（weight / fat_mass / fat_free_mass）はkg、fat_ratioのみ%。',
     'fat_mass（脂肪量）は weight - fat_free_mass から導出した値。',
     `日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours}のローカル日付。`,
@@ -36,6 +37,7 @@ function instructions(tzOffsetHours: number): string {
     'PFC（protein_g/fat_g/carbs_g）はグラム数。比率を出すときはP×4/F×9/C×4kcalに換算し3者の合計を100%として正規化すること。登録カロリーで割ってはいけない（食物繊維等の差で換算合計と登録kcalは一致せず、100%を超えうる）。',
     '運動記録はsearch_exercise_menus / get_exercise_logsで照会できる（有酸素は消費kcal、筋トレはセット明細と総ボリューム。記録・種目作成は/mcpのみ）。',
     '目標（体重・脂肪量）はget_weight_summaryのgoalで確認でき、set_goalで設定・解除できる（ユーザーが明示的に依頼したときだけ変更すること）。',
+    '体重はlog_weightで手動記録できる（体重計が無い/Withings未連携の場合の記録手段。ユーザーが体重を報告したときに使う）。',
   ].join('\n');
 }
 
@@ -304,6 +306,23 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
         return jsonResult(await setGoal(env, parsed.value));
       }),
     );
+    server.registerTool(
+      'log_weight',
+      {
+        description:
+          '体重を手動記録する（体重計が無い/Withings未連携でも記録できる）。fat_ratioを渡すと除脂肪体重を導出して保存し、BMR計算にも使われる',
+        inputSchema: {
+          weight_kg: z.number().min(20).max(300).describe('体重kg'),
+          fat_ratio: z.number().min(3).max(75).optional().describe('体脂肪率%（任意）'),
+          measured_at: z.string().optional().describe('計測日時 ISO8601（省略時は現在時刻）'),
+        },
+      },
+      (args) => guarded('log_weight', async () => {
+        const parsed = parseWeightInput(args as Record<string, unknown>);
+        if (!parsed.ok) return errorResult(parsed.error);
+        return jsonResult(await logWeight(env, parsed.value));
+      }),
+    );
   }
   return server;
 }
@@ -363,6 +382,14 @@ export async function handleMcpRequest(
   if (typeof body === 'object' && body !== null) {
     const b = body as { method?: unknown; params?: { name?: unknown } };
     console.log('[mcp] request', String(b.method ?? '?'), String(b.params?.name ?? ''));
+  }
+  // 認証済み書き込みの到着時にpublic_originを初期化する（/api/*側と同じ。Withings無し運用の通知起点）
+  if (write) {
+    c.executionCtx.waitUntil(
+      ensurePublicOrigin(c.env, new URL(c.req.url).origin).catch((err) =>
+        console.error('[mcp] ensurePublicOrigin failed', err),
+      ),
+    );
   }
   try {
     // ChatGPT（openai-mcp）等はSDK未対応の新しいMCP-Protocol-Versionヘッダを
