@@ -124,7 +124,9 @@ describe('processNotificationBatches', () => {
     opts?: { attempts?: number; nextOffsetSec?: number },
   ): Promise<void> {
     await insertMeasurement({ grpid, measured_at: '2026-01-05T15:00:00Z', weight: 65.2 });
-    await testEnv.DB.prepare('INSERT INTO notification_batch_items (grpid, batch_id) VALUES (?, ?)')
+    await testEnv.DB.prepare(
+      'INSERT INTO notification_batch_items (measurement_id, batch_id) VALUES (?, ?)',
+    )
       .bind(grpid, batchId)
       .run();
     await testEnv.DB.prepare(

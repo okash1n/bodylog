@@ -45,7 +45,7 @@ describe('POST /api/weight', () => {
     });
     expect(res.status).toBe(201);
     const saved = (await res.json()) as { id: number; source: string; fat_free_mass: number };
-    expect(saved.id).toBe(-1);
+    expect(saved.id).toBeGreaterThan(0);
     expect(saved.source).toBe('manual');
     const summary = await worker.fetch(
       new Request('http://localhost/api/summary'), rootTestEnv, createExecutionContext(),

@@ -87,10 +87,11 @@ export async function insertMeasurement(m: {
   fat_ratio?: number | null;
   fat_free_mass?: number | null;
 }): Promise<void> {
+  // 本番の移行（0008）と同じく、Withings由来のseed行は id = grpid にする
   await testEnv.DB.prepare(
-    'INSERT INTO measurements (grpid, measured_at, weight, fat_ratio, fat_free_mass, raw_json) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT INTO measurements (id, grpid, measured_at, weight, fat_ratio, fat_free_mass, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
   )
-    .bind(m.grpid, m.measured_at, m.weight ?? null, m.fat_ratio ?? null, m.fat_free_mass ?? null, '{}')
+    .bind(m.grpid, m.grpid, m.measured_at, m.weight ?? null, m.fat_ratio ?? null, m.fat_free_mass ?? null, '{}')
     .run();
 }
 

@@ -124,7 +124,9 @@ describe('getLatestForBatch / getImportStatus', () => {
     const g2 = nextGrpid();
     await insertMeasurement({ grpid: g1, measured_at: '2026-01-01T00:00:00Z', weight: 60 });
     await insertMeasurement({ grpid: g2, measured_at: '2026-01-02T00:00:00Z', weight: 61 });
-    await testEnv.DB.prepare('INSERT INTO notification_batch_items (grpid, batch_id) VALUES (?, ?), (?, ?)')
+    await testEnv.DB.prepare(
+      'INSERT INTO notification_batch_items (measurement_id, batch_id) VALUES (?, ?), (?, ?)',
+    )
       .bind(g1, 'bx', g2, 'bx')
       .run();
 

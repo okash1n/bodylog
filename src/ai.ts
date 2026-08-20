@@ -43,7 +43,7 @@ REST（GET）はすべて読み取り専用・認証不要。書き込みはOAut
 - GET ${root}/api/metabolism — 直近28日の実測データからの実効消費カロリー推定（摂取記録が8割未満の期間はinsufficient_data）
 - GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（読み取りのみ。ChatGPTカスタムGPTのActionsにはこれを登録する）
 - POST ${root}/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール（体重の手動記録は log_weight）
-- POST ${root}/api/weight — 体重の手動記録（OAuth必須）。weight_kg必須20-300 / fat_ratio任意3-75% / measured_at任意ISO8601。fat_ratioがあれば除脂肪体重を導出保存。応答は {id(負整数), measured_at, weight, fat_ratio, fat_free_mass, source:'manual'}
+- POST ${root}/api/weight — 体重の手動記録（OAuth必須）。weight_kg必須20-300 / fat_ratio任意3-75% / measured_at任意ISO8601。fat_ratioがあれば除脂肪体重を導出保存。応答は {id, measured_at, weight, fat_ratio, fat_free_mass, source:'manual'}
 - DELETE ${root}/api/weight/{id} — 手動記録の削除（OAuth必須。source='manual'の行のみ。Withings由来は削除不可）
 
 ## 例
@@ -522,7 +522,7 @@ export function openapiSpec(
           description:
             '計測1回分。質量はkg、fat_ratioは%。sourceは出所（withings=体重計連携 / manual=手動記録）、idは手動記録の削除（DELETE /api/weight/{id}、OAuth必須）に使う',
           properties: {
-            id: { type: 'integer', description: 'withingsは正、manualは負の採番ID' },
+            id: { type: 'integer', description: 'サーバ内部の計測ID' },
             source: { type: 'string', enum: ['withings', 'manual'] },
             measured_at: { type: 'string', format: 'date-time' },
             weight: { type: ['number', 'null'] },

@@ -34,13 +34,13 @@ describe('api/raw（計測明細）', () => {
     expect(body.measurements[1].fat_mass).toBeNull();
   });
 
-  it('id と source を返す（手動記録は負ID・manual）', async () => {
+  it('id と source を返す（Withings行は id = grpid、手動記録は manual）', async () => {
     const d = localYmdDaysAgo(1);
     await insertMeasurement({ grpid: 10, measured_at: `${d}T01:00:00.000Z`, weight: 85.0 });
-    await logWeight(testEnv, { weight: 83.4, fat_ratio: null, measured_at: `${d}T03:00:00.000Z` });
+    const manual = await logWeight(testEnv, { weight: 83.4, fat_ratio: null, measured_at: `${d}T03:00:00.000Z` });
     const res = await request(`/d/${slug}/api/raw?from=${d}&to=${d}`);
     const body = (await res.json()) as { measurements: RawMeasurement[] };
-    expect(body.measurements[0]).toMatchObject({ id: -1, source: 'manual', weight: 83.4 });
+    expect(body.measurements[0]).toMatchObject({ id: manual.id, source: 'manual', weight: 83.4 });
     expect(body.measurements[1]).toMatchObject({ id: 10, source: 'withings', weight: 85.0 });
   });
 

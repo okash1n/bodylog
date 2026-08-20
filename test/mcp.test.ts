@@ -135,7 +135,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
       body.result as Record<string, unknown>,
     );
     expect(saved.source).toBe('manual');
-    expect(saved.id).toBeLessThan(0);
+    expect(saved.id).toBeGreaterThan(0);
     expect(saved.fat_free_mass).toBeCloseTo(83.4 * (1 - 0.283), 2);
   });
 

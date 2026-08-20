@@ -184,7 +184,7 @@ export async function getRawMeasurements(
 ): Promise<RawMeasurement[]> {
   const tz = tzModifier(env);
   const res = await env.DB.prepare(
-    `SELECT grpid AS id, source, measured_at, weight, (weight - fat_free_mass) AS fat_mass, fat_free_mass, fat_ratio
+    `SELECT id, source, measured_at, weight, (weight - fat_free_mass) AS fat_mass, fat_free_mass, fat_ratio
 FROM measurements
 WHERE date(measured_at, '${tz}') BETWEEN ?1 AND ?2
 ORDER BY measured_at DESC
@@ -204,9 +204,9 @@ export async function getLatestForBatch(
 SELECT m.measured_at AS measured_at, m.weight AS weight, (m.weight - m.fat_free_mass) AS fat_mass, m.fat_free_mass AS fat_free_mass, m.fat_ratio AS fat_ratio,
        COUNT(*) OVER () AS cnt
 FROM notification_batch_items i
-JOIN measurements m ON m.grpid = i.grpid
+JOIN measurements m ON m.id = i.measurement_id
 WHERE i.batch_id = ?1
-ORDER BY m.measured_at DESC, m.grpid DESC
+ORDER BY m.measured_at DESC, m.id DESC
 LIMIT 1`,
   )
     .bind(batchId)
@@ -247,7 +247,7 @@ export async function getLatestMeasurement(env: Env): Promise<LatestMeasurement 
   const row = await env.DB.prepare(
     `SELECT measured_at, weight, (weight - fat_free_mass) AS fat_mass, fat_free_mass, fat_ratio
 FROM measurements
-ORDER BY measured_at DESC, grpid DESC
+ORDER BY measured_at DESC, id DESC
 LIMIT 1`,
   ).first<LatestMeasurement>();
   return row ?? null;

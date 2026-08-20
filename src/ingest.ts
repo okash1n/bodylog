@@ -216,8 +216,10 @@ export async function ingestRange(
   const upserts = [...byGrpid.values()];
   if (upserts.length === 0) return { upserted: 0, claimedGrpids: [] };
 
-  // claim → 条件付きバッチ登録 → UPSERT を1つのdb.batch()（=1トランザクション）で原子的に行う
-  const statements: D1PreparedStatement[] = [];
+  // UPSERT → claim → 条件付きバッチ登録 を1つのdb.batch()（=1トランザクション）で原子的に行う。
+  // claimは measurement_id（内部ID）で行うため、行のidが確定するUPSERTを先に実行する
+  const statements: D1PreparedStatement[] = buildUpsertStatements(env, upserts);
+  const claimOffset = statements.length;
   const claimGrpids: number[] = [];
   if (context === 'webhook') {
     // 即時通知の対象はmodeがimmediate/bothの通知先のみ（dailyはダイジェストで送る）
@@ -227,7 +229,8 @@ export async function ingestRange(
       claimGrpids.push(u.grpid);
       statements.push(
         env.DB.prepare(
-          'INSERT OR IGNORE INTO notification_batch_items (grpid, batch_id) VALUES (?1, ?2)',
+          'INSERT OR IGNORE INTO notification_batch_items (measurement_id, batch_id) ' +
+            'SELECT id, ?2 FROM measurements WHERE grpid = ?1',
         ).bind(u.grpid, batchId),
       );
     }
@@ -242,12 +245,11 @@ export async function ingestRange(
       );
     }
   }
-  statements.push(...buildUpsertStatements(env, upserts));
 
   const results = await env.DB.batch(statements);
   const claimedGrpids: number[] = [];
   for (let i = 0; i < claimGrpids.length; i++) {
-    if (results[i].meta.changes > 0) claimedGrpids.push(claimGrpids[i]);
+    if (results[claimOffset + i].meta.changes > 0) claimedGrpids.push(claimGrpids[i]);
   }
   return { upserted: upserts.length, claimedGrpids };
 }

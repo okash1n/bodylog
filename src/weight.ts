@@ -1,7 +1,7 @@
 /**
- * 手動体重記録。Withings由来の行と同じ measurements テーブルに source='manual' で同居し、
- * IDは負の整数を採番する（Withingsのgrpidは常に正なので衝突しない）。
- * 挿入・通知enqueue・採番は1つの db.batch()（=1トランザクション）で原子的に行う。
+ * 手動体重記録。Withings由来の行と同じ measurements テーブルに source='manual' で同居する
+ * （idは共通のAUTOINCREMENT。grpid列はWithings行専用でmanual行はNULL）。
+ * 挿入と通知enqueueは1つの db.batch()（=1トランザクション）で原子的に行う。
  */
 import type { Env } from './types';
 import { immediateDestinations } from './slack';
@@ -62,12 +62,12 @@ export function parseWeightInput(
 export async function logWeight(env: Env, input: WeightInput): Promise<ManualMeasurement> {
   const fatFreeMass = input.fat_ratio === null ? null : round2(input.weight * (1 - input.fat_ratio / 100));
   const rawJson = JSON.stringify({ source: 'manual', input });
-  // 採番（負の最小-1）をINSERT内のスカラサブクエリで行い、直後の文からは
-  // 「負の最小grpid=今挿入した行」として参照する（同一トランザクション内なのでレース無し）
+  // idはAUTOINCREMENTで単調増加。同一トランザクション内に他の挿入は無いため、
+  // 後続の文からは「自分が挿入した行 = MAX(id)」として参照できる
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(
-      'INSERT INTO measurements (grpid, measured_at, weight, fat_ratio, fat_free_mass, raw_json, source) ' +
-        "SELECT (SELECT COALESCE(MIN(grpid), 0) FROM measurements WHERE grpid < 0) - 1, ?1, ?2, ?3, ?4, ?5, 'manual'",
+      'INSERT INTO measurements (source, measured_at, weight, fat_ratio, fat_free_mass, raw_json) ' +
+        "VALUES ('manual', ?1, ?2, ?3, ?4, ?5)",
     ).bind(input.measured_at, input.weight, input.fat_ratio, fatFreeMass, rawJson),
   ];
   // Withings webhook経由と同じ即時通知パイプラインに乗せる（mode=dailyのみの通知先はダイジェストで届く）
@@ -75,8 +75,8 @@ export async function logWeight(env: Env, input: WeightInput): Promise<ManualMea
   const batchId = newId();
   statements.push(
     env.DB.prepare(
-      'INSERT OR IGNORE INTO notification_batch_items (grpid, batch_id) ' +
-        'VALUES ((SELECT MIN(grpid) FROM measurements WHERE grpid < 0), ?1)',
+      'INSERT OR IGNORE INTO notification_batch_items (measurement_id, batch_id) ' +
+        'VALUES ((SELECT MAX(id) FROM measurements), ?1)',
     ).bind(batchId),
   );
   for (const dest of destinations) {
@@ -90,8 +90,8 @@ export async function logWeight(env: Env, input: WeightInput): Promise<ManualMea
   }
   statements.push(
     env.DB.prepare(
-      'SELECT grpid AS id, measured_at, weight, fat_ratio, fat_free_mass, source FROM measurements ' +
-        'WHERE grpid = (SELECT MIN(grpid) FROM measurements WHERE grpid < 0)',
+      'SELECT id, measured_at, weight, fat_ratio, fat_free_mass, source FROM measurements ' +
+        'WHERE id = (SELECT MAX(id) FROM measurements)',
     ),
   );
   const results = await env.DB.batch<ManualMeasurement>(statements);
@@ -101,7 +101,7 @@ export async function logWeight(env: Env, input: WeightInput): Promise<ManualMea
 }
 
 export async function deleteManualMeasurement(env: Env, id: number): Promise<boolean> {
-  const res = await env.DB.prepare("DELETE FROM measurements WHERE grpid = ?1 AND source = 'manual'")
+  const res = await env.DB.prepare("DELETE FROM measurements WHERE id = ?1 AND source = 'manual'")
     .bind(id)
     .run();
   return res.meta.changes > 0;

@@ -107,7 +107,7 @@ export interface LatestMeasurement {
 
 /** 計測明細（/api/raw）の1行。idは手動記録の削除（DELETE /api/weight/:id）に使う */
 export interface RawMeasurement extends LatestMeasurement {
-  id: number; // measurements.grpid（Withingsは正、手動記録は負の採番ID）
+  id: number; // measurements.id（内部計測ID。負値は主キー再設計前に手動記録された既存行のみ）
   source: string; // 'withings' | 'manual'
 }
 
