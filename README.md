@@ -44,7 +44,7 @@ AIクライアント / ダッシュボード ──OAuth 2.1 (Googleログイン
 体重の手動記録 ──MCP log_weight / POST /api/weight (OAuth)──▶ Worker ─▶ D1 (measurements, source='manual')
 ```
 
-Webhook は受信内容を即座に D1 の inbox テーブルへ永続化して 200 を返し、実際の取り込みは `waitUntil` と cron で非同期に行う。取り込みは Withings の `grpid` をキーにした UPSERT のため、再送・値修正にも冪等。通知は grpid 単位の claim（一意制約）で二重送信を防ぐ。
+Webhook は受信内容を即座に D1 の inbox テーブルへ永続化して 200 を返し、実際の取り込みは `waitUntil` と cron で非同期に行う。取り込みは Withings の `grpid` をキーにした UPSERT のため、再送・値修正にも冪等。通知は計測ID単位の claim（一意制約）で二重送信を防ぐ。
 
 ## 必要なもの
 

@@ -30,6 +30,17 @@
     document.dispatchEvent(new CustomEvent('tabshown', { detail: name }));
   }
   tabButtons.forEach((b) => b.addEventListener('click', () => showTab(b.dataset.panel)));
+  // 左右矢印キーでタブ移動（role="tablist" のAPGパターン。フォーカスと選択を同時に動かす）
+  tabButtons.forEach((b, i) =>
+    b.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      e.preventDefault();
+      const dir = e.key === 'ArrowRight' ? 1 : -1;
+      const next = tabButtons[(i + dir + tabButtons.length) % tabButtons.length];
+      next.focus();
+      showTab(next.dataset.panel);
+    }),
+  );
 
   // ---- トースト（成功/失敗の非ブロッキング通知） ----
   let toastTimer = null;
@@ -174,6 +185,20 @@
     let candList = []; // 現在表示中の候補 [{ m, score, matched }]
     let activeIdx = -1; // 選択中の候補インデックス（キーボード/マウス共通）
 
+    // combobox ARIA（キーボード選択中の候補を支援技術へ伝える）
+    opts.input.setAttribute('role', 'combobox');
+    opts.input.setAttribute('aria-autocomplete', 'list');
+    opts.input.setAttribute('aria-expanded', 'false');
+    if (opts.list.id) opts.input.setAttribute('aria-controls', opts.list.id);
+    opts.list.setAttribute('role', 'listbox');
+
+    const syncAria = () => {
+      opts.input.setAttribute('aria-expanded', String(candList.length > 0));
+      const activeLi = activeIdx >= 0 && opts.list.id ? `${opts.list.id}-opt-${activeIdx}` : '';
+      if (activeLi) opts.input.setAttribute('aria-activedescendant', activeLi);
+      else opts.input.removeAttribute('aria-activedescendant');
+    };
+
     // あいまい一致（部分列マッチ）。q の各文字が name に順番に現れれば候補。
     // 連続一致・先頭一致を高評価。絵文字（サロゲートペア）対応のためコードポイント配列で処理する
     const fuzzyMatch = (name, q) => {
@@ -219,12 +244,14 @@
     };
 
     const drawCandidates = () => {
+      const listId = opts.list.id;
       opts.list.innerHTML = candList
         .map(
           (c, i) =>
-            `<li data-pick="${c.m.id}" data-idx="${i}" class="${i === activeIdx ? 'active' : ''}">${highlight(c.m.name, c.matched)}${opts.renderMeta(c.m)}</li>`,
+            `<li data-pick="${c.m.id}" data-idx="${i}" role="option"${listId ? ` id="${listId}-opt-${i}"` : ''} aria-selected="${i === activeIdx}" class="${i === activeIdx ? 'active' : ''}">${highlight(c.m.name, c.matched)}${opts.renderMeta(c.m)}</li>`,
         )
         .join('');
+      syncAria();
     };
 
     const showCandidates = () => {
@@ -241,6 +268,7 @@
       candList = [];
       activeIdx = -1;
       opts.list.innerHTML = '';
+      syncAria();
     };
 
     const pick = (m) => {
