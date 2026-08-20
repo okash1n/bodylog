@@ -1,6 +1,6 @@
 # bodylog
 
-Withings 体重計の計測データ（体重・体組成）に加え、食事・運動の記録も扱うシングルユーザー向けの「からだ」トラッキングアプリ。Cloudflare Workers で受け取り、D1 に保存し、Slack 通知と公開ダッシュボードで可視化する。
+体重・体組成に加え、食事・運動の記録も扱うシングルユーザー向けの「からだ」トラッキングアプリ。Cloudflare Workers で受け取り、D1 に保存し、Slack 通知と公開ダッシュボードで可視化する。体重の入力は **Withings 体重計連携（任意）** と **手動記録（MCP / REST API）** の2経路がある。
 
 Fork/clone して設定値を差し替えるだけで動く（コード変更不要）。Cloudflare 無料枠内で動作する。
 
@@ -41,17 +41,18 @@ GitHub Actions (coaching.yml, 毎晩23:30 JST・任意機能)
   └─ Claude Agent SDK で講評生成 ──POST /api/coaching──▶ Worker ─▶ D1 (coaching_notes)
                                                           └─ 23:55 の日次ダイジェストに差し込み ─▶ Slack
 AIクライアント / ダッシュボード ──OAuth 2.1 (Googleログイン)──▶ /mcp・/api/*(書き込み) ─▶ KV (OAUTH_KV: 認可フロー・トークン)
+体重の手動記録 ──MCP log_weight / POST /api/weight (OAuth)──▶ Worker ─▶ D1 (measurements, source='manual')
 ```
 
 Webhook は受信内容を即座に D1 の inbox テーブルへ永続化して 200 を返し、実際の取り込みは `waitUntil` と cron で非同期に行う。取り込みは Withings の `grpid` をキーにした UPSERT のため、再送・値修正にも冪等。通知は grpid 単位の claim（一意制約）で二重送信を防ぐ。
 
 ## 必要なもの
 
-- Withings アカウント（**体重計が無くても使える**: 無料の Withings アプリから体重を手入力すれば同じ経路で取り込まれる。手入力（attrib=2）は機器計測（attrib=0）と同様に採用する設計。体重計があれば乗るだけで自動同期になる）
 - Cloudflare アカウント（無料プランで OK）
 - 通知先 Slack ワークスペースで App 作成・Webhook 発行ができる権限
-- Google アカウントと Google Cloud プロジェクト（食事・運動記録の書き込み機能で OAuth クライアントを作成する場合。読み取りのみなら不要）
+- Google アカウントと Google Cloud プロジェクト（食事・運動記録・体重の手動記録など書き込み機能で OAuth クライアントを作成する場合。読み取りのみなら不要）
 - Node.js（npm）とターミナル
+- **任意**: Withings アカウント（体重計連携を使う場合のみ。**体重計が無くても使える**: 無料の Withings アプリから体重を手入力すれば同じ経路で取り込まれる（手入力 attrib=2 も機器計測 attrib=0 と同様に採用）。Withings をまったく使わない場合も、MCP の `log_weight` か `POST /api/weight` で体重を手動記録すれば全機能が動く）
 
 ## セットアップ
 
@@ -80,7 +81,9 @@ openssl rand -hex 8    # → DASHBOARD_SLUG（ダッシュボード URL の slug
 
 D1 のバインディング名（`DB`）と KV のバインディング名（`OAUTH_KV`）はコード・CI が参照するため変更しないこと。`database_name` は手順4で `wrangler d1 create` に渡す名前（本手順では `bodylog`）と一致させる。
 
-### 2. Withings アプリ登録
+### 2. Withings アプリ登録（任意: 体重計連携を使う場合のみ）
+
+Withings を使わない場合はこの手順をスキップして手順3へ進む（体重は後述の手動記録で入れる。手順5の `WITHINGS_*` Secrets と手順7の認可も不要）。
 
 1. [developer.withings.com](https://developer.withings.com/) で開発者アカウントを作成する
 2. 初回に環境選択（Welcome 画面)が出たら **Europe Cloud** を選ぶ。US Cloud は契約パートナー専用（`Only under contract`）で選択不可。日本からの利用でも Europe Cloud で OK
@@ -122,11 +125,13 @@ npx wrangler kv namespace create OAUTH_KV
 初回はまだ Worker が存在しないため、`secret put` 時に「新しい Worker を作成して Secrets を追加するか」の確認が出る。yes と答えるとプレースホルダー Worker が作成され、手順6のデプロイで本体に置き換わる。
 
 ```sh
-npx wrangler secret put WITHINGS_CLIENT_ID      # 手順2の Client ID
-npx wrangler secret put WITHINGS_CLIENT_SECRET  # 手順2の Client Secret
 npx wrangler secret put SLACK_WEBHOOKS          # 通知先の JSON 配列（下記）
 npx wrangler secret put SETUP_SECRET            # /auth/start の保護キー。openssl rand -hex 32 などで生成
 npx wrangler secret put ADMIN_SLACK_WEBHOOK     # 任意: 管理者アラート送信先。未設定時は SLACK_WEBHOOKS の先頭を使用
+
+# 任意: Withings 連携を使う場合のみ（未設定でも他機能はすべて動く）
+npx wrangler secret put WITHINGS_CLIENT_ID      # 手順2の Client ID
+npx wrangler secret put WITHINGS_CLIENT_SECRET  # 手順2の Client Secret
 ```
 
 `SLACK_WEBHOOKS` の形式（`id` は再送管理に使う安定した識別子。後から変えない。並べ替え・URL 差し替えをしても送達記録が壊れないようにするためのもの）:
@@ -155,9 +160,11 @@ npx wrangler secret put ADMIN_SLACK_WEBHOOK     # 任意: 管理者アラート�
 npm run deploy
 ```
 
-表示された Worker URL（既定は `*.workers.dev`）を控え、Withings アプリの **REGISTERED URLS** を実 URL に更新する。カスタムドメインを使う場合（後述）は、そのドメインで統一する。
+表示された Worker URL（既定は `*.workers.dev`）を控える。Withings 連携を使う場合は、Withings アプリの **REGISTERED URLS** を実 URL に更新する。カスタムドメインを使う場合（後述）は、そのドメインで統一する。
 
-### 7. Withings 認可（初回のみ）
+### 7. Withings 認可（任意: 体重計連携を使う場合のみ・初回のみ）
+
+Withings を使わない場合はスキップして手順8へ（`/auth/start` は `WITHINGS_*` Secrets 未設定時に「未設定」エラーページを返すだけで害はない）。
 
 **手順6の URL 更新を確認してから**、ブラウザで以下を開く:
 
@@ -204,6 +211,21 @@ npx wrangler d1 execute bodylog --remote \
 
 `OWNER_EMAILS` に含まれないメールでログインした場合、Google 認証自体は成功しても 403 で拒否される（Google アカウントを持っているだけでは書き込めない）。CI（GitHub Actions）を使っている場合は、手順1・4で更新した `wrangler.toml` を `gh secret set WRANGLER_TOML < wrangler.toml` で反映すること（後述の「自動デプロイ」参照）。
 
+### 10. 体重の手動記録（Withings を使わない場合の入力経路）
+
+手順9の OAuth セットアップが済んでいれば、体重は次のどちらでも記録できる（Withings 連携と併用も可）:
+
+- **MCP（推奨）**: Claude / ChatGPT などのクライアントで「今朝 83.4kg だった」と伝えると `log_weight` ツールで記録される（体脂肪率も言えば除脂肪体重を導出して保存し、BMR 計算にも使われる）
+- **REST API**: OAuth の Bearer トークンで `POST {base}/api/weight` を叩く（iOS ショートカット等の自動化向け）:
+
+  ```sh
+  curl -X POST "https://weight.example.com/api/weight" \
+    -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+    -d '{"weight_kg": 83.4, "fat_ratio": 28.3}'   # fat_ratio と measured_at は任意
+  ```
+
+手動記録は `measurements` に `source='manual'`（IDは負の整数）で保存され、グラフ・通知・BMR・実効消費の推定など読み取り側はすべて Withings 由来の計測と同じ扱いになる。入力ミスは `DELETE {base}/api/weight/{id}` で消せる（Withings 由来の行は削除不可）。
+
 ## カスタムドメイン運用（任意）
 
 `*.workers.dev` の長い URL を避けたい場合、Cloudflare に登録済みのゾーンがあればカスタムドメインで配信できる。
@@ -231,7 +253,7 @@ npx wrangler d1 execute bodylog --remote \
 | `GET /auth/callback` | 認可コールバック。トークン保存・購読登録・初期インポート投入 |
 | `GET/HEAD/POST /webhook/withings-{WEBHOOK_PATH_SECRET}` | Withings notify 受信。GET/HEAD は疎通確認用に即 200 |
 | `GET /authorize` / `POST /token` / `POST /register` | 食事・運動記録の書き込みAPI、および MCP 用 OAuth 2.1（`@cloudflare/workers-oauth-provider`）。`/authorize` は Google ログインでオーナーのメールを確認する |
-| `POST /mcp` | MCP（Model Context Protocol）エンドポイント。OAuth 認証必須。読み取り7ツール + 書き込み5ツール（`log_meal` `create_menu` `log_exercise` `create_exercise_menu` `set_goal`） |
+| `POST /mcp` | MCP（Model Context Protocol）エンドポイント。OAuth 認証必須。読み取り7ツール + 書き込み6ツール（`log_meal` `create_menu` `log_exercise` `create_exercise_menu` `set_goal` `log_weight`） |
 | `GET {base}/` | ダッシュボード本体（PWA） |
 | `GET {base}/api/measurements?from=&to=` または `?days=N` | 日次系列 JSON（日平均 + 7日移動平均） |
 | `GET {base}/api/raw?from=&to=` または `?days=N` | 計測明細 JSON（1計測=1行、新しい順） |
@@ -251,6 +273,7 @@ npx wrangler d1 execute bodylog --remote \
 | `POST {base}/api/meals` / `PATCH {base}/api/meals/:id` / `DELETE {base}/api/meals/:id` | 認証必須。食事記録の作成・更新・削除 |
 | `POST {base}/api/exercise/menus` / `PATCH {base}/api/exercise/menus/:id` / `POST {base}/api/exercise/menus/:id/archive` / `POST {base}/api/exercise/menus/:id/unarchive` | 認証必須。運動種目（マスタ）の作成・更新・アーカイブ切替 |
 | `POST {base}/api/exercise/logs` / `DELETE {base}/api/exercise/logs/:id` | 認証必須。運動記録の作成・削除 |
+| `POST {base}/api/weight` / `DELETE {base}/api/weight/:id` | 認証必須。体重の手動記録の作成・削除（`weight_kg` 必須 20-300、`fat_ratio` 任意 3-75%、`measured_at` 任意 ISO8601。削除は `source='manual'` の行のみ） |
 | `GET {base}/llms.txt` | AI向けのAPI案内（プレーンテキスト） |
 | `GET {base}/openapi.json` | OpenAPI 3.1 定義（ChatGPT カスタムGPTの Actions 登録用） |
 | `GET {base}/og.png` | OGP 画像（直近30日の体重グラフを PNG 生成。依存ライブラリなしの自前エンコーダ） |
@@ -282,7 +305,7 @@ ChatGPT・Claude などのAIクライアントから体重推移・食事記録�
 
 - **URLを渡して読ませる**: `https://weight.example.com/llms.txt` にエンドポイント一覧と使い方が載っているので、「このURLを見て最近の体重推移を教えて」だけで動く。要約は `/api/summary`、時系列は `/api/measurements?days=90` のように相対期間で取れる。食事記録は `/api/menus` `/api/meals` `/api/meals/daily`、運動記録は `/api/exercise/menus` `/api/exercise/logs` `/api/exercise/daily` で照会できる
 - **ChatGPT カスタムGPT（Actions）**: GPT編集画面の Actions で「URLからインポート」に `https://weight.example.com/openapi.json` を指定する。認証は「なし」（読み取り専用）
-- **MCP クライアント**: `https://weight.example.com/mcp` を OAuth 対応のコネクタとして登録する（MCP はドメイン直下の単一エンドポイントで、`DASHBOARD_SLUG` の設定にかかわらずここに固定。OAuth 認可必須）。ChatGPT はコネクタ作成時に認証方式で「OAuth」を選ぶ。Claude Code は `claude mcp add --transport http bodylog https://weight.example.com/mcp`（接続時にブラウザで Google ログイン画面が開く）。ツールは読み取り7つ（体重: `get_weight_summary` / `get_daily_series` / `get_raw_measurements`、食事: `search_menus` / `get_meal_logs`、運動: `search_exercise_menus` / `get_exercise_logs`）＋書き込み5つ（`log_meal` 食事記録 / `create_menu` メニュー登録 / `log_exercise` 運動記録 / `create_exercise_menu` 種目登録 / `set_goal` 目標設定）。**記録は必ず登録済みのメニュー/種目から行うこと**（無ければ先に `create_menu` / `create_exercise_menu` で登録してから記録する。AI が判断でメニュー・種目を新規作成しないよう、登録前にユーザーへ確認するのが安全）
+- **MCP クライアント**: `https://weight.example.com/mcp` を OAuth 対応のコネクタとして登録する（MCP はドメイン直下の単一エンドポイントで、`DASHBOARD_SLUG` の設定にかかわらずここに固定。OAuth 認可必須）。ChatGPT はコネクタ作成時に認証方式で「OAuth」を選ぶ。Claude Code は `claude mcp add --transport http bodylog https://weight.example.com/mcp`（接続時にブラウザで Google ログイン画面が開く）。ツールは読み取り7つ（体重: `get_weight_summary` / `get_daily_series` / `get_raw_measurements`、食事: `search_menus` / `get_meal_logs`、運動: `search_exercise_menus` / `get_exercise_logs`）＋書き込み6つ（`log_meal` 食事記録 / `create_menu` メニュー登録 / `log_exercise` 運動記録 / `create_exercise_menu` 種目登録 / `set_goal` 目標設定 / `log_weight` 体重の手動記録）。**記録は必ず登録済みのメニュー/種目から行うこと**（無ければ先に `create_menu` / `create_exercise_menu` で登録してから記録する。AI が判断でメニュー・種目を新規作成しないよう、登録前にユーザーへ確認するのが安全）
 
 単位は kg（`fat_ratio` のみ %）、日付境界は `TZ_OFFSET_HOURS` のローカル日付。`fat_mass` は `weight - fat_free_mass` の導出値。食事記録の `calories` は kcal、`protein_g`/`fat_g`/`carbs_g` は g。日次の栄養素合計（`/api/meals/daily`）のうち `protein_g`/`fat_g`/`carbs_g` は栄養素が入力済みの記録のみの部分合計（未入力の記録は含まない）。`calories` は全記録の合計。PFC比率を出す場合は P×4 / F×9 / C×4 kcal に換算し3者の合計を100%として正規化すること（登録カロリーで割ると食物繊維等の差で100%を超えうるため不可）。運動記録の消費kcal（`/api/exercise/logs` の `calories`）は有酸素のみ算出（METs×体重×時間×1.05）。`/api/exercise/daily` の `bmr` は Katch-McArdle推定の基礎代謝（実測除脂肪体重が一度も無い期間は null）で、総消費は `bmr + calories_burned`。
 
@@ -343,11 +366,13 @@ npx wrangler d1 execute bodylog --remote \
 
 - [ ] ダッシュボードを開くと、初期インポートされた過去データの推移グラフが表示される
 - [ ] `{base}/api/measurements?from=<開始日>&to=<終了日>` が JSON を返す
-- [ ] 体重計に載る → 数分以内に全チャンネルへ Slack 通知（グラフ画像付き）が届き、D1 にも行が増えている:
+- [ ] （Withings利用時）体重計に載る → 数分以内に全チャンネルへ Slack 通知（グラフ画像付き）が届き、D1 にも行が増えている:
 
   ```sh
   npx wrangler d1 execute bodylog --remote --command "SELECT COUNT(*) FROM measurements"
   ```
+
+- [ ] （Withings無しの場合）MCP の `log_weight`（または `POST {base}/api/weight`）で体重を記録 → ダッシュボードに反映され、数分以内に Slack 通知が届く
 
 - [ ] スマホでダッシュボードを「ホーム画面に追加」→ スタンドアロン起動でグラフが見える
 - [ ] `key` なし（または誤った key）で `/auth/start` にアクセスすると 404 になる

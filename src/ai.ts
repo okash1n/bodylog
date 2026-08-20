@@ -13,8 +13,9 @@ export function llmsTxt(origin: string, base: string, tzOffsetHours: number): st
   const root = apiRoot(origin, base);
   return `# bodylog
 
-個人の体重・体組成（Withings体重計、1ユーザー分）・食事・運動を記録しているサービスのAPI。
-REST（GET）はすべて読み取り専用・認証不要。書き込みは /mcp（OAuth 2.1）のみ。
+個人の体重・体組成・食事・運動（1ユーザー分）を記録しているサービスのAPI。
+体重はWithings体重計連携または手動記録（source: withings | manual）で入る。
+REST（GET）はすべて読み取り専用・認証不要。書き込みはOAuth 2.1で保護された /mcp と /api/*（POST/DELETE等）。
 
 ## データの読み方
 
@@ -40,8 +41,10 @@ REST（GET）はすべて読み取り専用・認証不要。書き込みは /mc
 - GET ${root}/api/coaching/latest — AIコーチの最新講評（daily=日次総括 / weekly=過去の週次総括・現在は生成されない。未生成はnull）
 - GET ${root}/api/coaching?days=30 — AIコーチ講評の履歴（新しい順、最大200件）
 - GET ${root}/api/metabolism — 直近28日の実測データからの実効消費カロリー推定（摂取記録が8割未満の期間はinsufficient_data）
-- GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（ChatGPTカスタムGPTのActionsにはこれを登録する）
-- POST ${root}/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール
+- GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（読み取りのみ。ChatGPTカスタムGPTのActionsにはこれを登録する）
+- POST ${root}/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール（体重の手動記録は log_weight）
+- POST ${root}/api/weight — 体重の手動記録（OAuth必須）。weight_kg必須20-300 / fat_ratio任意3-75% / measured_at任意ISO8601。fat_ratioがあれば除脂肪体重を導出保存。応答は {id(負整数), measured_at, weight, fat_ratio, fat_free_mass, source:'manual'}
+- DELETE ${root}/api/weight/{id} — 手動記録の削除（OAuth必須。source='manual'の行のみ。Withings由来は削除不可）
 
 ## 例
 
@@ -107,7 +110,7 @@ export function openapiSpec(
       title: 'bodylog API',
       version: '1.0.0',
       description:
-        `個人の体重・体組成（Withings体重計、1ユーザー分）・食事・運動の読み取り専用API。認証不要。` +
+        `個人の体重・体組成・食事・運動（1ユーザー分）の読み取り専用API。認証不要。体重はWithings連携または手動記録で入る。` +
         `質量の単位はkg（fat_ratioのみ%）。fat_massは weight - fat_free_mass の導出値。` +
         `日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours}のローカル日付。`,
     },

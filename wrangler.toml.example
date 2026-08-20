@@ -4,8 +4,8 @@
 # 実値入りの wrangler.toml は .gitignore 済み（誤コミット防止）。
 #
 # Secrets は wrangler secret put で別途登録する:
-#   wrangler secret put WITHINGS_CLIENT_ID      # Withings開発者ポータルのClient ID
-#   wrangler secret put WITHINGS_CLIENT_SECRET  # 同 Client Secret
+#   wrangler secret put WITHINGS_CLIENT_ID      # 任意: Withings連携を使う場合のみ。開発者ポータルのClient ID
+#   wrangler secret put WITHINGS_CLIENT_SECRET  # 任意: 同 Client Secret（未設定でも手動記録で全機能が動く）
 #   wrangler secret put SLACK_WEBHOOKS          # 例: [{"id":"main","url":"https://hooks.slack.com/services/..."}]
 #   wrangler secret put SETUP_SECRET            # /auth/start の保護キー（ランダム文字列）
 #   wrangler secret put ADMIN_SLACK_WEBHOOK     # 任意: 管理者アラート送信先（未設定時はSLACK_WEBHOOKSの先頭）

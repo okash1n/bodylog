@@ -148,6 +148,12 @@ describe('AI向けREST拡張', () => {
       expect(text).toContain('kg');
     });
 
+    it('llms.txt が体重の手動記録エンドポイントを案内する', async () => {
+      const text = await (await request('/llms.txt')).text();
+      expect(text).toContain('/api/weight');
+      expect(text).toContain('log_weight');
+    });
+
     it('openapi.jsonの全pathが実ルータで200を返す（削除/改名ドリフトの検知）', async () => {
       const spec = (await (await request('/openapi.json')).json()) as {
         paths: Record<string, { get?: { parameters?: { name: string }[] } }>;
