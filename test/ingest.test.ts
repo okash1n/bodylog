@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ingestRange, parseWebhookPayload } from '../src/ingest';
+import { ensureSubscription, ingestRange, parseWebhookPayload, runDailyBackfill } from '../src/ingest';
 import { insertTokenRow, resetTables, stubFetch, testEnv, withingsReply, type StubRoute } from './helpers';
 
 interface RawMeasure {
@@ -131,6 +131,23 @@ describe('ingestRange', () => {
       weight: number | null;
     }>();
     expect(row?.weight).toBeCloseTo(60.7, 5);
+  });
+});
+
+describe('withings未連携時のcronゲート', () => {
+  beforeEach(resetTables);
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('トークン行が無ければrunDailyBackfillは外部通信せずに終わる', async () => {
+    const stub = stubFetch(); // ルート未登録: fetchが飛べばthrowする
+    await runDailyBackfill(testEnv);
+    expect(stub.requests().length).toBe(0);
+  });
+
+  it('トークン行が無ければensureSubscriptionは外部通信せずに終わる', async () => {
+    const stub = stubFetch();
+    await ensureSubscription(testEnv, 'https://weight.example.com/webhook/withings-x');
+    expect(stub.requests().length).toBe(0);
   });
 });
 

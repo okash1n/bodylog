@@ -135,6 +135,15 @@ app.get('/auth/start', async (c) => {
   if (!env.SETUP_SECRET || c.req.query('key') !== env.SETUP_SECRET) {
     return c.text('not found', 404);
   }
+  if (!env.WITHINGS_CLIENT_ID || !env.WITHINGS_CLIENT_SECRET) {
+    return c.html(
+      errorPage(
+        'Withings連携が未設定です',
+        'WITHINGS_CLIENT_ID / WITHINGS_CLIENT_SECRET を登録すると体重計連携が有効になります。Withings無しでも体重はMCPの log_weight か POST /api/weight で記録できます。',
+      ),
+      503,
+    );
+  }
   const origin = new URL(c.req.url).origin;
   const state = newId();
   const now = Date.now();
@@ -153,6 +162,15 @@ app.get('/auth/start', async (c) => {
 app.get('/auth/callback', async (c) => {
   const env = c.env;
   for (const [k, v] of Object.entries(authHeaders())) c.header(k, v);
+  if (!env.WITHINGS_CLIENT_ID || !env.WITHINGS_CLIENT_SECRET) {
+    return c.html(
+      errorPage(
+        'Withings連携が未設定です',
+        'WITHINGS_CLIENT_ID / WITHINGS_CLIENT_SECRET を登録してから /auth/start をやり直してください。',
+      ),
+      503,
+    );
+  }
   const code = c.req.query('code');
   const state = c.req.query('state');
   if (!code || !state) {

@@ -2,6 +2,7 @@ import type { Env, IngestContext, MeasureGroup, MeasurementUpsert } from './type
 import { LIMITS, newId } from './util';
 import {
   fetchMeasPage,
+  getTokenRow,
   getValidAccessToken,
   groupToUpsert,
   listNotifySubscriptions,
@@ -311,6 +312,11 @@ export async function resumeInitialImport(env: Env): Promise<{ done: boolean }> 
 }
 
 export async function runDailyBackfill(env: Env): Promise<void> {
+  // Withings未連携（シークレット未設定 or 未認証）ならこのステップは対象外
+  if (!(await getTokenRow(env))) {
+    console.info('[ingest] withings not linked; skipping daily backfill');
+    return;
+  }
   const startedAt = Math.floor(Date.now() / 1000);
   try {
     const lastSyncRaw = await getSetting(env, 'last_sync_at');
@@ -394,6 +400,11 @@ export async function cleanupOldRows(env: Env): Promise<void> {
 }
 
 export async function ensureSubscription(env: Env, currentCallbackUrl: string): Promise<void> {
+  // Withings未連携（シークレット未設定 or 未認証）ならこのステップは対象外
+  if (!(await getTokenRow(env))) {
+    console.info('[ingest] withings not linked; skipping subscription check');
+    return;
+  }
   try {
     const accessToken = await getValidAccessToken(env);
     const subscriptions = await listNotifySubscriptions(env, accessToken);
