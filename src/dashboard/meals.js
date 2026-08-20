@@ -50,9 +50,13 @@
   document.addEventListener('tabshown', (e) => {
     if (e.detail === 'meals') refresh();
   });
-  document.addEventListener('authchanged', updateAuthUi);
+  // 履歴の削除ボタンは描画時のloggedIn()で出し分けるため、認証状態が変わったら再描画も行う
+  document.addEventListener('authchanged', () => {
+    updateAuthUi();
+    refresh();
+  });
   $('meals-login').addEventListener('click', () => {
-    login().catch((e) => alert(`ログインを開始できませんでした: ${e.message}`));
+    login().catch((e) => toast(`ログインを開始できませんでした: ${e.message}`, { tone: 'error' }));
   });
 
   // ---- データ表示 ----
@@ -181,7 +185,7 @@
 
   $('meal-add-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (!selectedMenu) return alert('メニューを選択してください');
+    if (!selectedMenu) return toast('メニューを選択してください', { tone: 'error' });
     // 過去日を選択中ならその日のJST正午(03:00Z)で記録（未来時刻回避＋日付境界で当該日に入る）。
     // 今日なら eaten_at を省略してサーバーの現在時刻を使う
     const day = selectedDate();
@@ -193,7 +197,7 @@
       eaten_at,
     });
     // 失敗時にフォームをクリアすると入力（メニュー選択・倍率・区分）が消えるため、必ずreturnする
-    if (!res.ok) return alert(`記録に失敗: ${(await res.json()).error ?? res.status}`);
+    if (!res.ok) return toast(`記録に失敗: ${(await res.json()).error ?? res.status}`, { tone: 'error' });
     toast('記録しました');
     selectedMenu = null;
     $('meal-menu-search').value = '';
@@ -208,7 +212,7 @@
       protein_g: num('menu-protein'), fat_g: num('menu-fat'), carbs_g: num('menu-carbs'),
     });
     // 失敗時にreset()すると入力済みの名前/kcal/PFCが消えるため、必ずreturnする
-    if (!res.ok) return alert(`メニュー追加に失敗: ${(await res.json()).error ?? res.status}`);
+    if (!res.ok) return toast(`メニュー追加に失敗: ${(await res.json()).error ?? res.status}`, { tone: 'error' });
     toast('メニューを追加しました');
     e.target.reset();
     refresh();

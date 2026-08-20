@@ -36,9 +36,13 @@
     $('exercise-add-form').hidden = !loggedIn();
     $('exercise-menus-manage').hidden = !loggedIn();
   }
-  document.addEventListener('authchanged', updateAuthUi);
+  // 履歴の削除ボタンは描画時のloggedIn()で出し分けるため、認証状態が変わったら再描画も行う
+  document.addEventListener('authchanged', () => {
+    updateAuthUi();
+    refresh();
+  });
   $('exercise-login').addEventListener('click', () => {
-    login().catch((e) => alert(`ログインを開始できませんでした: ${e.message}`));
+    login().catch((e) => toast(`ログインを開始できませんでした: ${e.message}`, { tone: 'error' }));
   });
 
   // ---- データ取得（タブ表示時） ----
@@ -146,7 +150,7 @@
       }
     }
     const res = await rw('exercise/menus', 'POST', body);
-    if (!res.ok) return alert(`種目追加に失敗: ${(await res.json()).error ?? res.status}`);
+    if (!res.ok) return toast(`種目追加に失敗: ${(await res.json()).error ?? res.status}`, { tone: 'error' });
     toast('種目を追加しました');
     e.target.reset();
     syncMenuFormFields();
@@ -367,8 +371,8 @@
     const div = document.createElement('div');
     div.className = 'set-row';
     div.innerHTML =
-      `<input class="set-reps" type="number" min="1" max="1000" step="1" placeholder="回" value="${reps ?? ''}">` +
-      `<input class="set-weight" type="number" min="0" max="1000" step="0.5" placeholder="${selectedMenu && selectedMenu.is_bodyweight ? '追加kg(任意)' : 'kg'}" value="${weight ?? ''}">` +
+      `<input class="set-reps" type="number" min="1" max="1000" step="1" placeholder="回" aria-label="回数" value="${reps ?? ''}">` +
+      `<input class="set-weight" type="number" min="0" max="1000" step="0.5" placeholder="${selectedMenu && selectedMenu.is_bodyweight ? '追加kg(任意)' : 'kg'}" aria-label="重量kg" value="${weight ?? ''}">` +
       `<button type="button" class="ghost-btn set-remove">×</button>`;
     $('exercise-sets').appendChild(div);
   }
@@ -396,13 +400,13 @@
 
   $('exercise-add-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (!selectedMenu) return alert('種目を選択してください');
+    if (!selectedMenu) return toast('種目を選択してください', { tone: 'error' });
     const day = selectedDate();
     const performed_at = day < todayJst() ? `${day}T03:00:00Z` : undefined;
     const body = { menu_id: selectedMenu.id, performed_at };
     if (selectedMenu.category === 'cardio') {
       const min = Number($('exercise-duration').value);
-      if (!min) return alert('時間（分）を入力してください');
+      if (!min) return toast('時間（分）を入力してください', { tone: 'error' });
       body.duration_min = min;
     } else {
       const sets = [];
@@ -412,11 +416,11 @@
         if (!reps) continue;
         sets.push({ reps, weight_kg: w === '' ? null : Number(w) });
       }
-      if (!sets.length) return alert('セット（回数）を入力してください');
+      if (!sets.length) return toast('セット（回数）を入力してください', { tone: 'error' });
       body.sets = sets;
     }
     const res = await rw('exercise/logs', 'POST', body);
-    if (!res.ok) return alert(`記録に失敗: ${(await res.json()).error ?? res.status}`);
+    if (!res.ok) return toast(`記録に失敗: ${(await res.json()).error ?? res.status}`, { tone: 'error' });
     toast('記録しました');
     selectedMenu = null;
     $('exercise-menu-search').value = '';

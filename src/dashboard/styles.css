@@ -3,11 +3,16 @@
   color-scheme: light;
   --bg: #f6f8fa;
   --surface: #ffffff;
+  --surface-2: rgba(2, 132, 199, 0.08);
   --text: #1e293b;
   --text-muted: #64748b;
   --border: #e2e8f0;
   --grid: rgba(100, 116, 139, 0.22);
   --accent: #0284c7;
+  /* 塗り潰しボタン用（--accentはグラフ系列と共有のため触らない）。文字色とペアでWCAG AAを満たす */
+  --accent-fill: #0369a1;
+  --on-accent: #ffffff;
+  --on-warn: #ffffff;
   --accent-2: #ca8a04;
   --accent-3: #dc2626;
   --accent-cal: #15803d;
@@ -20,11 +25,15 @@
     color-scheme: dark;
     --bg: #0f172a;
     --surface: #1e293b;
+    --surface-2: rgba(56, 189, 248, 0.1);
     --text: #e2e8f0;
     --text-muted: #94a3b8;
     --border: #334155;
     --grid: rgba(148, 163, 184, 0.18);
     --accent: #38bdf8;
+    --accent-fill: #38bdf8;
+    --on-accent: #0f172a;
+    --on-warn: #0f172a;
     --accent-2: #facc15;
     --accent-3: #f87171;
     --accent-cal: #34d399;
@@ -37,11 +46,15 @@
   color-scheme: light;
   --bg: #f6f8fa;
   --surface: #ffffff;
+  --surface-2: rgba(2, 132, 199, 0.08);
   --text: #1e293b;
   --text-muted: #64748b;
   --border: #e2e8f0;
   --grid: rgba(100, 116, 139, 0.22);
   --accent: #0284c7;
+  --accent-fill: #0369a1;
+  --on-accent: #ffffff;
+  --on-warn: #ffffff;
   --accent-2: #ca8a04;
   --accent-3: #dc2626;
   --accent-cal: #15803d;
@@ -53,11 +66,15 @@
   color-scheme: dark;
   --bg: #0f172a;
   --surface: #1e293b;
+  --surface-2: rgba(56, 189, 248, 0.1);
   --text: #e2e8f0;
   --text-muted: #94a3b8;
   --border: #334155;
   --grid: rgba(148, 163, 184, 0.18);
   --accent: #38bdf8;
+  --accent-fill: #38bdf8;
+  --on-accent: #0f172a;
+  --on-warn: #0f172a;
   --accent-2: #facc15;
   --accent-3: #f87171;
   --accent-cal: #34d399;
@@ -68,6 +85,10 @@
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
+
+/* キーボード操作時のフォーカスリング（カスタム塗りの要素はUA既定だと見えづらい） */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.segment-btn:focus-visible, .tab:focus-visible { outline-offset: -1px; }
 /* 認証ゲート等はhidden属性に依存する。author側のdisplay:flexに負けないよう!importantで固定する */
 [hidden] { display: none !important; }
 body {
@@ -151,7 +172,7 @@ body {
   padding: 2px 10px;
   border-radius: 999px;
   background: var(--warn);
-  color: #fff;
+  color: var(--on-warn);
   white-space: nowrap;
 }
 
@@ -189,9 +210,9 @@ body {
   padding: 6px 12px;
 }
 .primary-btn {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--on-accent);
   font-weight: 600;
 }
 
@@ -255,8 +276,8 @@ body {
   font-variant-numeric: tabular-nums;
 }
 .segment-btn.active {
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-fill);
+  color: var(--on-accent);
   font-weight: 600;
 }
 
@@ -411,8 +432,10 @@ body {
 }
 
 /* ---- テーブル ---- */
+/* max-heightでこの要素自体を縦スクロールコンテナにする（無いとthead stickyが効かない） */
 .table-wrap {
   overflow-x: auto;
+  max-height: 70vh;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -456,13 +479,22 @@ body {
 }
 .data-table th:first-child,
 .data-table td:first-child { text-align: left; }
+/* 横スクロール中も日付列で行を同定できるように左端を固定する */
+.data-table th:first-child,
+.data-table td:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+}
 .data-table thead th {
   position: sticky;
   top: 0;
   background: var(--surface);
   color: var(--text-muted);
   font-weight: 600;
+  z-index: 1;
 }
+.data-table thead th:first-child { z-index: 2; }
 .data-table tbody tr:last-child td { border-bottom: none; }
 
 /* ---- 状態表示 ---- */
@@ -505,7 +537,7 @@ body {
 /* ---- 食事タブ ---- */
 .tabs { display: flex; gap: .5rem; margin-bottom: 1rem; }
 .tab { padding: .4rem 1rem; border-radius: 6px; border: 1px solid var(--border, #ccc); background: transparent; cursor: pointer; }
-.tab.active { background: var(--accent, #3b82f6); color: #fff; border-color: transparent; }
+.tab.active { background: var(--accent-fill, #3b82f6); color: var(--on-accent, #fff); border-color: transparent; }
 #panel-meals ul { list-style: none; padding: 0; }
 #panel-meals li { padding: .3rem 0; border-bottom: 1px solid var(--border, #eee); }
 /* fzf風メニュー候補リスト: 入力欄に重ねるドロップダウン（フロー内に置くと下の表示が押し下げられるため） */
@@ -527,9 +559,9 @@ body {
 #meal-menu-candidates:empty { border: none; }
 #meal-menu-candidates li { cursor: pointer; padding: .3rem .5rem; border-bottom: 1px solid var(--border, #eee); }
 #meal-menu-candidates li:last-child { border-bottom: none; }
-#meal-menu-candidates li.active { background: var(--accent, #3b82f6); color: #fff; }
+#meal-menu-candidates li.active { background: var(--accent-fill, #3b82f6); color: var(--on-accent, #fff); box-shadow: inset 2px 0 0 var(--text); }
 #meal-menu-candidates mark { background: transparent; color: var(--accent-2, #d97706); font-weight: 700; }
-#meal-menu-candidates li.active mark { color: #fff; text-decoration: underline; }
+#meal-menu-candidates li.active mark { color: var(--on-accent, #fff); text-decoration: underline; }
 #meal-add-form, #menu-form { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; align-items: center; }
 
 /* 食事履歴テーブル（直近50日・日付グループ） */
@@ -538,11 +570,11 @@ body {
 .meals-history-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .meals-history-table th { text-align: left; color: var(--text-muted, #64748b); font-weight: 600; padding: .3rem .5rem; border-bottom: 1px solid var(--border, #e2e8f0); white-space: nowrap; }
 .meals-history-table td { padding: .3rem .5rem; border-bottom: 1px solid var(--border, #eee); }
-.meals-history-table tr.mh-day td { background: var(--surface-2, rgba(2,132,199,.08)); font-weight: 700; padding-top: .5rem; }
+.meals-history-table tr.mh-day td { background: var(--surface-2); font-weight: 700; padding-top: .5rem; }
 .meals-history-table .mh-type { white-space: nowrap; color: var(--text-muted, #64748b); }
 .meals-history-table .mh-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .meals-history-table .mh-macro { color: var(--text-muted, #64748b); white-space: nowrap; }
-.meals-history-table .mh-del { font-size: .8rem; padding: .1rem .4rem; }
+.meals-history-table .mh-del { font-size: .8rem; padding: .1rem .4rem; min-height: 32px; min-width: 32px; }
 .meals-empty { color: var(--text-muted, #64748b); }
 
 /* 運動タブ（食事タブのスタイルを踏襲） */
@@ -552,9 +584,9 @@ body {
 #exercise-menu-candidates:empty { border: none; }
 #exercise-menu-candidates li { cursor: pointer; padding: .3rem .5rem; border-bottom: 1px solid var(--border, #eee); }
 #exercise-menu-candidates li:last-child { border-bottom: none; }
-#exercise-menu-candidates li.active { background: var(--accent, #3b82f6); color: #fff; }
+#exercise-menu-candidates li.active { background: var(--accent-fill, #3b82f6); color: var(--on-accent, #fff); box-shadow: inset 2px 0 0 var(--text); }
 #exercise-menu-candidates mark { background: transparent; color: var(--accent-2, #d97706); font-weight: 700; }
-#exercise-menu-candidates li.active mark { color: #fff; text-decoration: underline; }
+#exercise-menu-candidates li.active mark { color: var(--on-accent, #fff); text-decoration: underline; }
 #exercise-add-form, #exercise-menu-form { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; align-items: center; }
 #exercise-cardio-fields, #exercise-strength-fields { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; width: 100%; }
 #exercise-sets { display: flex; flex-direction: column; gap: .3rem; width: 100%; }
@@ -565,8 +597,34 @@ body {
 #exercise-history { overflow-x: auto; }
 #exercise-volume-wrap { position: relative; height: 220px; margin: .5rem 0 1rem; }
 
-/* 計測明細モードでは日次粒度のカロリー3列（摂取/消費/ネット）を隠す（1計測=1行と粒度が合わないため） */
+/* 計測明細モードでは日次粒度のカロリー3列（摂取/消費/ネット）を隠す（1計測=1行と粒度が合わないため）。
+   逆に日次モードでは計測明細専用の列（出所・操作）を隠す */
 .table-wrap.hide-kcal .kcal-col { display: none; }
+.table-wrap:not(.hide-kcal) .raw-col { display: none; }
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.raw-source { font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; }
+.raw-del {
+  font: inherit;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 2px 8px;
+  min-height: 32px;
+  min-width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
 
 /* ---- 食事/運動タブのフォームコントロール（UA既定のままだとテーマから浮くため統一） ---- */
 #panel-meals input,
@@ -609,12 +667,12 @@ body {
 #exercise-menu-form button[type='submit'],
 #meals-auth button,
 #exercise-auth button {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--on-accent);
   font-weight: 600;
 }
-/* 一覧・履歴内の小ボタン（アーカイブ/削除）は小さめのまま統一 */
+/* 一覧・履歴内の小ボタン（アーカイブ/削除）。小さめの見た目でもタップ領域は24px以上を確保する */
 #menus-list button,
 #exercise-menus-list button,
 .meals-history-table button {
@@ -622,6 +680,11 @@ body {
   cursor: pointer;
   font-size: 0.8rem;
   padding: 2px 8px;
+  min-height: 32px;
+  min-width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--surface);
@@ -659,6 +722,11 @@ body {
   opacity: 1;
   pointer-events: auto;
   transform: translateX(-50%) translateY(0);
+}
+/* エラートースト（成功と視覚的に区別する。文字色はテキストのまま、枠と左バーで示す） */
+#toast.toast-error {
+  border-color: var(--warn);
+  box-shadow: inset 3px 0 0 var(--warn), 0 6px 16px rgba(0, 0, 0, 0.22);
 }
 #toast button {
   font: inherit;

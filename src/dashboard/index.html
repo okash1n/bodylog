@@ -47,13 +47,13 @@
     </div>
   </header>
 
-  <nav class="tabs">
-    <button id="tab-weight" class="tab active" type="button" data-panel="weight">体重</button>
-    <button id="tab-meals" class="tab" type="button" data-panel="meals">食事</button>
-    <button id="tab-exercise" class="tab" type="button" data-panel="exercise">運動</button>
+  <nav class="tabs" role="tablist" aria-label="データ種別">
+    <button id="tab-weight" class="tab active" type="button" data-panel="weight" role="tab" aria-selected="true" aria-controls="panel-weight">体重</button>
+    <button id="tab-meals" class="tab" type="button" data-panel="meals" role="tab" aria-selected="false" aria-controls="panel-meals">食事</button>
+    <button id="tab-exercise" class="tab" type="button" data-panel="exercise" role="tab" aria-selected="false" aria-controls="panel-exercise">運動</button>
   </nav>
 
-  <section id="panel-weight">
+  <section id="panel-weight" role="tabpanel" aria-labelledby="tab-weight">
   <div id="state-skeleton" class="skeleton-group" aria-hidden="true">
     <div class="skeleton-cards">
       <div class="skeleton skeleton-card"></div>
@@ -159,6 +159,8 @@
             <th class="kcal-col">摂取 <span class="unit">kcal</span></th>
             <th class="kcal-col">消費 <span class="unit">kcal</span></th>
             <th class="kcal-col">カロリー収支 <span class="unit">kcal</span></th>
+            <th class="raw-col">出所</th>
+            <th class="raw-col"><span class="visually-hidden">操作</span></th>
           </tr>
         </thead>
         <tbody id="table-body"></tbody>
@@ -170,7 +172,7 @@
   <noscript><p class="state-box">このダッシュボードの表示にはJavaScriptが必要です。</p></noscript>
   </section>
 
-  <section id="panel-meals" hidden>
+  <section id="panel-meals" hidden role="tabpanel" aria-labelledby="tab-meals">
     <div id="meals-auth">
       <button id="meals-login" type="button">ログインして記録する</button>
     </div>
@@ -178,7 +180,7 @@
       <form id="meal-add-form" hidden>
         <label>記録する日 <input id="meal-date" type="date" aria-label="記録する日"></label>
         <div class="menu-picker">
-          <input id="meal-menu-search" type="search" placeholder="メニューを検索" autocomplete="off">
+          <input id="meal-menu-search" type="search" placeholder="メニューを検索" aria-label="メニューを検索" autocomplete="off">
           <ul id="meal-menu-candidates"></ul>
         </div>
         <label>倍率 <input id="meal-multiplier" type="number" value="1" min="0.1" max="20" step="0.1"></label>
@@ -195,11 +197,11 @@
     <details id="menus-manage">
       <summary>メニュー管理</summary>
       <form id="menu-form">
-        <input id="menu-name" placeholder="メニュー名" required>
-        <input id="menu-calories" type="number" placeholder="kcal" min="1" required>
-        <input id="menu-protein" type="number" placeholder="P(g)" min="0" step="0.1">
-        <input id="menu-fat" type="number" placeholder="F(g)" min="0" step="0.1">
-        <input id="menu-carbs" type="number" placeholder="C(g)" min="0" step="0.1">
+        <input id="menu-name" placeholder="メニュー名" aria-label="メニュー名" required>
+        <input id="menu-calories" type="number" placeholder="kcal" aria-label="カロリー（kcal）" min="1" required>
+        <input id="menu-protein" type="number" placeholder="P(g)" aria-label="タンパク質（g）" min="0" step="0.1">
+        <input id="menu-fat" type="number" placeholder="F(g)" aria-label="脂質（g）" min="0" step="0.1">
+        <input id="menu-carbs" type="number" placeholder="C(g)" aria-label="炭水化物（g）" min="0" step="0.1">
         <button type="submit">追加</button>
       </form>
       <ul id="menus-list"></ul>
@@ -210,14 +212,14 @@
     </section>
   </section>
 
-  <section id="panel-exercise" hidden>
+  <section id="panel-exercise" hidden role="tabpanel" aria-labelledby="tab-exercise">
     <div id="exercise-auth">
       <button id="exercise-login" type="button">ログインして記録する</button>
     </div>
     <form id="exercise-add-form" hidden>
       <label>記録する日 <input id="exercise-date" type="date" aria-label="記録する日"></label>
       <div class="menu-picker">
-        <input id="exercise-menu-search" type="search" placeholder="種目を検索" autocomplete="off">
+        <input id="exercise-menu-search" type="search" placeholder="種目を検索" aria-label="種目を検索" autocomplete="off">
         <ul id="exercise-menu-candidates"></ul>
       </div>
       <div id="exercise-cardio-fields" hidden>
@@ -233,13 +235,13 @@
     <details id="exercise-menus-manage">
       <summary>種目管理</summary>
       <form id="exercise-menu-form">
-        <input id="exercise-menu-name" placeholder="種目名" required>
+        <input id="exercise-menu-name" placeholder="種目名" aria-label="種目名" required>
         <select id="exercise-menu-category">
           <option value="cardio">有酸素</option>
           <option value="strength">筋トレ</option>
         </select>
-        <input id="exercise-menu-mets" type="number" placeholder="METs" min="0.5" max="30" step="0.1">
-        <input id="exercise-menu-muscle" placeholder="部位(任意)" hidden>
+        <input id="exercise-menu-mets" type="number" placeholder="METs" aria-label="METs（運動強度）" min="0.5" max="30" step="0.1">
+        <input id="exercise-menu-muscle" placeholder="部位(任意)" aria-label="対象部位（任意）" hidden>
         <label id="exercise-menu-bw-wrap" class="calorie-toggle" hidden><input id="exercise-menu-bw" type="checkbox"> 自重</label>
         <label id="exercise-menu-bwf-wrap" class="calorie-toggle" hidden title="体重をどれだけ負荷に算入するか（懸垂1.0 / 腕立て0.65 / コア系0.1〜0.4）">係数 <input id="exercise-menu-bwf" type="number" min="0" max="1" step="0.05" value="1" style="width:4.5em"></label>
         <button type="submit">追加</button>

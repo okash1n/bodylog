@@ -22,7 +22,11 @@
     document.querySelectorAll('[id^="panel-"]').forEach((p) => {
       p.hidden = p.id !== `panel-${name}`;
     });
-    tabButtons.forEach((b) => b.classList.toggle('active', b.dataset.panel === name));
+    tabButtons.forEach((b) => {
+      const active = b.dataset.panel === name;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', String(active));
+    });
     document.dispatchEvent(new CustomEvent('tabshown', { detail: name }));
   }
   tabButtons.forEach((b) => b.addEventListener('click', () => showTab(b.dataset.panel)));
@@ -34,9 +38,13 @@
     if (!el) {
       el = document.createElement('div');
       el.id = 'toast';
+      // 支援技術にも結果通知が伝わるようにする（表示のたびではなく生成時に一度だけ設定）
+      el.setAttribute('role', 'status');
+      el.setAttribute('aria-live', 'polite');
       document.body.appendChild(el);
     }
     el.textContent = msg;
+    el.classList.toggle('toast-error', Boolean(opts && opts.tone === 'error'));
     if (opts && opts.action) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -49,8 +57,9 @@
     }
     requestAnimationFrame(() => el.classList.add('show'));
     clearTimeout(toastTimer);
-    // アクション付き（元に戻す等）は押す猶予を長めに取る
-    toastTimer = setTimeout(() => el.classList.remove('show'), opts && opts.action ? 6000 : 3000);
+    // アクション付き（元に戻す等）とエラーは読む・押す猶予を長めに取る
+    const long = Boolean(opts && (opts.action || opts.tone === 'error'));
+    toastTimer = setTimeout(() => el.classList.remove('show'), long ? 6000 : 3000);
   }
 
   // ---- OAuth (PKCE)。トークンはlocalStorageに保持し、食事/運動どちらのタブでも有効 ----
