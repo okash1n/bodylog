@@ -75,8 +75,11 @@ interface BaselineInfo {
   baselineValue: MetricTriple | null;
 }
 
-/** recent7(-6日〜今日)とprev7(-13日〜-7日)を1クエリで集計（D1クエリ予算のため）。latestに依存しない */
-async function getTermStats(env: Env): Promise<TermStats> {
+/**
+ * recent7(asOf-6日〜asOf)とprev7(asOf-13日〜asOf-7日)を1クエリで集計（D1クエリ予算のため）。latestに依存しない。
+ * asOf はローカル日付 YYYY-MM-DD（通常は今日。過去日のダイジェストを送り直すときはその日を基準にする）
+ */
+async function getTermStats(env: Env, asOf: string): Promise<TermStats> {
   const tz = tzModifier(env);
   const termRow = await env.DB.prepare(
     `
@@ -84,18 +87,20 @@ WITH daily AS (
   SELECT date(measured_at, '${tz}') AS d,
          AVG(weight) AS weight, AVG(weight - fat_free_mass) AS fat_mass, AVG(fat_free_mass) AS fat_free_mass
   FROM measurements
-  WHERE date(measured_at, '${tz}') BETWEEN date('now', '${tz}', '-13 days') AND date('now', '${tz}')
+  WHERE date(measured_at, '${tz}') BETWEEN date(?1, '-13 days') AND ?1
   GROUP BY 1
 )
 SELECT
-  AVG(CASE WHEN d >= date('now', '${tz}', '-6 days') THEN weight END) AS recent_weight,
-  AVG(CASE WHEN d >= date('now', '${tz}', '-6 days') THEN fat_mass END) AS recent_fat_mass,
-  AVG(CASE WHEN d >= date('now', '${tz}', '-6 days') THEN fat_free_mass END) AS recent_fat_free_mass,
-  AVG(CASE WHEN d < date('now', '${tz}', '-6 days') THEN weight END) AS prev_weight,
-  AVG(CASE WHEN d < date('now', '${tz}', '-6 days') THEN fat_mass END) AS prev_fat_mass,
-  AVG(CASE WHEN d < date('now', '${tz}', '-6 days') THEN fat_free_mass END) AS prev_fat_free_mass
+  AVG(CASE WHEN d >= date(?1, '-6 days') THEN weight END) AS recent_weight,
+  AVG(CASE WHEN d >= date(?1, '-6 days') THEN fat_mass END) AS recent_fat_mass,
+  AVG(CASE WHEN d >= date(?1, '-6 days') THEN fat_free_mass END) AS recent_fat_free_mass,
+  AVG(CASE WHEN d < date(?1, '-6 days') THEN weight END) AS prev_weight,
+  AVG(CASE WHEN d < date(?1, '-6 days') THEN fat_mass END) AS prev_fat_mass,
+  AVG(CASE WHEN d < date(?1, '-6 days') THEN fat_free_mass END) AS prev_fat_free_mass
 FROM daily`,
-  ).first<TermRow>();
+  )
+    .bind(asOf)
+    .first<TermRow>();
   return {
     recent7: {
       weight: termRow?.recent_weight ?? null,
@@ -141,9 +146,15 @@ SELECT
   return { baselineDate, baselineValue: base ?? null };
 }
 
-/** getNotificationStatsのクエリ部分だけを先に取る（latest不要。呼び出し側のPromise.allに畳むため） */
-export async function getStatsParts(env: Env): Promise<{ terms: TermStats; baseline: BaselineInfo }> {
-  const [terms, baseline] = await Promise.all([getTermStats(env), getBaseline(env)]);
+/**
+ * getNotificationStatsのクエリ部分だけを先に取る（latest不要。呼び出し側のPromise.allに畳むため）。
+ * asOf は7日平均の基準日（既定は今日。過去日のダイジェストはその日を渡す）
+ */
+export async function getStatsParts(
+  env: Env,
+  asOf: string = localToday(env),
+): Promise<{ terms: TermStats; baseline: BaselineInfo }> {
+  const [terms, baseline] = await Promise.all([getTermStats(env, asOf), getBaseline(env)]);
   return { terms, baseline };
 }
 
@@ -263,7 +274,7 @@ export async function getSummary(env: Env): Promise<WeightSummary> {
   // 残りは1ラウンドに並列化する（従来はD1往復7回の直列だった）
   const [latest, terms, baseline, lastSync, intakeToday, goal] = await Promise.all([
     getLatestMeasurement(env),
-    getTermStats(env),
+    getTermStats(env, localToday(env)),
     getBaseline(env),
     env.DB.prepare(`SELECT value FROM settings WHERE key = 'last_sync_at'`).first<{
       value: string | null;

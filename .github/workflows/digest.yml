@@ -1,0 +1,47 @@
+# 指定日の日次ダイジェスト（Slack）を手動で送る。23:55 時点で計測が無く自動送信がスキップされた日に、
+# 後から体重を記録した上で使う（講評を差し込みたければ先に「AI Coaching」を同じ date で実行しておく）。
+# Worker の POST /api/digest を coaching.yml と同じ Secrets（COACHING_API_SECRET / BODYLOG_BASE_URL）で呼ぶ。
+#
+# 注意: パブリックリポの Actions ログは公開される。URL・ホスト名・シークレットはログに出さない
+# （curl のエラー文や Cloudflare のエラーページ本文にはホスト名が含まれるため、curl は -s で黙らせ、
+# 応答本文は既知のフィールド {date, queued, error} だけを表示する）。
+name: Send Daily Digest
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "送信対象日 YYYY-MM-DD（ローカル日付、当日以前）"
+        required: true
+        type: string
+
+concurrency:
+  group: digest-${{ inputs.date }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST /api/digest
+        env:
+          SECRET: ${{ secrets.COACHING_API_SECRET }}
+          BASE: ${{ secrets.BODYLOG_BASE_URL }}
+          DATE: ${{ inputs.date }}
+        run: |
+          if [ -z "$SECRET" ] || [ -z "$BASE" ]; then
+            echo "COACHING_API_SECRET / BODYLOG_BASE_URL が未設定です（ダイジェストの手動送信には両方が必要）" >&2
+            exit 1
+          fi
+          body=$(jq -cn --arg d "$DATE" '{date: $d}')
+          # 接続失敗時も curl のメッセージを出さない（-s）。失敗時は HTTP 000 として扱う
+          code=$(curl -s --max-time 60 -o response.json -w '%{http_code}' -X POST "${BASE%/}/api/digest" \
+            -H "Authorization: Bearer $SECRET" -H 'content-type: application/json' --data "$body") || true
+          echo "HTTP ${code:-000}"
+          jq -c '{date, queued, error} | with_entries(select(.value != null))' response.json 2>/dev/null \
+            || echo '(non-JSON response body suppressed)'
+          [ "${code:-000}" = "200" ]

@@ -294,6 +294,7 @@ npx wrangler d1 execute bodylog --remote \
 | `GET {base}/api/coaching?from=&to=` または `?days=N` | AIコーチ講評の履歴（新しい順、最大200件）。認証不要 |
 | `GET {base}/api/metabolism` | 直近28日の実測データからの実効消費カロリー推定（摂取記録が8割未満などの期間は `insufficient_data`）。認証不要 |
 | `POST {base}/api/coaching` | AIコーチ講評の保存（GitHub Actions のジョブ専用）。`Authorization: Bearer {COACHING_API_SECRET}` で保護。secret 未設定の環境では 404 |
+| `POST {base}/api/digest` | 指定日の日次ダイジェスト（Slack）を手動送信。body `{"date":"YYYY-MM-DD"}`（当日以前）。`Authorization: Bearer {COACHING_API_SECRET}` で保護（Actions の「Send Daily Digest」から呼ぶ）。投入して即時送信を試み（送信失敗で dead になっていた分も送り直す）、それでも失敗した分は 5 分毎の cron が再試行する。計測が無い日・送信済み/送信中の日・daily の送信先が無い場合は 409。secret 未設定の環境では 404 |
 | `POST {base}/api/menus` / `PATCH {base}/api/menus/:id` / `POST {base}/api/menus/:id/archive` / `POST {base}/api/menus/:id/unarchive` | 認証必須（OAuth）。メニュー（マスタ）の作成・更新・アーカイブ切替 |
 | `POST {base}/api/meals` / `PATCH {base}/api/meals/:id` / `DELETE {base}/api/meals/:id` | 認証必須。食事記録の作成・更新・削除 |
 | `POST {base}/api/exercise/menus` / `PATCH {base}/api/exercise/menus/:id` / `POST {base}/api/exercise/menus/:id/archive` / `POST {base}/api/exercise/menus/:id/unarchive` | 認証必須。運動種目（マスタ）の作成・更新・アーカイブ切替 |
@@ -340,18 +341,19 @@ ChatGPT・Claude などのAIクライアントから体重推移・食事記録�
 
 毎晩 23:30 JST に GitHub Actions（`.github/workflows/coaching.yml`）が直近14日のデータを分析し、**当日の総括＋週間トレンド評価＋明日の行動方針**をまとめたAI講評を生成する（週次の別枠は無く、週間視点を毎日の総括に含める）。生成は Claude Agent SDK をサブスクリプションの OAuth トークンで動かすため、API の従量課金は発生しない。講評は `POST /api/coaching` で保存され、**23:55 の日次ダイジェスト（Slack）の本文に差し込まれる**（AI講評の単独Slackメッセージは無い）。ダッシュボードの「AIコーチ」カードにも表示される。方針は「体組成改善（脂肪量を減らし、除脂肪体重を維持・増加）」。`set_goal` で数値目標（体重・脂肪量）を設定している場合は目標との差を、実効消費の推定（`/api/metabolism`）が成立している場合はその値を、講評の評価軸に使う。
 
-セットアップ（GitHub Secrets を3つ登録する）:
+セットアップ（GitHub Secrets を3つ登録する。ダイジェストの送り直し `digest.yml` だけを使うなら `COACHING_API_SECRET` と `BODYLOG_BASE_URL` の2つで足りる）:
 
 | Secret | 内容 |
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` で発行するサブスク用トークン（要 Claude Pro/Max。約1年有効。失効したら再発行して更新） |
-| `COACHING_API_SECRET` | `openssl rand -hex 32` 等で生成した値。Worker 側にも `npx wrangler secret put COACHING_API_SECRET` で**同じ値**を登録する |
+| `COACHING_API_SECRET` | `openssl rand -hex 32` 等で生成した値。Worker 側にも `npx wrangler secret put COACHING_API_SECRET` で**同じ値**を登録する。`POST /api/coaching`（講評の保存）と `POST /api/digest`（ダイジェストの送り直し）の両方のサーバー間認証に使う |
 | `BODYLOG_BASE_URL` | ダッシュボード基点までのURL。`DASHBOARD_SLUG` 設定時は `https://<ホスト>/d/{DASHBOARD_SLUG}`、空文字運用時は `https://weight.example.com`（実URLをリポジトリに書かないため Secret で渡す） |
 
 補足:
 
-- 手動実行: Actions の「AI Coaching」→ Run workflow（当日分を再生成・上書きする）
+- 手動実行: Actions の「AI Coaching」→ Run workflow（当日分を再生成・上書きする）。`date` 入力に `YYYY-MM-DD`（当日以前）を指定するとその日の講評を作り直せる（体重や食事の記録を後から足した日など）。対象日を末尾とする直近データで生成し、直近7日平均・前週比も対象日時点で計算する。基準日との差と実効消費の推定は実行時点の値しか取れないため過去日の再生成では使わない
 - GitHub の schedule は数分〜十数分遅れることがあり、23:55 のダイジェストに生成が間に合わなかった日は数値のみで配信される（講評はダッシュボードには出る）
+- 日次ダイジェストは 23:55 時点でその日の計測が無いとスキップされ、日付が変わった後は自動では送られない。体重を後から記録した日は、Actions の「Send Daily Digest」（`.github/workflows/digest.yml`）を `date` 指定で Run workflow すると `POST /api/digest` 経由で送り直せる。講評を差し込みたければ先に「AI Coaching」を同じ `date` で実行し、**その完了を待ってから**送る（2つのワークフローは別の concurrency group で直列化されない）。一度送った日は送信済みとして 409 になり、講評を後から差し込み直すことはできない
 - パブリックリポジトリの schedule は60日間コミットが無いと自動停止する（GitHub 仕様）。止まったら Actions 画面から有効化し直す
 - Actions のログは公開されるため、ジョブは講評本文・健康データをログに出力しない設計になっている
 - トークン失効などでジョブが失敗すると GitHub からワークフロー失敗の通知が届く
@@ -383,7 +385,7 @@ npx wrangler d1 execute bodylog --remote \
   --command "INSERT OR REPLACE INTO settings (key, value) VALUES ('digest_time', '21:00')"
 ```
 
-補足: 送信時刻の時点で当日の計測が 0 件ならスキップする（その後同日中に計測が届けば、その時点で送られる）。翌日への持ち越しはしない。
+補足: 送信時刻の時点で当日の計測が 0 件ならスキップする（その後同日中に計測が届けば、その時点で送られる）。翌日への持ち越しはしない。日付が変わった後に体重を記録した日は、`POST /api/digest`（Actions の「Send Daily Digest」。`COACHING_API_SECRET` と `BODYLOG_BASE_URL` の Secrets が必要。AIコーチング自体は不要）で手動で送り直せる（手順は「AIコーチング」節の補足参照）。
 
 グラフは画像ブロックとして通知に直接埋め込まれる（Incoming Webhook のメッセージ内リンクは Slack 仕様で自動展開されないため）。URL を人が手貼りした場合は OGP でも展開される。同一 URL の展開はキャッシュされるため、リンクには計測日のキャッシュバスター（`?v=`）が付く。
 

@@ -364,7 +364,7 @@ async function queueDigestBatches(
  * 送信済みかはUNIQUE(batch_id, destination_id)が担保するため、後続tickでは何も起きない。
  */
 export async function runDailyDigestIfDue(env: Env, origin: string): Promise<{ queued: number }> {
-  const destinations = parseDestinations(env).filter((d) => d.mode === 'daily' || d.mode === 'both');
+  const destinations = dailyDestinations(env);
   if (destinations.length === 0) return { queued: 0 };
 
   const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'digest_time'")
@@ -386,15 +386,40 @@ export async function runDailyDigestIfDue(env: Env, origin: string): Promise<{ q
   return queueDigestBatches(env, origin, due);
 }
 
-/** 時刻条件を無視して当日分のダイジェストを今すぐ投入する（手動実行・テスト用） */
-export async function runDailyDigest(env: Env, origin: string): Promise<{ queued: number }> {
-  const destinations = parseDestinations(env).filter((d) => d.mode === 'daily' || d.mode === 'both');
-  const today = ymdWithOffset(isoNow(), offsetHours(env));
-  return queueDigestBatches(
+/** 日次ダイジェストの送信先（mode=daily|both） */
+export function dailyDestinations(env: Env): SlackDestination[] {
+  return parseDestinations(env).filter((d) => d.mode === 'daily' || d.mode === 'both');
+}
+
+/**
+ * 時刻条件を無視して指定日（既定は当日）のダイジェストを今すぐ投入する（手動送信 POST /api/digest・テスト用）。
+ * date を明示した手動送信では、過去に dead（Slack 4xx・試行上限超過）になった行を pending に戻して再試行する
+ * （cron の自動経路では復活させない。恒久的に失敗する Webhook を5分毎に叩き直さないため）。
+ * 対象日に計測が無い場合と、既に投入・送信中・送信済みの場合は 0 件（batch_id の UNIQUE で二重送信しない）
+ */
+export async function runDailyDigest(env: Env, origin: string, date?: string): Promise<{ queued: number }> {
+  const targetDate = date ?? ymdWithOffset(isoNow(), offsetHours(env));
+  const revived = date ? await reviveDeadBatches(env, `${DAILY_BATCH_PREFIX}${targetDate}`) : 0;
+  const { queued } = await queueDigestBatches(
     env,
     origin,
-    destinations.map((d) => ({ destinationId: d.id, targetDate: today })),
+    dailyDestinations(env).map((d) => ({ destinationId: d.id, targetDate })),
   );
+  // 復活分だけ（新規投入なし）のときは queueDigestBatches が送信を起動しないので、ここで起動する
+  if (revived > 0 && queued === 0) await processNotificationBatches(env, origin);
+  return { queued: queued + revived };
+}
+
+/** dead になったバッチ行を pending に戻す（手動送り直し用）。戻した行数を返す */
+async function reviveDeadBatches(env: Env, batchId: string): Promise<number> {
+  const res = await env.DB.prepare(
+    `UPDATE notification_batches
+     SET status = 'pending', attempts = 0, next_attempt_at = datetime('now'), last_error = NULL
+     WHERE batch_id = ?1 AND status = 'dead'`,
+  )
+    .bind(batchId)
+    .run();
+  return res.meta.changes ?? 0;
 }
 
 /**
@@ -411,14 +436,15 @@ function ogImageUrlFor(env: Env, base: string, v: string): string | undefined {
 async function buildDailyDigestMessage(env: Env, origin: string, batchId: string): Promise<BuiltMessage> {
   try {
     const date = batchId.slice(DAILY_BATCH_PREFIX.length);
-    // stats用のクエリ（terms/baseline）はその日の平均に依存しないので同じPromise.allに畳む
+    // stats用のクエリ（terms/baseline）はその日の平均に依存しないので同じPromise.allに畳む。
+    // 7日平均は対象日基準（過去日を手動で送り直しても見出しの日付と本文の窓が一致する）
     const [series, count, intake, exercise, coaching, statsParts] = await Promise.all([
       getDailySeries(env, date, date),
       getDayMeasurementCount(env, date),
       getIntakeForDay(env, date),
       getExerciseForDay(env, date),
       getCoachingNote(env, 'daily', date),
-      getStatsParts(env),
+      getStatsParts(env, date),
     ]);
     const day = series[series.length - 1];
     if (!day) {

@@ -12,7 +12,7 @@
 #   wrangler secret put GOOGLE_OAUTH_CLIENT_ID      # 書き込みAPI（食事・運動・体重の記録）とMCP用。Google CloudのOAuthクライアントID
 #   wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET  # 同 Client Secret
 #   wrangler secret put OWNER_EMAILS                # 書き込みを許可するGoogleアカウントのメール（カンマ区切り、例: "a@example.com,b@example.com"）
-#   wrangler secret put COACHING_API_SECRET         # 任意: AIコーチング（GitHub Actions）用。GitHub Secrets側と同値を登録
+#   wrangler secret put COACHING_API_SECRET         # 任意: AIコーチングとダイジェスト送り直し（GitHub Actions）用。GitHub Secrets側と同値を登録
 #   wrangler secret put OG_ACCESS_TOKEN             # 任意: READ_ACCESS=private時にSlack通知のグラフ画像を通すキー（openssl rand -hex 32）
 
 name = "bodylog"

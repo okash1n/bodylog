@@ -15,7 +15,9 @@ import {
 } from './exercise';
 import { withAuth } from './auth';
 import { coachingTokenMatches, parseCoachingInput, upsertCoachingNote } from './coaching';
-import { ensurePublicOrigin, noindexHeaders } from './util';
+import { getDayMeasurementCount } from './queries';
+import { dailyDestinations, runDailyDigest } from './slack';
+import { ensurePublicOrigin, isValidYmd, localToday, noindexHeaders } from './util';
 import { deleteManualMeasurement, logWeight, parseWeightInput } from './weight';
 
 type Ctx = Context<{ Bindings: Env }>;
@@ -27,6 +29,12 @@ const readJson = async (c: Ctx): Promise<Record<string, unknown> | null> =>
 // 計算パス（p()）はHonoの:idリテラル推論が効かず param('id') が string|undefined になる。
 // ルートが:idを保証するのでstringとして扱う
 const pid = (c: Ctx): string => c.req.param('id') as string;
+/** Authorization: Bearer が COACHING_API_SECRET と一致するか（タイミングセーフ比較）。サーバー間ジョブ用の経路で使う */
+const coachingBearerOk = (c: Ctx, secret: string): boolean => {
+  const auth = c.req.header('Authorization') ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
+  return token !== '' && coachingTokenMatches(token, secret);
+};
 
 /**
  * 書き込みルートを app に登録する。
@@ -159,15 +167,39 @@ export function registerWriteRoutes(
   app.post(p('/api/coaching'), guarded(guardedErrors(async (c) => {
     const secret = c.env.COACHING_API_SECRET;
     if (!secret) return c.json({ error: 'not found' }, 404, headers());
-    const auth = c.req.header('Authorization') ?? '';
-    const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
-    if (!token || !coachingTokenMatches(token, secret)) {
-      return c.json({ error: 'unauthorized' }, 401, headers());
-    }
+    if (!coachingBearerOk(c, secret)) return c.json({ error: 'unauthorized' }, 401, headers());
     const parsed = parseCoachingInput(await readJson(c));
     if (!parsed.ok) return c.json({ error: parsed.error }, 400, headers());
     // 保存のみ。Slackへは単独配信せず、日次ダイジェスト（23:55）が当日分を本文に差し込む
     const note = await upsertCoachingNote(c.env, parsed.value);
     return c.json(note, 201, headers());
+  })));
+
+  // ---- 日次ダイジェストの手動送信 ----
+  // 23:55 時点で計測が無く自動送信がスキップされた日に、後から体重を記録した上で送り直すための経路。
+  // 自動送信は「現在のローカル日付」の分しか投入しないため、日付が変わった後は手動でしか送れない。
+  // coaching と同じくサーバー間（GitHub Actions の digest.yml）から呼ぶため COACHING_API_SECRET で保護する
+  app.post(p('/api/digest'), guarded(guardedErrors(async (c) => {
+    const secret = c.env.COACHING_API_SECRET;
+    if (!secret) return c.json({ error: 'not found' }, 404, headers());
+    if (!coachingBearerOk(c, secret)) return c.json({ error: 'unauthorized' }, 401, headers());
+    const date = (await readJson(c))?.date;
+    if (typeof date !== 'string' || !isValidYmd(date)) {
+      return c.json({ error: 'date must be a valid YYYY-MM-DD' }, 400, headers());
+    }
+    if (date > localToday(c.env)) return c.json({ error: 'date must not be a future date' }, 400, headers());
+    if (dailyDestinations(c.env).length === 0) {
+      return c.json({ error: 'no daily digest destination is configured' }, 409, headers());
+    }
+    if ((await getDayMeasurementCount(c.env, date)) === 0) {
+      return c.json({ error: 'no measurements on that date' }, 409, headers());
+    }
+    // 投入と同時に送信を試みる（dead になっていた行も pending に戻して再試行）。
+    // 送信失敗分は5分毎のcron（processNotificationBatches）が再試行する
+    const { queued } = await runDailyDigest(c.env, new URL(c.req.url).origin, date);
+    if (queued === 0) {
+      return c.json({ error: 'digest for that date was already sent or is in progress' }, 409, headers());
+    }
+    return c.json({ date, queued }, 200, headers());
   })));
 }

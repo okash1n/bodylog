@@ -20,7 +20,7 @@ export interface Env {
   GOOGLE_OAUTH_CLIENT_ID?: string;
   GOOGLE_OAUTH_CLIENT_SECRET?: string;
   OWNER_EMAILS?: string; // カンマ区切りの許可メール
-  COACHING_API_SECRET?: string; // POST /api/coaching（AI講評保存）のサーバー間Bearer認証。未設定なら機能無効
+  COACHING_API_SECRET?: string; // POST /api/coaching（AI講評保存）と POST /api/digest（ダイジェスト送り直し）のサーバー間Bearer認証。未設定なら両方404
   OG_ACCESS_TOKEN?: string; // READ_ACCESS=private時、Slack埋め込み用に og.png?key= を通す任意トークン
 }
 
