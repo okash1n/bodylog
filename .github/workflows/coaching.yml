@@ -15,10 +15,18 @@ on:
   schedule:
     # 23:30 JST。当日分を生成し、23:55の日次ダイジェスト（Slack）が本文に差し込む
     - cron: "30 14 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "生成対象日 YYYY-MM-DD（ローカル日付、当日以前）。空なら当日。記録を後から足した日の講評を作り直すとき用"
+        required: false
+        type: string
+        default: ""
 
+# 対象日ごとに直列化する。group を固定にすると、待機中の実行が次の投入で置き換えられる GitHub の仕様により
+# 複数の過去日を続けて投入したとき先の日付の再生成が黙って消える。schedule / date 未指定は 'today' に集約
 concurrency:
-  group: coaching
+  group: coaching-${{ inputs.date || 'today' }}
   cancel-in-progress: false
 
 permissions:
@@ -67,3 +75,5 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           COACHING_API_SECRET: ${{ secrets.COACHING_API_SECRET }}
           BODYLOG_BASE_URL: ${{ secrets.BODYLOG_BASE_URL }}
+          # schedule 実行では inputs が空 → 当日分（従来どおり）
+          COACHING_DATE: ${{ inputs.date }}

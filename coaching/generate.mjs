@@ -12,10 +12,17 @@
  *   CLAUDE_CODE_OAUTH_TOKEN 必須（SDKが参照）。`claude setup-token` で発行
  *   COACHING_MODEL          任意。既定 'opus'（Claude Codeの既定Opusに追従する別名）
  *   COACHING_TZ_OFFSET_HOURS 任意。既定 9（JST）
+ *   COACHING_DATE           任意。生成対象日 YYYY-MM-DD（ローカル日付、当日以前）。未設定なら実行時点の当日。
+ *                           記録を後から足した日の講評を作り直す手動実行用（workflow_dispatch の date 入力）。
+ *                           対象日を末尾とする直近 FETCH_DAYS 日を取得して生成する。直近7日平均・前週比は
+ *                           対象日時点で導出し、基準日との差と実効消費推定（Worker が実行時点基準でしか
+ *                           計算しない値）は過去日では使わない
  *
  * 注意: パブリックリポのActionsログは公開されるため、講評本文や取得データはログに出さない。
  */
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { fetchRange, localYmd, resolveTargetDate } from './dates.mjs';
+import { deriveTerms } from './derive.mjs';
 
 const FETCH_DAYS = 15; // 前日分＋14日トレンドを賄う取得幅
 
@@ -36,12 +43,6 @@ const tzOffsetHours = Number.isFinite(Number(process.env.COACHING_TZ_OFFSET_HOUR
   ? Number(process.env.COACHING_TZ_OFFSET_HOURS)
   : 9;
 
-/** ローカル日付 YYYY-MM-DD（UTC+offset） */
-function localYmd(daysAgo = 0) {
-  const t = Date.now() + tzOffsetHours * 3_600_000 - daysAgo * 86_400_000;
-  return new Date(t).toISOString().slice(0, 10);
-}
-
 async function getJson(path) {
   // READ_ACCESS=private のWorkerでも読めるよう常にBearerを付ける（publicモードでは無視される）
   const res = await fetch(`${base}${path}`, {
@@ -57,15 +58,34 @@ function round1(v) {
   return v == null ? null : Math.round(v * 10) / 10;
 }
 
-async function collectData() {
+function roundTriple(t) {
+  return { weight: round1(t?.weight), fat_mass: round1(t?.fat_mass), fat_free_mass: round1(t?.fat_free_mass) };
+}
+
+const NULL_TRIPLE = { weight: null, fat_mass: null, fat_free_mass: null };
+
+/**
+ * 対象日 date を末尾とする直近 FETCH_DAYS 日のデータを集める（date より後の日は含めない）。
+ * /api/summary の直近7日平均・前週比・基準日差と /api/metabolism は Worker が実行時点基準でしか計算しないため、
+ * 過去日（date !== today）では 7日平均・前週比を取得済みの日次系列から対象日時点で導出し、
+ * 基準日差と実効消費推定は使わない（対象日より後のデータを講評の根拠にしないため）。
+ */
+async function collectData(date, today) {
+  const isPast = date !== today;
+  const { from, to } = fetchRange(date, FETCH_DAYS);
+  const range = `from=${from}&to=${to}`;
   const [summary, measurements, meals, exercise, metabolism] = await Promise.all([
     getJson('/api/summary'),
-    getJson(`/api/measurements?days=${FETCH_DAYS}`),
-    getJson(`/api/meals/daily?days=${FETCH_DAYS}`),
-    getJson(`/api/exercise/daily?days=${FETCH_DAYS}`),
+    getJson(`/api/measurements?${range}`),
+    getJson(`/api/meals/daily?${range}`),
+    getJson(`/api/exercise/daily?${range}`),
     // 実効代謝は補助情報。取得失敗しても講評生成は続ける
-    getJson('/api/metabolism').catch(() => null),
+    isPast ? Promise.resolve(null) : getJson('/api/metabolism').catch(() => null),
   ]);
+  const days = measurements.days || [];
+  const terms = isPast
+    ? deriveTerms(days, date)
+    : { recent7_avg: summary.recent7_avg, diff_vs_prev7: summary.diff_vs_prev7 };
   return {
     policy: '体組成改善（脂肪量を減らし、除脂肪体重を維持・増加させる）',
     // 数値目標（kg）。未設定の指標はnull。設定されていれば講評の評価軸に使う
@@ -73,13 +93,16 @@ async function collectData() {
     // 直近28日の実測からの実効消費推定。status==='ok'のときだけ使う
     metabolism: metabolism && metabolism.status === 'ok' ? metabolism : null,
     units: { mass: 'kg', energy: 'kcal', pfc: 'g' },
+    // as_of=集計基準日。recent7_avg=直近7暦日の日平均の平均、diff_vs_prev7=その前7暦日との差、
+    // baseline.diff=基準日との差（過去日の再生成では算出できないので null）
     summary: {
-      recent7_avg: summary.recent7_avg,
-      diff_vs_prev7: summary.diff_vs_prev7,
-      baseline: summary.baseline,
+      as_of: date,
+      recent7_avg: roundTriple(terms.recent7_avg),
+      diff_vs_prev7: roundTriple(terms.diff_vs_prev7),
+      baseline: isPast ? { date: summary.baseline?.date ?? null, diff: NULL_TRIPLE } : summary.baseline,
     },
     // d=日付, weight=体重, fat=脂肪量, ffm=除脂肪体重（*_7dは7日移動平均）
-    body: (measurements.days || []).map((d) => ({
+    body: days.map((d) => ({
       d: d.d,
       weight: round1(d.weight),
       fat: round1(d.fat_mass),
@@ -123,10 +146,10 @@ const COMMON_RULES = `
  * ダイジェストには当日の数値まとめ（体重・摂取・消費・カロリー収支・運動内訳）が固定フォーマットで
  * 別途表示されるため、AIが書くのは「総括」だけ（記録数値の再掲はしない）
  */
-function buildPrompt(data) {
+function buildPrompt(data, date) {
   const dataJson = JSON.stringify(data);
   return `あなたは体組成改善（脂肪を減らし除脂肪体重を維持・増加）を支援するコーチです。
-今日（${localYmd(0)}）の総括を書いてください。
+今日（${date}）の総括を書いてください。
 
 前提: 読者には今日の記録数値（体重・摂取kcal・PFC・消費・カロリー収支・運動内訳）が
 固定フォーマットで別途表示されている。数値のまとめ直し・網羅的な再掲はせず、
@@ -140,8 +163,8 @@ ${COMMON_RULES}
 データ（直近${FETCH_DAYS}日）: ${dataJson}`;
 }
 
-async function generate(data) {
-  const prompt = buildPrompt(data);
+async function generate(data, date) {
+  const prompt = buildPrompt(data, date);
   let result = null;
   for await (const message of query({
     prompt,
@@ -188,15 +211,21 @@ async function save(kind, date, content, usedModel) {
 }
 
 const kind = 'daily'; // 週次の別枠は廃止（週間視点は毎日の総括に常に含める）
-const date = localYmd(0);
-console.log(`kind=${kind} date=${date} model=${model}`);
+const today = localYmd(Date.now(), tzOffsetHours);
+const target = resolveTargetDate(process.env.COACHING_DATE, today);
+if (!target.ok) {
+  console.error(target.error);
+  process.exit(1);
+}
+const date = target.date;
+console.log(`kind=${kind} date=${date} today=${today} model=${model}`);
 
 try {
-  const data = await collectData();
+  const data = await collectData(date, today);
   console.log(
     `data: body=${data.body.length}d intake=${data.intake.length}d exercise=${data.exercise.length}d`,
   );
-  const { content, usedModel } = await generate(data);
+  const { content, usedModel } = await generate(data, date);
   console.log(`generated: ${content.length} chars (model=${usedModel})`);
   const saved = await save(kind, date, content, usedModel);
   console.log(`saved: id=${saved.id}`);
