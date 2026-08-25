@@ -2,9 +2,13 @@
  * 筋トレ種目の自己ベスト集計（src/exercise-records.ts）のテスト。
  * 定義は docs/superpowers/specs/2026-08-26-exercise-records-design.md の「集計の定義」節。
  */
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { ExerciseMenu, ExerciseRecords } from '../src/types';
-import { computeRecords, diffRecords, effectiveWeight, type RecordSetRow } from '../src/exercise-records';
+import { createExerciseMenu, logExercise } from '../src/exercise';
+import {
+  computeRecords, diffRecords, effectiveWeight, getExerciseRecords, type RecordSetRow,
+} from '../src/exercise-records';
+import { insertMeasurement, resetTables, testEnv } from './helpers';
 
 const bench: ExerciseMenu = {
   id: 'm-bench', name: 'ベンチプレス', category: 'strength', mets: null, muscle_group: '胸',
@@ -166,5 +170,38 @@ describe('diffRecords', () => {
     ]);
     expect(diffRecords(first, after)).toEqual([{ kind: 'rep_max', reps: 3, previous: null, current: 60 }]);
     expect(diffRecords(after, after)).toEqual([]);
+  });
+});
+
+describe('getExerciseRecords（D1）', () => {
+  beforeEach(async () => {
+    await resetTables();
+    // 自重種目の体重スナップショット用（過去日に固定）
+    await insertMeasurement({ grpid: 9601, measured_at: '2026-07-01T03:00:00Z', weight: 80, fat_free_mass: 64 });
+  });
+
+  it('記録順に関係なく performed_at 順で集計し、他種目の記録は混ぜない', async () => {
+    const squat = await createExerciseMenu(testEnv, { name: 'スクワット', category: 'strength' });
+    const other = await createExerciseMenu(testEnv, { name: 'デッドリフト', category: 'strength' });
+    // 新しい日を先に記録してから古い日を追記する（過去日付の追記でも先勝ちが崩れないこと）
+    const l2 = await logExercise(testEnv, { menu_id: squat.id, performed_at: '2026-08-10T03:00:00Z', sets: [{ reps: 5, weight_kg: 100 }] });
+    const l1 = await logExercise(testEnv, { menu_id: squat.id, performed_at: '2026-08-03T03:00:00Z', sets: [{ reps: 5, weight_kg: 100 }, { reps: 8, weight_kg: 80 }] });
+    await logExercise(testEnv, { menu_id: other.id, performed_at: '2026-08-11T03:00:00Z', sets: [{ reps: 3, weight_kg: 140 }] });
+    if ('error' in l1 || 'error' in l2) throw new Error('seed failed');
+
+    const r = await getExerciseRecords(testEnv, squat);
+    expect(r.sessions).toBe(2);
+    expect(r.max_weight).toMatchObject({ weight_kg: 100, log_id: l1.id }); // 同値 → 古い日（先勝ち）
+    expect(r.max_session_volume).toMatchObject({ volume: 1140, log_id: l1.id });
+    expect(r.last_session).toMatchObject({ log_id: l2.id, total_volume: 500 });
+    expect(r.rep_maxes.map((x) => x.reps)).toEqual([5, 8]);
+  });
+
+  it('記録が無い種目は sessions=0 で各項目 null', async () => {
+    const menu = await createExerciseMenu(testEnv, { name: 'ローイング', category: 'strength' });
+    const r = await getExerciseRecords(testEnv, menu);
+    expect(r.sessions).toBe(0);
+    expect(r.max_weight).toBeNull();
+    expect(r.last_session).toBeNull();
   });
 });

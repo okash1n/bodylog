@@ -308,3 +308,39 @@ describe('運動バリデータ', () => {
     expect(ok.ok).toBe(true);
   });
 });
+
+describe('自己ベスト更新フラグ（records_broken）', () => {
+  beforeEach(async () => {
+    await resetTables();
+  });
+
+  it('logExercise は自己ベスト更新を records_broken で返す（初回=全項目、更新なし=空、有酸素=空）', async () => {
+    const bench = await createExerciseMenu(testEnv, { name: 'ベンチプレス', category: 'strength' });
+    const first = await logExercise(testEnv, { menu_id: bench.id, performed_at: '2026-08-01T03:00:00Z', sets: [{ reps: 5, weight_kg: 80 }] });
+    if ('error' in first) throw new Error(first.error);
+    expect(first.records_broken?.map((b) => b.kind)).toEqual([
+      'max_weight', 'rep_max', 'estimated_1rm', 'max_reps', 'max_set_volume', 'max_session_volume',
+    ]);
+    expect(first.records_broken?.[0]).toEqual({ kind: 'max_weight', previous: null, current: 80 });
+
+    const second = await logExercise(testEnv, { menu_id: bench.id, performed_at: '2026-08-03T03:00:00Z', sets: [{ reps: 5, weight_kg: 82.5 }] });
+    if ('error' in second) throw new Error(second.error);
+    expect(second.records_broken).toEqual([
+      { kind: 'max_weight', previous: 80, current: 82.5 },
+      { kind: 'rep_max', reps: 5, previous: 80, current: 82.5 },
+      { kind: 'estimated_1rm', previous: 93.3, current: 96.3 },
+      { kind: 'max_set_volume', previous: 400, current: 412.5 },
+      { kind: 'max_session_volume', previous: 400, current: 412.5 },
+    ]);
+
+    const third = await logExercise(testEnv, { menu_id: bench.id, performed_at: '2026-08-05T03:00:00Z', sets: [{ reps: 3, weight_kg: 60 }] });
+    if ('error' in third) throw new Error(third.error);
+    expect(third.records_broken).toEqual([{ kind: 'rep_max', reps: 3, previous: null, current: 60 }]);
+
+    await seedWeight(localYmdDaysAgo(1), 80);
+    const run = await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    const cardio = await logExercise(testEnv, { menu_id: run.id, duration_min: 30 });
+    if ('error' in cardio) throw new Error(cardio.error);
+    expect(cardio.records_broken).toEqual([]);
+  });
+});

@@ -3,7 +3,7 @@
  * 純関数 computeRecords で集計する。定義は docs/superpowers/specs/2026-08-26-exercise-records-design.md。
  * exercise.ts から参照されるため、このファイルは exercise.ts を import しない（循環回避）。
  */
-import type { ExerciseMenu, ExerciseRecords, ExerciseSet, RecordBroken, RecordKind } from './types';
+import type { Env, ExerciseMenu, ExerciseRecords, ExerciseSet, RecordBroken, RecordKind } from './types';
 
 /** Epley 式で推定 1RM を出す reps の上限（高 rep では式が信頼できない） */
 const EPLEY_MAX_REPS = 12;
@@ -128,4 +128,26 @@ export function diffRecords(before: ExerciseRecords, after: ExerciseRecords): Re
   push('max_set_volume', before.max_set_volume?.volume, after.max_set_volume?.volume);
   push('max_session_volume', before.max_session_volume?.volume, after.max_session_volume?.volume);
   return out;
+}
+
+/**
+ * 1種目の全セットを performed_at, log_id, set_index 昇順で取る（idx_exercise_logs_menu_performed を使う）。
+ * 個人1人分（年数百行）なので上限は設けない。
+ */
+export async function fetchRecordRows(env: Env, menuId: string): Promise<RecordSetRow[]> {
+  const res = await env.DB.prepare(
+    `SELECT s.log_id, l.performed_at, s.set_index, s.reps, s.weight_kg,
+        l.is_bodyweight, l.bodyweight_factor, l.body_weight_kg
+FROM exercise_sets s JOIN exercise_logs l ON l.id = s.log_id
+WHERE l.menu_id = ?1 AND l.category = 'strength'
+ORDER BY l.performed_at, l.id, s.set_index`,
+  )
+    .bind(menuId)
+    .all<RecordSetRow>();
+  return res.results;
+}
+
+/** 筋トレ種目の自己ベストを都度集計する。menu は呼び出し側が取得した strength の種目 */
+export async function getExerciseRecords(env: Env, menu: ExerciseMenu): Promise<ExerciseRecords> {
+  return computeRecords(menu, await fetchRecordRows(env, menu.id));
 }

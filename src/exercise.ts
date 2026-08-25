@@ -13,7 +13,7 @@ import type {
   ExerciseSet,
 } from './types';
 import { addDaysYmd, escapeLikeValue, isPositiveFinite, isoNow, newId, tzModifier } from './util';
-import { effectiveWeight } from './exercise-records';
+import { diffRecords, effectiveWeight, getExerciseRecords } from './exercise-records';
 
 const MAX_METS = 30;
 const MAX_DURATION_MIN = 1440; // 24h
@@ -258,7 +258,7 @@ VALUES (?1, ?2, ?3, 'cardio', ?4, ?5, 0, 1, ?6, ?7, ?8, ?9, ?10)`,
       .bind(id, menu.id, performedAt, menu.name, input.note ?? null,
             input.duration_min, menu.mets, bw, calories, isoNow())
       .run();
-    return (await getExerciseLog(env, id))!;
+    return { ...(await getExerciseLog(env, id))!, records_broken: [] };
   }
 
   // strength
@@ -282,8 +282,11 @@ VALUES (?1, ?2, ?3, 'strength', ?4, ?5, ?6, ?7, NULL, NULL, ?8, NULL, ?9)`,
       ).bind(newId(), id, i + 1, s.reps, s.weight_kg ?? null),
     ),
   ];
+  // 自己ベスト更新の判定: 挿入前後の集計を比べる（都度集計なので前の値を別途持たない）
+  const before = await getExerciseRecords(env, menu);
   await env.DB.batch(statements);
-  return (await getExerciseLog(env, id))!;
+  const after = await getExerciseRecords(env, menu);
+  return { ...(await getExerciseLog(env, id))!, records_broken: diffRecords(before, after) };
 }
 
 export async function deleteExerciseLog(env: Env, id: string): Promise<boolean> {
