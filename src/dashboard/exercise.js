@@ -23,7 +23,8 @@
   const readVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
   // ---- 状態 ----
-  let menus = [];
+  let allMenus = []; // アーカイブ済みを含む全件（管理一覧用）
+  let menus = []; // 記録ピッカー用（アーカイブ除外）
   let selectedMenu = null;
   let latestWeight = null; // 消費kcalプレビュー用（直近の実測体重）
   let volumeChart = null;
@@ -55,7 +56,7 @@
       // apiGet: READ_ACCESS=private のサーバーでもログイン済みなら読めるようBearerを付ける
       const responses = await Promise.all([
         apiGet(`exercise/logs?days=${HISTORY_DAYS}`),
-        apiGet('exercise/menus'),
+        apiGet('exercise/menus?archived=1'),
         apiGet(`exercise/daily?days=${HISTORY_DAYS}`),
         apiGet(`measurements?days=${HISTORY_DAYS}`),
       ]);
@@ -63,7 +64,8 @@
       if (responses.some((r) => !r.ok)) throw new Error(`HTTP ${responses.map((r) => r.status).join('/')}`);
       const [logsRes, menusRes, dailyRes, measRes] = responses;
       const logs = (await logsRes.json()).logs ?? [];
-      menus = (await menusRes.json()).menus ?? [];
+      allMenus = (await menusRes.json()).menus ?? [];
+      menus = allMenus.filter((m) => !m.archived);
       lastDaily = (await dailyRes.json()).days ?? [];
       lastMeas = (await measRes.json()).days ?? [];
       latestWeight = lastWeightOf(lastMeas);
@@ -96,12 +98,34 @@
     if (m.is_bodyweight) parts.push(m.bodyweight_factor != null && m.bodyweight_factor < 1 ? `自重×${m.bodyweight_factor}` : '自重');
     return parts.join(' · ');
   }
+  // 種目管理一覧: 絞り込み・アーカイブ済み表示・件数（種目が増えても見失わないように）
   function renderMenus() {
-    $('exercise-menus-list').innerHTML = menus
-      .map((m) => `<li>${esc(m.name)}（${esc(menuMeta(m))}）<button data-arch="${m.id}" type="button">アーカイブ</button></li>`)
+    const q = $('exercise-menus-filter').value.trim().toLowerCase();
+    const pool = $('exercise-menus-show-archived').checked ? allMenus : menus;
+    const rows = q ? pool.filter((m) => m.name.toLowerCase().includes(q)) : pool;
+    $('exercise-menus-count').textContent =
+      rows.length === pool.length ? `${pool.length} 件` : `${rows.length} / ${pool.length} 件`;
+    $('exercise-menus-list').innerHTML = rows
+      .map(
+        (m) =>
+          `<li${m.archived ? ' class="archived"' : ''}>${esc(m.name)}（${esc(menuMeta(m))}）` +
+          (m.archived
+            ? `<button data-unarch="${m.id}" type="button">復元</button>`
+            : `<button data-arch="${m.id}" type="button">アーカイブ</button>`) +
+          '</li>',
+      )
       .join('');
   }
+  $('exercise-menus-filter').addEventListener('input', renderMenus);
+  $('exercise-menus-show-archived').addEventListener('change', renderMenus);
   $('exercise-menus-list').addEventListener('click', async (e) => {
+    const unarch = e.target.dataset?.unarch;
+    if (unarch) {
+      const res = await rw(`exercise/menus/${unarch}/unarchive`, 'POST');
+      toast(res.ok ? '復元しました' : '復元に失敗しました');
+      refresh();
+      return;
+    }
     const id = e.target.dataset?.arch;
     if (id) {
       const res = await rw(`exercise/menus/${id}/archive`, 'POST');

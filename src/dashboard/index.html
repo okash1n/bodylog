@@ -209,6 +209,11 @@
         <input id="menu-carbs" type="number" placeholder="C(g)" aria-label="炭水化物（g）" min="0" step="0.1">
         <button type="submit">追加</button>
       </form>
+      <div class="menus-tools">
+        <input id="menus-filter" type="search" placeholder="絞り込み" aria-label="メニューを絞り込み" autocomplete="off">
+        <label class="calorie-toggle"><input id="menus-show-archived" type="checkbox"> アーカイブ済みも表示</label>
+        <span id="menus-count" class="hint" aria-live="polite"></span>
+      </div>
       <ul id="menus-list"></ul>
     </details>
     <section id="meals-history-section">
@@ -251,6 +256,11 @@
         <label id="exercise-menu-bwf-wrap" class="calorie-toggle" hidden title="体重をどれだけ負荷に算入するか（懸垂1.0 / 腕立て0.65 / コア系0.1〜0.4）">係数 <input id="exercise-menu-bwf" type="number" min="0" max="1" step="0.05" value="1" style="width:4.5em"></label>
         <button type="submit">追加</button>
       </form>
+      <div class="menus-tools">
+        <input id="exercise-menus-filter" type="search" placeholder="絞り込み" aria-label="種目を絞り込み" autocomplete="off">
+        <label class="calorie-toggle"><input id="exercise-menus-show-archived" type="checkbox"> アーカイブ済みも表示</label>
+        <span id="exercise-menus-count" class="hint" aria-live="polite"></span>
+      </div>
       <ul id="exercise-menus-list"></ul>
     </details>
     <section id="exercise-history-section">

@@ -32,7 +32,7 @@ import chartVendorJs from './dashboard/vendor/chart.umd.js';
 import { appleTouchIconPng } from './dashboard/icon';
 
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
-export const ASSET_VERSION = '2026-08-20-37';
+export const ASSET_VERSION = '2026-08-26-38';
 
 /** バージョン無しURLで配信するasset用（manifest / apple-touch-icon）。immutableにしない */
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';

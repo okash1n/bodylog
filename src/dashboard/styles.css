@@ -694,6 +694,13 @@ body {
 #exercise-duration { width: 5rem; }
 #meal-menu-search,
 #exercise-menu-search { min-width: 12rem; }
+/* メニュー/種目管理の一覧ツール（絞り込み・アーカイブ済み表示・件数）。一覧は高さを抑えてスクロールさせる */
+.menus-tools { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 8px 0 4px; }
+.menus-tools input[type="search"] { min-width: 10rem; }
+#menus-list,
+#exercise-menus-list { max-height: 40vh; overflow-y: auto; }
+#menus-list li.archived,
+#exercise-menus-list li.archived { opacity: 0.6; }
 /* 空メニュー時の案内行（クリック不可） */
 .picker-hint { color: var(--text-muted); cursor: default; }
 

@@ -61,7 +61,8 @@
   });
 
   // ---- データ表示 ----
-  let menus = [];
+  let allMenus = []; // アーカイブ済みを含む全件（管理一覧用）
+  let menus = []; // 記録ピッカー用（アーカイブ除外）
   let selectedMenu = null;
   async function refresh() {
     updateAuthUi();
@@ -71,18 +72,15 @@
       // apiGet: READ_ACCESS=private のサーバーでもログイン済みなら読めるようBearerを付ける
       const [mealsRes, menusRes] = await Promise.all([
         apiGet(`meals?days=${HISTORY_DAYS}`),
-        apiGet('menus'),
+        apiGet('menus?archived=1'),
       ]);
       // 失敗を空データ扱いすると「まだ記録がありません」に化けて実データが消えたように見える
       if (!mealsRes.ok || !menusRes.ok) throw new Error(`HTTP ${mealsRes.status}/${menusRes.status}`);
       const meals = (await mealsRes.json()).meals ?? [];
-      menus = (await menusRes.json()).menus ?? [];
+      allMenus = (await menusRes.json()).menus ?? [];
+      menus = allMenus.filter((m) => !m.archived);
       renderHistory(meals);
-      $('menus-list').innerHTML = menus
-        .map(
-          (m) => `<li>${esc(m.name)}（${m.calories} kcal${pfc(m.protein_g, m.fat_g, m.carbs_g)}）<button data-arch="${m.id}" type="button">アーカイブ</button></li>`,
-        )
-        .join('');
+      renderMenus();
     } catch (err) {
       console.error('[meals] refresh failed', err);
       hist.innerHTML =
@@ -147,7 +145,34 @@
       refresh();
     }
   });
+  // ---- メニュー管理一覧: 絞り込み・アーカイブ済み表示・件数（メニューが増えても見失わないように） ----
+  function renderMenus() {
+    const q = $('menus-filter').value.trim().toLowerCase();
+    const pool = $('menus-show-archived').checked ? allMenus : menus;
+    const rows = q ? pool.filter((m) => m.name.toLowerCase().includes(q)) : pool;
+    $('menus-count').textContent = rows.length === pool.length ? `${pool.length} 件` : `${rows.length} / ${pool.length} 件`;
+    $('menus-list').innerHTML = rows
+      .map(
+        (m) =>
+          `<li${m.archived ? ' class="archived"' : ''}>${esc(m.name)}（${m.calories} kcal${pfc(m.protein_g, m.fat_g, m.carbs_g)}）` +
+          (m.archived
+            ? `<button data-unarch="${m.id}" type="button">復元</button>`
+            : `<button data-arch="${m.id}" type="button">アーカイブ</button>`) +
+          '</li>',
+      )
+      .join('');
+  }
+  $('menus-filter').addEventListener('input', renderMenus);
+  $('menus-show-archived').addEventListener('change', renderMenus);
+
   $('menus-list').addEventListener('click', async (e) => {
+    const unarch = e.target.dataset?.unarch;
+    if (unarch) {
+      const res = await rw(`menus/${unarch}/unarchive`, 'POST');
+      toast(res.ok ? '復元しました' : '復元に失敗しました');
+      refresh();
+      return;
+    }
     const id = e.target.dataset?.arch;
     if (id) {
       const res = await rw(`menus/${id}/archive`, 'POST');
