@@ -250,6 +250,9 @@
     els.empty.classList.toggle('hidden', name !== 'empty');
     els.error.classList.toggle('hidden', name !== 'error');
     els.content.classList.toggle('hidden', name !== 'ready');
+    // private時のログイン画面（#state-auth）を出している間は、体重の手動記録セクションを隠して
+    // ログインボタンを二重に出さない。状態遷移のたびにここで同期する（ログイン直後の再読込でも復帰する）
+    $('weight-entry').hidden = name === 'auth';
   }
 
   /* READ_ACCESS=private のサーバー向け: ログイン済みなら読み取りにもBearerを付ける。
@@ -1348,13 +1351,14 @@
   }
 
   // ---- 体重の手動記録フォーム（POST /api/weight）。shared.js（defer）の rw / toast / login を遅延参照する ----
-  function updateWeightEntryUi() {
-    var dash = window.__dash;
-    var loggedIn = Boolean(dash && dash.loggedIn && dash.loggedIn());
-    // private時のログイン画面（#state-auth）を出している間は、二重にログインボタンを出さない
-    $('weight-entry').hidden = !els.auth.classList.contains('hidden');
+  // ログイン状態でログインボタンとフォームを出し分ける（セクション全体の表示は showState が制御）
+  function setWeightEntryLoggedIn(loggedIn) {
     $('weight-auth').hidden = loggedIn;
     $('weight-form').hidden = !loggedIn;
+  }
+  function updateWeightEntryUi() {
+    var dash = window.__dash;
+    setWeightEntryLoggedIn(Boolean(dash && dash.loggedIn && dash.loggedIn()));
   }
   function submitWeightEntry(ev) {
     ev.preventDefault();
@@ -1419,7 +1423,9 @@
       });
     }
   });
-  // shared.js（defer）の読込完了後に判定する。以降はログイン状態の変化で追従する
+  // 同期実行時点では shared.js（defer）が未読込なので、まずトークンの有無で出し分けてちらつきを防ぎ、
+  // 読込完了後（DOMContentLoaded）に正式判定し、以降はログイン状態の変化で追従する
+  setWeightEntryLoggedIn(Boolean(authToken()));
   document.addEventListener('DOMContentLoaded', updateWeightEntryUi);
   document.addEventListener('authchanged', updateWeightEntryUi);
 

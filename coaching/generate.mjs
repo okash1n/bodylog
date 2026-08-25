@@ -83,8 +83,11 @@ async function collectData(date, today) {
     getJson(`/api/exercise/daily?${range}`),
     // 実効代謝は補助情報。取得失敗しても講評生成は続ける
     isPast ? Promise.resolve(null) : getJson('/api/metabolism').catch(() => null),
-    // 直近の講評（前日まで）。無くても生成は続ける
-    getJson(`/api/coaching?${noteRange}`).catch(() => ({ notes: [] })),
+    // 直近の講評（前日まで）。取得できなくても生成は続けるが、無音にはしない（本文は出さない）
+    getJson(`/api/coaching?${noteRange}`).catch((err) => {
+      console.warn(`previous notes unavailable, generating without them: ${err instanceof Error ? err.message : err}`);
+      return { notes: [] };
+    }),
   ]);
   const days = measurements.days || [];
   const terms = isPast
@@ -167,7 +170,7 @@ function buildPrompt(data, date) {
 
 連続性: previous_notes は直近の講評（日付昇順）。評価と方針はこれと連続させ、前日と結論が変わる場合は
 理由を一言添える。同じ助言の言い回しの繰り返しは避け、継続中の方針は「継続」と明示する。
-previous_notes が空なら初回として書く。
+previous_notes が空なら（初回、または取得できなかった場合）過去の講評には触れずに書く。
 ${COMMON_RULES}
 
 データ（直近${FETCH_DAYS}日）: ${dataJson}`;

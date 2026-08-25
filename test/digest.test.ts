@@ -137,7 +137,7 @@ describe('runDailyDigest', () => {
     expect(body).toContain('今日の総括テスト');
   });
 
-  it('当日の計測がなければ何も送らない', async () => {
+  it('当日の記録（体重・食事・運動）が何も無ければ送らない', async () => {
     stubFetch(); // 未登録fetchはthrowするので、呼ばれないことの検証を兼ねる
     const result = await runDailyDigest(DAILY_ENV, ORIGIN);
     expect(result.queued).toBe(0);

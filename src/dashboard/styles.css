@@ -566,7 +566,6 @@ body {
 /* 体重タブの手動記録フォーム（食事・運動タブの記録フォームと同じ並び） */
 #weight-entry { margin: .5rem 0 1rem; }
 #weight-form { display: flex; flex-wrap: wrap; gap: .5rem .75rem; align-items: center; }
-#weight-form label { display: inline-flex; align-items: center; gap: .3rem; }
 #weight-kg, #weight-fat { width: 5.5rem; }
 
 /* 食事履歴テーブル（直近50日・日付グループ） */
@@ -631,11 +630,12 @@ body {
   color: var(--text);
 }
 
-/* ---- 食事/運動タブのフォームコントロール（UA既定のままだとテーマから浮くため統一） ---- */
+/* ---- 食事/運動タブ・体重の手動記録のフォームコントロール（UA既定のままだとテーマから浮くため統一） ---- */
 #panel-meals input,
 #panel-meals select,
 #panel-exercise input,
-#panel-exercise select {
+#panel-exercise select,
+#weight-form input {
   font: inherit;
   color: var(--text);
   background: var(--surface);
@@ -644,7 +644,8 @@ body {
   padding: 5px 8px;
 }
 #panel-meals label,
-#panel-exercise label {
+#panel-exercise label,
+#weight-form label {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -656,8 +657,10 @@ body {
 #menu-form button,
 #exercise-add-form button,
 #exercise-menu-form button,
+#weight-form button,
 #meals-auth button,
-#exercise-auth button {
+#exercise-auth button,
+#weight-auth button {
   font: inherit;
   cursor: pointer;
   border-radius: 8px;
@@ -670,8 +673,10 @@ body {
 #menu-form button[type='submit'],
 #exercise-add-form button[type='submit'],
 #exercise-menu-form button[type='submit'],
+#weight-form button[type='submit'],
 #meals-auth button,
-#exercise-auth button {
+#exercise-auth button,
+#weight-auth button {
   background: var(--accent-fill);
   border-color: var(--accent-fill);
   color: var(--on-accent);

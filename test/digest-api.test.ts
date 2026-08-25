@@ -1,6 +1,6 @@
 /**
  * POST /api/digest（指定日の日次ダイジェストを手動送信）のテスト。
- * 自動送信が「23:55 時点で計測なし」でスキップされた日に、後から体重を記録して送り直す用途。
+ * 自動送信が「23:55 時点で記録（体重・食事・運動）なし」でスキップされた日に、後から記録を足して送り直す用途。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/types';
