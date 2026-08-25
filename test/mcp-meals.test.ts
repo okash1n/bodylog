@@ -89,3 +89,51 @@ describe('/mcp 書き込みツール', () => {
     expect(((await missing.json()) as RpcResponse).result!.isError).toBe(true);
   });
 });
+
+describe('/mcp 編集・削除ツール（食事）', () => {
+  let token: string;
+  beforeEach(async () => {
+    await resetTables();
+    token = await obtainAccessToken(rootEnv);
+  });
+  const call = async (name: string, args: Record<string, unknown>): Promise<RpcResponse> =>
+    (await (await rwRpc(rootEnv, token, 'tools/call', { name, arguments: args })).json()) as RpcResponse;
+  const isError = (r: RpcResponse): boolean => (r.result as { isError?: boolean }).isError === true;
+
+  it('update_menu は指定項目だけ更新し、null で栄養素を消せる。未知IDや項目なしはエラー', async () => {
+    const menu = await createMenu(testEnv, { name: '唐揚げ定食', calories: 850, protein_g: 30 });
+    const ok = await call('update_menu', { menu_id: menu.id, calories: 800, protein_g: null });
+    const updated = parseToolJson<{ name: string; calories: number; protein_g: number | null }>(ok.result!);
+    expect(updated.name).toBe('唐揚げ定食');
+    expect(updated.calories).toBe(800);
+    expect(updated.protein_g).toBeNull();
+    expect(isError(await call('update_menu', { menu_id: 'nope', calories: 1 }))).toBe(true);
+    expect(isError(await call('update_menu', { menu_id: menu.id }))).toBe(true);
+  });
+
+  it('archive_menu で検索から消え、archived:false で戻る', async () => {
+    const menu = await createMenu(testEnv, { name: '豚汁', calories: 250 });
+    expect(isError(await call('archive_menu', { menu_id: menu.id }))).toBe(false);
+    expect(parseToolJson<{ menus: unknown[] }>((await call('search_menus', { q: '豚汁' })).result!).menus).toHaveLength(0);
+    expect(isError(await call('archive_menu', { menu_id: menu.id, archived: false }))).toBe(false);
+    expect(parseToolJson<{ menus: unknown[] }>((await call('search_menus', { q: '豚汁' })).result!).menus).toHaveLength(1);
+    expect(isError(await call('archive_menu', { menu_id: 'nope' }))).toBe(true);
+  });
+
+  it('update_meal_log は倍率・区分を直し、delete_meal_log で消える', async () => {
+    const menu = await createMenu(testEnv, { name: 'カレーライス', calories: 700 });
+    const log = await logMeal(testEnv, { menu_id: menu.id, eaten_at: `${localYmdDaysAgo(0)}T03:00:00Z` });
+    if ('error' in log) throw new Error(log.error);
+    const updated = parseToolJson<{ effective_calories: number; meal_type: string | null }>(
+      (await call('update_meal_log', { meal_id: log.id, multiplier: 2, meal_type: 'dinner' })).result!,
+    );
+    expect(updated.effective_calories).toBeCloseTo(1400);
+    expect(updated.meal_type).toBe('dinner');
+    expect(isError(await call('update_meal_log', { meal_id: log.id }))).toBe(true); // 項目なし
+    expect(isError(await call('update_meal_log', { meal_id: 'nope', multiplier: 1 }))).toBe(true);
+
+    expect(isError(await call('delete_meal_log', { meal_id: log.id }))).toBe(false);
+    expect(parseToolJson<{ meals: unknown[] }>((await call('get_meal_logs', { days: 7 })).result!).meals).toHaveLength(0);
+    expect(isError(await call('delete_meal_log', { meal_id: log.id }))).toBe(true);
+  });
+});

@@ -87,7 +87,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     );
     expect(authed.status).toBe(200);
     const body = (await authed.json()) as RpcResponse;
-    expect((body.result as { tools: unknown[] }).tools).toHaveLength(14);
+    expect((body.result as { tools: unknown[] }).tools).toHaveLength(22);
   });
 
   it('initializeに応答する（ステートレス・セッションIDなし）', async () => {
@@ -103,14 +103,19 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     expect(serverInfo.name).toBe('bodylog');
   });
 
-  it('tools/list が読み取り8＋書き込み6ツールを返す', async () => {
+  it('tools/list が読み取り8＋書き込み14ツールを返す', async () => {
     const res = await rwRpc(token, 'tools/list');
     expect(res.status).toBe(200);
     const body = (await res.json()) as RpcResponse;
     const names = (body.result as { tools: { name: string }[] }).tools.map((t) => t.name).sort();
     expect(names).toEqual([
+      'archive_exercise_menu',
+      'archive_menu',
       'create_exercise_menu',
       'create_menu',
+      'delete_exercise_log',
+      'delete_meal_log',
+      'delete_weight',
       'get_daily_series',
       'get_exercise_logs',
       'get_exercise_records',
@@ -123,6 +128,9 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
       'search_exercise_menus',
       'search_menus',
       'set_goal',
+      'update_exercise_menu',
+      'update_meal_log',
+      'update_menu',
     ]);
   });
 
@@ -264,7 +272,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     const res = await rwRpc(token, 'tools/list', {}, { 'MCP-Protocol-Version': '2026-07-28' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as RpcResponse;
-    expect((body.result as { tools: unknown[] }).tools).toHaveLength(14);
+    expect((body.result as { tools: unknown[] }).tools).toHaveLength(22);
   });
 
   it('未対応バージョンヘッダ付きinitializeはサーバー対応版へ交渉される', async () => {
@@ -291,5 +299,60 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     });
     expect(res.status).toBe(406);
     expect(res.headers.get('X-Robots-Tag')).toContain('noindex');
+  });
+});
+
+describe('/mcp 編集・削除ツール（運動・体重）', () => {
+  let token: string;
+  beforeEach(async () => {
+    await resetTables();
+    token = await obtainAccessToken(rootEnv);
+  });
+  const call = async (name: string, args: Record<string, unknown>): Promise<RpcResponse> =>
+    (await (await rwRpc(token, 'tools/call', { name, arguments: args })).json()) as RpcResponse;
+  const isError = (r: RpcResponse): boolean => (r.result as { isError?: boolean }).isError === true;
+
+  it('update_exercise_menu は指定項目だけ更新し、未知IDや項目なしはエラー', async () => {
+    const menu = await createExerciseMenu(rootEnv, { name: 'ベンチプレス', category: 'strength', muscle_group: '胸' });
+    const ok = await call('update_exercise_menu', { menu_id: menu.id, name: 'ベンチプレス（バーベル）', muscle_group: null });
+    const updated = parseToolJson<{ name: string; muscle_group: string | null; category: string }>(ok.result as Record<string, unknown>);
+    expect(updated.name).toBe('ベンチプレス（バーベル）');
+    expect(updated.muscle_group).toBeNull();
+    expect(updated.category).toBe('strength');
+    expect(isError(await call('update_exercise_menu', { menu_id: 'nope', name: 'x' }))).toBe(true);
+    expect(isError(await call('update_exercise_menu', { menu_id: menu.id }))).toBe(true);
+  });
+
+  it('archive_exercise_menu で検索から消え、archived:false で戻る', async () => {
+    const menu = await createExerciseMenu(rootEnv, { name: 'スクワット', category: 'strength' });
+    expect(isError(await call('archive_exercise_menu', { menu_id: menu.id }))).toBe(false);
+    const hidden = parseToolJson<{ menus: unknown[] }>((await call('search_exercise_menus', { q: 'スクワット' })).result as Record<string, unknown>);
+    expect(hidden.menus).toHaveLength(0);
+    expect(isError(await call('archive_exercise_menu', { menu_id: menu.id, archived: false }))).toBe(false);
+    const back = parseToolJson<{ menus: unknown[] }>((await call('search_exercise_menus', { q: 'スクワット' })).result as Record<string, unknown>);
+    expect(back.menus).toHaveLength(1);
+    expect(isError(await call('archive_exercise_menu', { menu_id: 'nope' }))).toBe(true);
+  });
+
+  it('delete_exercise_log は記録をセットごと消し、未知IDはエラー', async () => {
+    const menu = await createExerciseMenu(rootEnv, { name: 'デッドリフト', category: 'strength' });
+    const log = await logExercise(rootEnv, { menu_id: menu.id, sets: [{ reps: 5, weight_kg: 100 }] });
+    if ('error' in log) throw new Error(log.error);
+    expect(isError(await call('delete_exercise_log', { log_id: log.id }))).toBe(false);
+    const logs = parseToolJson<{ logs: unknown[] }>((await call('get_exercise_logs', { days: 7 })).result as Record<string, unknown>);
+    expect(logs.logs).toHaveLength(0);
+    expect(isError(await call('delete_exercise_log', { log_id: log.id }))).toBe(true);
+  });
+
+  it('delete_weight は手動記録だけ消せる（Withings由来はエラー）', async () => {
+    await insertMeasurement({ grpid: 5150, measured_at: `${localYmdDaysAgo(2)}T03:00:00Z`, weight: 80, fat_free_mass: 62 });
+    const saved = parseToolJson<{ id: number }>(
+      (await call('log_weight', { weight_kg: 81.2, measured_at: `${localYmdDaysAgo(1)}T03:00:00Z` })).result as Record<string, unknown>,
+    );
+    expect(isError(await call('delete_weight', { id: saved.id }))).toBe(false);
+    expect(isError(await call('delete_weight', { id: saved.id }))).toBe(true); // 二重削除
+    expect(isError(await call('delete_weight', { id: 5150 }))).toBe(true); // Withings由来
+    const raw = parseToolJson<{ measurements: { id: number }[] }>((await call('get_raw_measurements', { days: 7 })).result as Record<string, unknown>);
+    expect(raw.measurements.map((m) => m.id)).toEqual([5150]);
   });
 });

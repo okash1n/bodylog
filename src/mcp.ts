@@ -1,7 +1,9 @@
 /**
  * MCP（Model Context Protocol）サーバー。読み取り専用ツール8つ（体重3 / 食事2 / 運動3）を
- * 公開し、認証済みエンドポイント（/mcp）では書き込みツール6つ（log_meal / create_menu /
- * log_exercise / create_exercise_menu / set_goal / log_weight）を追加で公開する。
+ * 公開し、認証済みエンドポイント（/mcp）では書き込みツール14つ（記録・登録: log_meal / create_menu /
+ * log_exercise / create_exercise_menu / set_goal / log_weight、編集・削除: update_menu / archive_menu /
+ * update_meal_log / delete_meal_log / update_exercise_menu / archive_exercise_menu / delete_exercise_log /
+ * delete_weight）を追加で公開する。
  * リクエストごとにサーバー/トランスポートを生成するステートレス構成
  * （セッションを持たないため、Durable Objects等の追加インフラが不要）。
  */
@@ -15,15 +17,19 @@ import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { getDailySeries, getRawMeasurements, getSummary } from './queries';
 import { parseSetGoalInput, setGoal } from './goals';
-import { createMenu, listMealLogs, listMenus, logMeal, parseMealFields, parseMenuInput } from './meals';
 import {
-  createExerciseMenu, getExerciseMenu, listExerciseLogs, listExerciseMenus, logExercise,
-  parseExerciseLogFields, parseExerciseMenuInput,
+  createMenu, deleteMealLog, listMealLogs, listMenus, logMeal, parseMealFields, parseMenuInput, parseMenuPatch,
+  setMenuArchived, updateMealLog, updateMenu,
+} from './meals';
+import {
+  createExerciseMenu, deleteExerciseLog, getExerciseMenu, listExerciseLogs, listExerciseMenus, logExercise,
+  parseExerciseLogFields, parseExerciseMenuInput, parseExerciseMenuPatch, setExerciseMenuArchived,
+  updateExerciseMenu,
 } from './exercise';
 import { getExerciseRecords } from './exercise-records';
 import type { Env } from './types';
 import { ensurePublicOrigin, LIMITS, localToday, noindexHeaders, offsetHours, resolveRange } from './util';
-import { logWeight, parseWeightInput } from './weight';
+import { deleteManualMeasurement, logWeight, parseWeightInput } from './weight';
 
 const MCP_SERVER_VERSION = '1.0.0';
 
@@ -40,6 +46,7 @@ function instructions(tzOffsetHours: number): string {
     '筋トレ種目の自己ベスト（最大重量・REP数ごとの最大・推定1RM・最大REP・最大セット/セッションボリューム）と前回セッションの内容は get_exercise_records で引く（get_exercise_logs で全記録を取って推論しない）。log_exercise の応答の records_broken に自己ベスト更新が入るので、更新があれば伝える。',
     '目標（体重・脂肪量）はget_weight_summaryのgoalで確認でき、set_goalで設定・解除できる（ユーザーが明示的に依頼したときだけ変更すること）。',
     '体重はlog_weightで手動記録できる（体重計が無い/Withings未連携の場合の記録手段。ユーザーが体重を報告したときに使う）。',
+    '誤登録の修正は update_menu / update_exercise_menu（メニュー・種目の編集）、update_meal_log（食事記録の倍率・日時・区分）、archive_menu / archive_exercise_menu（一覧から非表示。archived=falseで復元）、delete_meal_log / delete_exercise_log / delete_weight（記録の削除）で行える。いずれもユーザーが明示的に依頼したときだけ使い、削除・アーカイブの前に対象（名前・日時・値）を確認すること。運動記録の編集はできないので削除して記録し直す。',
   ].join('\n');
 }
 
@@ -349,6 +356,150 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
         if (!parsed.ok) return errorResult(parsed.error);
         return jsonResult(await logWeight(env, parsed.value));
       }),
+    );
+
+    // ---- 編集・削除・アーカイブ ----
+    // AIが写真の読み違い等で誤登録したメニュー・記録を、ウェブアプリを開かずに直せるようにする（GitHub Issue #1）。
+    // 検証・更新関数は REST（src/writes.ts）と同じものを使う
+    server.registerTool(
+      'update_menu',
+      {
+        description:
+          '食事メニュー（マスタ）を編集する。指定した項目だけ更新し、protein_g / fat_g / carbs_g / note は null で消せる。過去の食事記録は記録時点のスナップショットなので変わらない。ユーザーが明示的に修正を依頼したときだけ使うこと',
+        inputSchema: {
+          menu_id: z.string().describe('メニューID（search_menusで取得）'),
+          name: z.string().optional().describe('メニュー名'),
+          calories: z.number().positive().optional().describe('1食分のkcal'),
+          protein_g: z.number().positive().nullable().optional(),
+          fat_g: z.number().positive().nullable().optional(),
+          carbs_g: z.number().positive().nullable().optional(),
+          note: z.string().nullable().optional(),
+        },
+      },
+      (args) => guarded('update_menu', async () => {
+        const { menu_id, ...patch } = args;
+        const parsed = parseMenuPatch(patch);
+        if (!parsed.ok) return errorResult(parsed.error);
+        const menu = await updateMenu(env, menu_id, parsed.value);
+        return menu ? jsonResult(menu) : errorResult('menu not found');
+      }),
+    );
+    server.registerTool(
+      'archive_menu',
+      {
+        description:
+          '食事メニューをアーカイブする（一覧・検索から非表示。過去の記録は残る）。archived=false で元に戻す。ユーザーが明示的に依頼したときだけ使い、実行前に対象のメニュー名を確認すること',
+        inputSchema: {
+          menu_id: z.string().describe('メニューID（search_menusで取得）'),
+          archived: z.boolean().optional().describe('省略時 true（アーカイブ）。false で復元'),
+        },
+        annotations: { destructiveHint: true },
+      },
+      (args) => guarded('archive_menu', async () => {
+        const archived = args.archived ?? true;
+        if (!(await setMenuArchived(env, args.menu_id, archived))) return errorResult('menu not found');
+        return jsonResult({ ok: true, menu_id: args.menu_id, archived });
+      }),
+    );
+    server.registerTool(
+      'update_meal_log',
+      {
+        description:
+          '食事記録を編集する（倍率・食べた日時・食事区分）。メニュー自体を変えたい場合は delete_meal_log で消して log_meal し直す。ユーザーが明示的に修正を依頼したときだけ使うこと',
+        inputSchema: {
+          meal_id: z.string().describe('食事記録ID（get_meal_logsで取得）'),
+          multiplier: z.number().positive().max(20).optional().describe('倍率'),
+          eaten_at: z.string().optional().describe('食べた日時 ISO8601'),
+          meal_type: z.enum(['breakfast', 'lunch', 'dinner', 'snack']).optional(),
+        },
+      },
+      (args) => guarded('update_meal_log', async () => {
+        const { meal_id, ...rest } = args;
+        const fields = parseMealFields(rest as Record<string, unknown>);
+        if (!fields.ok) return errorResult(fields.error);
+        if (Object.keys(fields.value).length === 0) return errorResult('no fields to update');
+        const log = await updateMealLog(env, meal_id, fields.value);
+        return log ? jsonResult(log) : errorResult('meal log not found');
+      }),
+    );
+    server.registerTool(
+      'delete_meal_log',
+      {
+        description:
+          '食事記録を1件削除する。ユーザーが明示的に依頼したときだけ使い、実行前に対象（メニュー名・日時）を確認すること',
+        inputSchema: { meal_id: z.string().describe('食事記録ID（get_meal_logsで取得）') },
+        annotations: { destructiveHint: true },
+      },
+      (args) => guarded('delete_meal_log', async () =>
+        (await deleteMealLog(env, args.meal_id))
+          ? jsonResult({ ok: true, meal_id: args.meal_id })
+          : errorResult('meal log not found')),
+    );
+    server.registerTool(
+      'update_exercise_menu',
+      {
+        description:
+          '運動種目（マスタ）を編集する。指定した項目だけ更新し、mets / muscle_group / note は null で消せる。category は変更できない（作り直す）。過去の運動記録は記録時点のスナップショットなので変わらない。ユーザーが明示的に修正を依頼したときだけ使うこと',
+        inputSchema: {
+          menu_id: z.string().describe('種目ID（search_exercise_menusで取得）'),
+          name: z.string().optional().describe('種目名'),
+          mets: z.number().positive().nullable().optional().describe('有酸素の運動強度'),
+          muscle_group: z.string().nullable().optional().describe('筋トレの対象部位'),
+          is_bodyweight: z.boolean().optional().describe('筋トレの自重種目か'),
+          bodyweight_factor: z.number().min(0).max(1).nullable().optional().describe('自重種目のボリューム補正係数0〜1（null で既定1.0）'),
+          note: z.string().nullable().optional(),
+        },
+      },
+      (args) => guarded('update_exercise_menu', async () => {
+        const { menu_id, ...patch } = args;
+        const parsed = parseExerciseMenuPatch(patch);
+        if (!parsed.ok) return errorResult(parsed.error);
+        const menu = await updateExerciseMenu(env, menu_id, parsed.value);
+        return menu ? jsonResult(menu) : errorResult('menu not found');
+      }),
+    );
+    server.registerTool(
+      'archive_exercise_menu',
+      {
+        description:
+          '運動種目をアーカイブする（一覧・検索から非表示。過去の記録は残る）。archived=false で元に戻す。ユーザーが明示的に依頼したときだけ使い、実行前に対象の種目名を確認すること',
+        inputSchema: {
+          menu_id: z.string().describe('種目ID（search_exercise_menusで取得）'),
+          archived: z.boolean().optional().describe('省略時 true（アーカイブ）。false で復元'),
+        },
+        annotations: { destructiveHint: true },
+      },
+      (args) => guarded('archive_exercise_menu', async () => {
+        const archived = args.archived ?? true;
+        if (!(await setExerciseMenuArchived(env, args.menu_id, archived))) return errorResult('menu not found');
+        return jsonResult({ ok: true, menu_id: args.menu_id, archived });
+      }),
+    );
+    server.registerTool(
+      'delete_exercise_log',
+      {
+        description:
+          '運動記録を1件削除する（セット明細ごと）。運動記録は編集できないので、直したいときは削除して log_exercise し直す。ユーザーが明示的に依頼したときだけ使い、実行前に対象（種目名・日時）を確認すること',
+        inputSchema: { log_id: z.string().describe('運動記録ID（get_exercise_logsで取得）') },
+        annotations: { destructiveHint: true },
+      },
+      (args) => guarded('delete_exercise_log', async () =>
+        (await deleteExerciseLog(env, args.log_id))
+          ? jsonResult({ ok: true, log_id: args.log_id })
+          : errorResult('exercise log not found')),
+    );
+    server.registerTool(
+      'delete_weight',
+      {
+        description:
+          'log_weight で手動記録した体重を1件削除する（Withings由来の計測は削除できない）。ユーザーが明示的に依頼したときだけ使い、実行前に対象（日時・値）を確認すること',
+        inputSchema: { id: z.number().int().describe('計測ID（get_raw_measurements の id。source が manual の行のみ）') },
+        annotations: { destructiveHint: true },
+      },
+      (args) => guarded('delete_weight', async () =>
+        (await deleteManualMeasurement(env, args.id))
+          ? jsonResult({ ok: true, id: args.id })
+          : errorResult('manual measurement not found')),
     );
   }
   return server;
