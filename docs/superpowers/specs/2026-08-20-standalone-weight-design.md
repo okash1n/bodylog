@@ -51,6 +51,7 @@ ALTER TABLE measurements ADD COLUMN source TEXT NOT NULL DEFAULT 'withings';
 - `POST /api/weight`（`registerWriteRoutes` に既存 `w()`/unwrapToken パターンで追加）: 201で保存行を返す。バリデーション失敗は400＋日本語メッセージ
 - `DELETE /api/weight/:id`: `source='manual'` の行のみ削除可。Withings行・存在しないIDは404。idは負整数を受ける
 - MCP `log_weight`: write群に追加（書き込み6つ目、全体で13ツール目）。引数は上表と同じ。削除ツールは作らない（食事・運動MCPと同様）
+  - **2026-08-26 更新（GitHub Issue #1）**: 手動記録の削除ツール `delete_weight`（`source='manual'` の行のみ、`get_raw_measurements` の id を指定）を追加した
 
 ## Withings任意化
 

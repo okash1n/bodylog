@@ -1,6 +1,6 @@
 /**
  * MCP（Model Context Protocol）サーバー。読み取り専用ツール8つ（体重3 / 食事2 / 運動3）を
- * 公開し、認証済みエンドポイント（/mcp）では書き込みツール14つ（記録・登録: log_meal / create_menu /
+ * 公開し、認証済みエンドポイント（/mcp）では書き込みツール14本（記録・登録: log_meal / create_menu /
  * log_exercise / create_exercise_menu / set_goal / log_weight、編集・削除: update_menu / archive_menu /
  * update_meal_log / delete_meal_log / update_exercise_menu / archive_exercise_menu / delete_exercise_log /
  * delete_weight）を追加で公開する。

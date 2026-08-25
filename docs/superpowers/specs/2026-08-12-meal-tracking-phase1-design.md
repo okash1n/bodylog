@@ -24,6 +24,7 @@
 - 認証は **OAuth 2.1**（`@cloudflare/workers-oauth-provider`）。ChatGPTコネクタ（OAuthのみ対応）からの書き込みを可能にするため
 - 本人確認は **Googleログイン**。userinfoのメールを secret `OWNER_EMAILS`（カンマ区切り）と照合
 - MCPからできる操作: メニュー検索・記録の読み書き・**明示依頼時のみ**メニュー作成。編集・アーカイブ・削除はダッシュボードUI専用
+  - **2026-08-26 更新（GitHub Issue #1）**: AI の誤登録をウェブアプリ無しで直せるよう、MCP にも `update_menu` / `archive_menu`（`archived:false` で復元） / `update_meal_log` / `delete_meal_log` を追加した。REST と同じ検証・更新関数を使い、明示依頼時のみ・実行前に対象確認を instructions で指示する
 
 ## 認証アーキテクチャ
 

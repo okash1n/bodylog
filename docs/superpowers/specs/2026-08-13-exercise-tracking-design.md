@@ -37,6 +37,7 @@
 - 自重種目（懸垂・腕立て等）は種目に `is_bodyweight` フラグ。実効重量 = `weight_kg（追加分, 0可）＋ 記録時に凍結した体重kg`。これで自重種目もウェイト種目と同じkgボリューム軸に乗る
 - 読み取りは既存方針どおり**全公開**（運動明細・メニュー含む）。書き込みのみ認証（既存のOAuth 2.1 / `/rw/` を流用）
 - MCPからできる操作: 種目検索・記録の読み書き・**明示依頼時のみ**種目作成。編集・アーカイブ・削除はダッシュボードUI専用（食事と同じ方針）
+  - **2026-08-26 更新（GitHub Issue #1）**: MCP にも `update_exercise_menu` / `archive_exercise_menu` / `delete_exercise_log` を追加した（運動記録の編集は REST 同様に無く、削除→再記録）。同日、自己ベスト集計 `get_exercise_records` も追加（docs/superpowers/specs/2026-08-26-exercise-records-design.md）
 
 ## データモデル（D1マイグレーション 0003）
 
