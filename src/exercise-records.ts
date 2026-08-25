@@ -35,6 +35,15 @@ function round1(v: number): number {
 }
 
 /**
+ * ボリューム（reps×実効重量、およびその合計）の丸め。体重スナップショットが 50.2 のような
+ * 二進で表せない値だと、同じ総ボリュームでもセット分割によって float の合計が 1ulp ずれ、
+ * 「同値は更新扱いにしない」「先勝ち」の比較が崩れるため、集計境界で 0.001 kg·rep に丸める
+ */
+export function roundVolume(v: number): number {
+  return Math.round(v * 1000) / 1000;
+}
+
+/**
  * 1種目の全セットから自己ベストを集計する。rows は performed_at, log_id, set_index 昇順を前提とし、
  * 比較は厳密な > なので同値は最初に達成した行が残る（先勝ち）。
  */
@@ -49,7 +58,7 @@ export function computeRecords(menu: ExerciseMenu, rows: RecordSetRow[]): Exerci
 
   for (const r of rows) {
     const eff = effectiveWeight(r.is_bodyweight !== 0, r.body_weight_kg, r.bodyweight_factor, r.weight_kg);
-    const volume = r.reps * eff;
+    const volume = roundVolume(r.reps * eff);
     const ref = { performed_at: r.performed_at, log_id: r.log_id };
 
     if (r.weight_kg != null && r.weight_kg > 0) {
@@ -79,6 +88,7 @@ export function computeRecords(menu: ExerciseMenu, rows: RecordSetRow[]): Exerci
 
   let maxSession: ExerciseRecords['max_session_volume'] = null;
   for (const [logId, s] of sessions) {
+    s.volume = roundVolume(s.volume); // 合計の float 誤差を落としてから比較する
     if (!maxSession || s.volume > maxSession.volume) {
       maxSession = { performed_at: s.performed_at, log_id: logId, volume: s.volume, sets: s.sets.length };
     }
@@ -131,8 +141,9 @@ export function diffRecords(before: ExerciseRecords, after: ExerciseRecords): Re
 }
 
 /**
- * 1種目の全セットを performed_at, log_id, set_index 昇順で取る（idx_exercise_logs_menu_performed を使う）。
- * 個人1人分（年数百行）なので上限は設けない。
+ * 1種目の全セットを実施時刻順（同時刻は log_id, set_index）で取る。絞り込みは idx_exercise_logs_menu_performed。
+ * performed_at は入力の ISO8601 文字列をそのまま保存しているため（'Z' と '+09:00' が混在しうる）、
+ * 文字列順ではなく julianday() で時刻順にする。個人1人分（年数百行）なので上限は設けない。
  */
 export async function fetchRecordRows(env: Env, menuId: string): Promise<RecordSetRow[]> {
   const res = await env.DB.prepare(
@@ -140,7 +151,7 @@ export async function fetchRecordRows(env: Env, menuId: string): Promise<RecordS
         l.is_bodyweight, l.bodyweight_factor, l.body_weight_kg
 FROM exercise_sets s JOIN exercise_logs l ON l.id = s.log_id
 WHERE l.menu_id = ?1 AND l.category = 'strength'
-ORDER BY l.performed_at, l.id, s.set_index`,
+ORDER BY julianday(l.performed_at), l.id, s.set_index`,
   )
     .bind(menuId)
     .all<RecordSetRow>();

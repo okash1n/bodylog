@@ -205,3 +205,48 @@ describe('getExerciseRecords（D1）', () => {
     expect(r.last_session).toBeNull();
   });
 });
+
+describe('レビュー所見の回帰: float 誤差 / performed_at の書式混在 / weight_kg=0', () => {
+  it('体重 50.2kg の自重種目で同じ総ボリュームをセット分割違いで記録しても、同値扱い（先勝ち・更新なし）になる', () => {
+    const bw = { body: 50.2 };
+    const l1 = [
+      row('L1', '2026-08-03T03:00:00Z', 1, 10, null, bw),
+      row('L1', '2026-08-03T03:00:00Z', 2, 10, null, bw),
+      row('L1', '2026-08-03T03:00:00Z', 3, 10, null, bw),
+    ];
+    const l2 = [
+      row('L2', '2026-08-05T03:00:00Z', 1, 8, null, bw),
+      row('L2', '2026-08-05T03:00:00Z', 2, 8, null, bw),
+      row('L2', '2026-08-05T03:00:00Z', 3, 8, null, bw),
+      row('L2', '2026-08-05T03:00:00Z', 4, 6, null, bw),
+    ];
+    const before = computeRecords(pullup, l1);
+    const after = computeRecords(pullup, [...l1, ...l2]);
+    expect(before.max_session_volume?.volume).toBe(1506);
+    expect(after.max_session_volume).toMatchObject({ volume: 1506, log_id: 'L1' });
+    expect(after.last_session?.total_volume).toBe(1506);
+    expect(diffRecords(before, after).map((b) => b.kind)).not.toContain('max_session_volume');
+  });
+
+  it('weight_kg=0 のセットは max_weight / rep_maxes / estimated_1rm の対象外', () => {
+    const r = computeRecords(bench, [row('L1', '2026-08-01T03:00:00Z', 1, 12, 0)]);
+    expect(r.max_weight).toBeNull();
+    expect(r.rep_maxes).toEqual([]);
+    expect(r.estimated_1rm).toBeNull();
+    expect(r.max_reps).toMatchObject({ reps: 12, weight_kg: 0 });
+  });
+
+  it('D1: performed_at に +09:00 と Z が混在しても時刻順で集計する（先勝ち・前回セッション）', async () => {
+    await resetTables();
+    const bench2 = await createExerciseMenu(testEnv, { name: 'ベンチプレス', category: 'strength' });
+    // A = 21:00+09:00 = 12:00Z（先）、B = 13:00Z（後）。文字列順では B が先になってしまう
+    const a = await logExercise(testEnv, { menu_id: bench2.id, performed_at: '2026-08-20T21:00:00+09:00', sets: [{ reps: 5, weight_kg: 100 }] });
+    const b = await logExercise(testEnv, { menu_id: bench2.id, performed_at: '2026-08-20T13:00:00Z', sets: [{ reps: 5, weight_kg: 100 }] });
+    if ('error' in a || 'error' in b) throw new Error('seed failed');
+    const r = await getExerciseRecords(testEnv, bench2);
+    expect(r.first_performed_at).toBe('2026-08-20T21:00:00+09:00');
+    expect(r.last_performed_at).toBe('2026-08-20T13:00:00Z');
+    expect(r.max_weight?.log_id).toBe(a.id); // 同値 → 先に達成した A
+    expect(r.last_session?.log_id).toBe(b.id);
+  });
+});

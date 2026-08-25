@@ -13,7 +13,7 @@ import type {
   ExerciseSet,
 } from './types';
 import { addDaysYmd, escapeLikeValue, isPositiveFinite, isoNow, newId, tzModifier } from './util';
-import { diffRecords, effectiveWeight, getExerciseRecords } from './exercise-records';
+import { diffRecords, effectiveWeight, getExerciseRecords, roundVolume } from './exercise-records';
 
 const MAX_METS = 30;
 const MAX_DURATION_MIN = 1440; // 24h
@@ -184,7 +184,7 @@ function toSet(is_bodyweight: boolean, bodyWeight: number | null, factor: number
     reps: r.reps,
     weight_kg: r.weight_kg,
     effective_weight_kg: eff,
-    volume: r.reps * eff,
+    volume: roundVolume(r.reps * eff),
   };
 }
 
@@ -206,7 +206,7 @@ function toLog(r: LogRow, setRows: SetRow[]): ExerciseLog {
     calories: r.calories,
     created_at: r.created_at,
     sets,
-    total_volume: r.category === 'strength' ? sets.reduce((a, s) => a + s.volume, 0) : null,
+    total_volume: r.category === 'strength' ? roundVolume(sets.reduce((a, s) => a + s.volume, 0)) : null,
   };
 }
 
