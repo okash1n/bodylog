@@ -242,7 +242,7 @@ export function formatExerciseLine(exercise: DailyExercise | null): string | nul
 export function buildDigestBlocks(input: {
   date: string;
   count: number;
-  day: DayPoint;
+  day: DayPoint | null; // その日の体重計測が無ければ null（食事・運動だけの日もダイジェストは送る）
   stats: NotificationStats;
   dashboardUrl: string;
   ogImageUrl?: string;
@@ -252,11 +252,14 @@ export function buildDigestBlocks(input: {
 }): unknown[] {
   const { date, count, day, stats, dashboardUrl, ogImageUrl } = input;
 
-  const avgLine = [
-    `*体重* : ${fmtValue(day.weight, ' kg')}`,
-    `*脂肪量* : ${fmtValue(day.fat_mass, ' kg')}`,
-    `*除脂肪体重* : ${fmtValue(day.fat_free_mass, ' kg')}`,
-  ].join(' | ');
+  const avgLine = day
+    ? [
+        `*体重* : ${fmtValue(day.weight, ' kg')}`,
+        `*脂肪量* : ${fmtValue(day.fat_mass, ' kg')}`,
+        `*除脂肪体重* : ${fmtValue(day.fat_free_mass, ' kg')}`,
+      ].join(' | ')
+    : '体重の計測なし';
+  const countLabel = day ? `計測 ${count} 回` : '計測なし';
 
   const termLine = [
     `*体重* : ${fmtValue(stats.recent7.weight, ' kg')} (${fmtDiff(stats.diff7.weight, ' kg')})`,
@@ -265,11 +268,12 @@ export function buildDigestBlocks(input: {
   ].join(' | ');
 
   const blocks: unknown[] = [
-    section(`日次サマリー（${date}・計測 ${count} 回）\n${avgLine}`),
+    section(`日次サマリー（${date}・${countLabel}）\n${avgLine}`),
     section(`*7日間平均（前ターム比）*\n${termLine}`),
   ];
 
-  if (stats.baselineDate !== null) {
+  // 基準日比は「その日の平均」との差なので、計測が無い日はブロックごと省略
+  if (stats.baselineDate !== null && day) {
     const baselineLine = [
       `*体重* : ${fmtDiff(stats.baselineDiff.weight, ' kg')}`,
       `*脂肪量* : ${fmtDiff(stats.baselineDiff.fat_mass, ' kg')}`,
@@ -329,6 +333,19 @@ interface DigestQueueItem {
   targetDate: string;
 }
 
+/**
+ * その日に何かしらの記録（体重計測・食事記録・運動記録）があるか。
+ * 日次ダイジェストの送信条件（以前は体重計測のみだったが、食事・運動だけの日も送る）
+ */
+export async function hasDayRecords(env: Env, date: string): Promise<boolean> {
+  const [count, intake, exercise] = await Promise.all([
+    getDayMeasurementCount(env, date),
+    getIntakeForDay(env, date),
+    getExerciseForDay(env, date),
+  ]);
+  return count > 0 || intake !== null || (exercise !== null && exercise.cardio_count + exercise.strength_count > 0);
+}
+
 async function queueDigestBatches(
   env: Env,
   origin: string,
@@ -336,13 +353,13 @@ async function queueDigestBatches(
 ): Promise<{ queued: number }> {
   if (items.length === 0) return { queued: 0 };
 
-  // 対象日ごとに計測の有無を確認し、計測ゼロの日はスキップ
+  // 対象日ごとに記録（体重・食事・運動のいずれか）の有無を確認し、何も無い日はスキップ
   const dates = [...new Set(items.map((i) => i.targetDate))];
-  const counts = new Map<string, number>();
+  const hasRecords = new Map<string, boolean>();
   for (const date of dates) {
-    counts.set(date, await getDayMeasurementCount(env, date));
+    hasRecords.set(date, await hasDayRecords(env, date));
   }
-  const eligible = items.filter((i) => (counts.get(i.targetDate) ?? 0) > 0);
+  const eligible = items.filter((i) => hasRecords.get(i.targetDate) === true);
   if (eligible.length === 0) return { queued: 0 };
 
   const statements = eligible.map((i) =>
@@ -395,7 +412,7 @@ export function dailyDestinations(env: Env): SlackDestination[] {
  * 時刻条件を無視して指定日（既定は当日）のダイジェストを今すぐ投入する（手動送信 POST /api/digest・テスト用）。
  * date を明示した手動送信では、過去に dead（Slack 4xx・試行上限超過）になった行を pending に戻して再試行する
  * （cron の自動経路では復活させない。恒久的に失敗する Webhook を5分毎に叩き直さないため）。
- * 対象日に計測が無い場合と、既に投入・送信中・送信済みの場合は 0 件（batch_id の UNIQUE で二重送信しない）
+ * 対象日に記録（体重・食事・運動）が無い場合と、既に投入・送信中・送信済みの場合は 0 件（batch_id の UNIQUE で二重送信しない）
  */
 export async function runDailyDigest(env: Env, origin: string, date?: string): Promise<{ queued: number }> {
   const targetDate = date ?? ymdWithOffset(isoNow(), offsetHours(env));
@@ -446,16 +463,18 @@ async function buildDailyDigestMessage(env: Env, origin: string, batchId: string
       getCoachingNote(env, 'daily', date),
       getStatsParts(env, date),
     ]);
-    const day = series[series.length - 1];
-    if (!day) {
-      return { kind: 'permanent', error: `daily digest ${date} has no measurements` };
+    const day: DayPoint | null = series[series.length - 1] ?? null;
+    const hasActivity =
+      intake !== null || (exercise !== null && exercise.cardio_count + exercise.strength_count > 0);
+    if (!day && !hasActivity) {
+      return { kind: 'permanent', error: `daily digest ${date} has no records` };
     }
-    // 基準日比は「その日の平均」との差分にする
+    // 基準日比は「その日の平均」との差分にする（計測が無い日は null → ブロック省略）
     const latestLike: LatestMeasurement = {
       measured_at: `${date}T00:00:00Z`,
-      weight: day.weight,
-      fat_mass: day.fat_mass,
-      fat_free_mass: day.fat_free_mass,
+      weight: day?.weight ?? null,
+      fat_mass: day?.fat_mass ?? null,
+      fat_free_mass: day?.fat_free_mass ?? null,
       fat_ratio: null,
     };
     const stats = composeStats(latestLike, statsParts.terms, statsParts.baseline);

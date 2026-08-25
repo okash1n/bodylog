@@ -5,8 +5,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/types';
 import { upsertCoachingNote } from '../src/coaching';
+import { createMenu, logMeal } from '../src/meals';
 import {
-  apiFetch, insertMeasurement, localYmdDaysAgo, resetTables, rootTestEnv, stubFetch, testEnv,
+  apiFetch, insertMeasurement, localYmdDaysAgo, resetTables, rootTestEnv, setSetting, stubFetch, testEnv,
 } from './helpers';
 
 const SECRET = 'digest-test-secret';
@@ -52,11 +53,33 @@ describe('POST /api/digest', () => {
     expect((await post(digestEnv, { date: localYmdDaysAgo(-1) })).status).toBe(400);
   });
 
-  it('対象日に計測が無ければ409で送信しない', async () => {
+  it('対象日に記録（体重・食事・運動）が何も無ければ409で送信しない', async () => {
     stubFetch(); // 経路を登録しない = fetch が起きれば throw
     const res = await post(digestEnv, { date: localYmdDaysAgo(1) });
     expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toContain('no measurements');
+    expect(((await res.json()) as { error: string }).error).toContain('no records');
+  });
+
+  it('体重計測が無くても食事記録があればダイジェストを送る（見出しは「計測なし」、摂取行あり、基準日比は省略）', async () => {
+    const ymd = localYmdDaysAgo(1);
+    const menu = await createMenu(testEnv, { name: 'テスト定食', calories: 700 });
+    await logMeal(testEnv, { menu_id: menu.id, eaten_at: `${ymd}T03:00:00Z` });
+    await setSetting('baseline_date', localYmdDaysAgo(10));
+    const stub = stubFetch().on({
+      host: SLACK_HOST,
+      path: SLACK_PATH,
+      method: 'POST',
+      times: 1,
+      reply: () => new Response('ok'),
+    });
+
+    const res = await post(digestEnv, { date: ymd });
+    expect(res.status).toBe(200);
+    const body = stub.requests({ host: SLACK_HOST })[0].body;
+    expect(body).toContain(`日次サマリー（${ymd}・計測なし）`);
+    expect(body).toContain('体重の計測なし');
+    expect(body).toContain('700 kcal');
+    expect(body).not.toContain('基準日');
   });
 
   it('daily の送信先が無ければ409', async () => {

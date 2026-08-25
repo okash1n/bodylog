@@ -15,8 +15,7 @@ import {
 } from './exercise';
 import { withAuth } from './auth';
 import { coachingTokenMatches, parseCoachingInput, upsertCoachingNote } from './coaching';
-import { getDayMeasurementCount } from './queries';
-import { dailyDestinations, runDailyDigest } from './slack';
+import { dailyDestinations, hasDayRecords, runDailyDigest } from './slack';
 import { ensurePublicOrigin, isValidYmd, localToday, noindexHeaders } from './util';
 import { deleteManualMeasurement, logWeight, parseWeightInput } from './weight';
 
@@ -176,7 +175,7 @@ export function registerWriteRoutes(
   })));
 
   // ---- 日次ダイジェストの手動送信 ----
-  // 23:55 時点で計測が無く自動送信がスキップされた日に、後から体重を記録した上で送り直すための経路。
+  // 23:55 時点で記録が無く自動送信がスキップされた日に、後から体重等を記録した上で送り直すための経路。
   // 自動送信は「現在のローカル日付」の分しか投入しないため、日付が変わった後は手動でしか送れない。
   // coaching と同じくサーバー間（GitHub Actions の digest.yml）から呼ぶため COACHING_API_SECRET で保護する
   app.post(p('/api/digest'), guarded(guardedErrors(async (c) => {
@@ -191,8 +190,8 @@ export function registerWriteRoutes(
     if (dailyDestinations(c.env).length === 0) {
       return c.json({ error: 'no daily digest destination is configured' }, 409, headers());
     }
-    if ((await getDayMeasurementCount(c.env, date)) === 0) {
-      return c.json({ error: 'no measurements on that date' }, 409, headers());
+    if (!(await hasDayRecords(c.env, date))) {
+      return c.json({ error: 'no records (weight, meals or exercise) on that date' }, 409, headers());
     }
     // 投入と同時に送信を試みる（dead になっていた行も pending に戻して再試行）。
     // 送信失敗分は5分毎のcron（processNotificationBatches）が再試行する

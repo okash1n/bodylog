@@ -295,7 +295,7 @@ npx wrangler d1 execute bodylog --remote \
 | `GET {base}/api/coaching?from=&to=` または `?days=N` | AIコーチ講評の履歴（新しい順、最大200件）。認証不要 |
 | `GET {base}/api/metabolism` | 直近28日の実測データからの実効消費カロリー推定（摂取記録が8割未満などの期間は `insufficient_data`）。認証不要 |
 | `POST {base}/api/coaching` | AIコーチ講評の保存（GitHub Actions のジョブ専用）。`Authorization: Bearer {COACHING_API_SECRET}` で保護。secret 未設定の環境では 404 |
-| `POST {base}/api/digest` | 指定日の日次ダイジェスト（Slack）を手動送信。body `{"date":"YYYY-MM-DD"}`（当日以前）。`Authorization: Bearer {COACHING_API_SECRET}` で保護（Actions の「Send Daily Digest」から呼ぶ）。投入して即時送信を試み（送信失敗で dead になっていた分も送り直す）、それでも失敗した分は 5 分毎の cron が再試行する。計測が無い日・送信済み/送信中の日・daily の送信先が無い場合は 409。secret 未設定の環境では 404 |
+| `POST {base}/api/digest` | 指定日の日次ダイジェスト（Slack）を手動送信。body `{"date":"YYYY-MM-DD"}`（当日以前）。`Authorization: Bearer {COACHING_API_SECRET}` で保護（Actions の「Send Daily Digest」から呼ぶ）。投入して即時送信を試み（送信失敗で dead になっていた分も送り直す）、それでも失敗した分は 5 分毎の cron が再試行する。記録（体重・食事・運動）が何も無い日・送信済み/送信中の日・daily の送信先が無い場合は 409。secret 未設定の環境では 404 |
 | `POST {base}/api/menus` / `PATCH {base}/api/menus/:id` / `POST {base}/api/menus/:id/archive` / `POST {base}/api/menus/:id/unarchive` | 認証必須（OAuth）。メニュー（マスタ）の作成・更新・アーカイブ切替 |
 | `POST {base}/api/meals` / `PATCH {base}/api/meals/:id` / `DELETE {base}/api/meals/:id` | 認証必須。食事記録の作成・更新・削除 |
 | `POST {base}/api/exercise/menus` / `PATCH {base}/api/exercise/menus/:id` / `POST {base}/api/exercise/menus/:id/archive` / `POST {base}/api/exercise/menus/:id/unarchive` | 認証必須。運動種目（マスタ）の作成・更新・アーカイブ切替 |
@@ -372,7 +372,7 @@ ChatGPT・Claude などのAIクライアントから体重推移・食事記録�
 - 基準日からの変化（`baseline_date` 設定時のみ）
 - ダッシュボードリンク + **直近30日のグラフ画像**
 
-**日次ダイジェスト**（既定 23:55 ローカル、その日に計測があった日のみ）:
+**日次ダイジェスト**（既定 23:55 ローカル、その日に体重計測・食事記録・運動記録のいずれかがあった日のみ。体重計測が無い日は見出しが「計測なし」になり基準日比を省く）:
 
 - その日の平均値（体重・脂肪量・除脂肪体重）と計測回数
 - 当日の摂取・消費（基礎代謝＋運動）・カロリー収支
@@ -386,7 +386,7 @@ npx wrangler d1 execute bodylog --remote \
   --command "INSERT OR REPLACE INTO settings (key, value) VALUES ('digest_time', '21:00')"
 ```
 
-補足: 送信時刻の時点で当日の計測が 0 件ならスキップする（その後同日中に計測が届けば、その時点で送られる）。翌日への持ち越しはしない。日付が変わった後に体重を記録した日は、`POST /api/digest`（Actions の「Send Daily Digest」。`COACHING_API_SECRET` と `BODYLOG_BASE_URL` の Secrets が必要。AIコーチング自体は不要）で手動で送り直せる（手順は「AIコーチング」節の補足参照）。
+補足: 送信時刻の時点で当日の記録（体重・食事・運動）が 1 件も無ければスキップする（その後同日中に記録が届けば、その時点で送られる）。翌日への持ち越しはしない。日付が変わった後に記録を足した日は、`POST /api/digest`（Actions の「Send Daily Digest」。`COACHING_API_SECRET` と `BODYLOG_BASE_URL` の Secrets が必要。AIコーチング自体は不要）で手動で送り直せる（手順は「AIコーチング」節の補足参照）。
 
 グラフは画像ブロックとして通知に直接埋め込まれる（Incoming Webhook のメッセージ内リンクは Slack 仕様で自動展開されないため）。URL を人が手貼りした場合は OGP でも展開される。同一 URL の展開はキャッシュされるため、リンクには計測日のキャッシュバスター（`?v=`）が付く。
 
