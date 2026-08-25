@@ -740,8 +740,10 @@
         borderColor: color,
         backgroundColor: color,
         pointBackgroundColor: color,
-        borderWidth: 1,
-        borderDash: [2, 3],
+        // 実測・7日平均と同色なので、細い点線だと系列の一部に見えて埋もれる。少し太い長破線にし、
+        // 右端に「目標 70.0」のラベルを描く（pointLabelsPlugin）
+        borderWidth: 1.5,
+        borderDash: [6, 4],
         tension: 0,
         pointRadius: 0,
         pointHoverRadius: 0,
@@ -949,6 +951,20 @@
           ctx.fillStyle = typeof ds.borderColor === 'string' ? ds.borderColor : themeCache.text;
           ctx.fillText(label, el.x, el.y - 6);
         });
+      });
+      // 目標線（定数の水平線）には右端に「目標 70.0」を描き、何の線かを明示する
+      ch.data.datasets.forEach(function (ds, di) {
+        if (ds._role !== 'goal' || !ch.isDatasetVisible(di) || ds._goalValue == null) return;
+        var meta = ch.getDatasetMeta(di);
+        var el = meta.data[meta.data.length - 1];
+        if (!el || isNaN(el.x) || isNaN(el.y)) return;
+        var label = '目標 ' + Number(ds._goalValue).toFixed(1);
+        ctx.textAlign = 'right';
+        ctx.strokeStyle = themeCache.surface || '#ffffff';
+        ctx.lineWidth = 3;
+        ctx.strokeText(label, el.x, el.y - 4);
+        ctx.fillStyle = typeof ds.borderColor === 'string' ? ds.borderColor : themeCache.text;
+        ctx.fillText(label, el.x, el.y - 4);
       });
       ctx.restore();
     },
