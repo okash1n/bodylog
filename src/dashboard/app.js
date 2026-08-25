@@ -1347,6 +1347,82 @@
     els.tableBody.replaceChildren(frag);
   }
 
+  // ---- 体重の手動記録フォーム（POST /api/weight）。shared.js（defer）の rw / toast / login を遅延参照する ----
+  function updateWeightEntryUi() {
+    var dash = window.__dash;
+    var loggedIn = Boolean(dash && dash.loggedIn && dash.loggedIn());
+    // private時のログイン画面（#state-auth）を出している間は、二重にログインボタンを出さない
+    $('weight-entry').hidden = !els.auth.classList.contains('hidden');
+    $('weight-auth').hidden = loggedIn;
+    $('weight-form').hidden = !loggedIn;
+  }
+  function submitWeightEntry(ev) {
+    ev.preventDefault();
+    var dash = window.__dash;
+    if (!dash || !dash.rw) return;
+    var weight = parseFloat($('weight-kg').value);
+    if (!isFinite(weight)) return;
+    var body = { weight_kg: weight };
+    var fatRaw = $('weight-fat').value;
+    if (fatRaw !== '') body.fat_ratio = parseFloat(fatRaw);
+    var atRaw = $('weight-at').value; // datetime-local はローカル時刻。空なら省略してサーバーの現在時刻
+    if (atRaw !== '') {
+      var ms = Date.parse(atRaw);
+      if (isNaN(ms)) {
+        if (dash.toast) dash.toast('日時の形式が不正です', { tone: 'error' });
+        return;
+      }
+      body.measured_at = new Date(ms).toISOString();
+    }
+    var btn = $('weight-submit');
+    btn.disabled = true;
+    dash
+      .rw('weight', 'POST', body)
+      .then(function (res) {
+        return res
+          .json()
+          .catch(function () {
+            return {};
+          })
+          .then(function (json) {
+            return { ok: res.ok, json: json };
+          });
+      })
+      .then(function (r) {
+        if (!r.ok) {
+          if (dash.toast) dash.toast('記録に失敗しました' + (r.json.error ? ': ' + r.json.error : ''), { tone: 'error' });
+          return;
+        }
+        if (dash.toast) dash.toast('体重を記録しました');
+        $('weight-kg').value = '';
+        $('weight-fat').value = '';
+        $('weight-at').value = '';
+        // 日次集計・カード・グラフ・summary系も変わるためキャッシュごと再取得する（手動行の削除と同じ）
+        rawRows = null;
+        summaryCache = null;
+        metabolismCache = null;
+        loadData();
+      })
+      .catch(function (err) {
+        console.error('[dashboard] weight entry failed', err);
+        if (dash.toast) dash.toast('記録に失敗しました', { tone: 'error' });
+      })
+      .then(function () {
+        btn.disabled = false;
+      });
+  }
+  $('weight-form').addEventListener('submit', submitWeightEntry);
+  $('weight-login').addEventListener('click', function () {
+    if (window.__dash && window.__dash.login) {
+      window.__dash.login().catch(function (err) {
+        console.error('[dashboard] login failed to start', err);
+      });
+    }
+  });
+  // shared.js（defer）の読込完了後に判定する。以降はログイン状態の変化で追従する
+  document.addEventListener('DOMContentLoaded', updateWeightEntryUi);
+  document.addEventListener('authchanged', updateWeightEntryUi);
+
   function deleteManualRow(id) {
     var dash = window.__dash;
     if (!dash || !dash.rw) return;

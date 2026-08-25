@@ -115,4 +115,13 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     const html = await (await request('/', rootEnv)).text();
     expect(html).toContain('rel="apple-touch-icon"');
   });
+
+  it('体重タブに手動記録フォーム（POST /api/weight）とログイン導線がある', async () => {
+    const html = await (await request('/', rootEnv)).text();
+    for (const id of ['weight-entry', 'weight-login', 'weight-form', 'weight-kg', 'weight-fat', 'weight-at', 'weight-submit']) {
+      expect(html, id).toContain(`id="${id}"`);
+    }
+    // フォームは #content（データ読込後にだけ出る領域）の外に置き、記録が1件も無くても使えるようにする
+    expect(html.indexOf('id="weight-entry"')).toBeLessThan(html.indexOf('id="content"'));
+  });
 });

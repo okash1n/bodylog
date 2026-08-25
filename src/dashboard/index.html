@@ -78,6 +78,19 @@
     <button id="auth-login-btn" class="primary-btn" type="button">Google でログイン</button>
   </div>
 
+  <!-- 体重の手動記録（POST /api/weight）。体重計が無くても記録できるよう、データが無い状態でも表示する -->
+  <section id="weight-entry" aria-label="体重の手動記録">
+    <div id="weight-auth">
+      <button id="weight-login" type="button">ログインして体重を記録する</button>
+    </div>
+    <form id="weight-form" hidden>
+      <label>体重 <input id="weight-kg" type="number" min="20" max="300" step="0.1" inputmode="decimal" required aria-label="体重（kg）"><span class="unit">kg</span></label>
+      <label>体脂肪率 <input id="weight-fat" type="number" min="3" max="75" step="0.1" inputmode="decimal" aria-label="体脂肪率（%、任意）"><span class="unit">%</span></label>
+      <label>日時 <input id="weight-at" type="datetime-local" aria-label="計測日時（空なら今）"><span class="hint">空なら今</span></label>
+      <button id="weight-submit" type="submit">記録</button>
+    </form>
+  </section>
+
   <div id="content" class="hidden">
     <section class="cards">
       <article class="card">

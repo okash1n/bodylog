@@ -563,6 +563,11 @@ body {
 #meal-menu-candidates mark { background: transparent; color: var(--accent-2, #d97706); font-weight: 700; }
 #meal-menu-candidates li.active mark { color: var(--on-accent, #fff); text-decoration: underline; }
 #meal-add-form, #menu-form { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; align-items: center; }
+/* 体重タブの手動記録フォーム（食事・運動タブの記録フォームと同じ並び） */
+#weight-entry { margin: .5rem 0 1rem; }
+#weight-form { display: flex; flex-wrap: wrap; gap: .5rem .75rem; align-items: center; }
+#weight-form label { display: inline-flex; align-items: center; gap: .3rem; }
+#weight-kg, #weight-fat { width: 5.5rem; }
 
 /* 食事履歴テーブル（直近50日・日付グループ） */
 #meals-history-section { margin-top: 1.5rem; }
