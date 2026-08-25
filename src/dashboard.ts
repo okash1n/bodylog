@@ -14,7 +14,7 @@ import {
 import { getDailySeries, getImportStatus, getRawMeasurements, getSummary } from './queries';
 import { llmsTxt, openapiSpec } from './ai';
 import { serveMealsDaily, serveMealsList, serveMenus } from './meals-api';
-import { serveExerciseDaily, serveExerciseLogs, serveExerciseMenus } from './exercise-api';
+import { serveExerciseDaily, serveExerciseLogs, serveExerciseMenus, serveExerciseRecords } from './exercise-api';
 import { coachingTokenMatches, serveCoachingLatest, serveCoachingList } from './coaching';
 import { serveMetabolism } from './stats';
 import { isOwner } from './auth';
@@ -234,6 +234,7 @@ export const READ_ROUTES: ReadonlyArray<readonly [string, Handler]> = [
   ['api/exercise/menus', serveExerciseMenus],
   ['api/exercise/daily', serveExerciseDaily],
   ['api/exercise/logs', serveExerciseLogs],
+  ['api/exercise/records', serveExerciseRecords],
   ['api/coaching/latest', serveCoachingLatest],
   ['api/coaching', serveCoachingList],
   ['api/metabolism', serveMetabolism],

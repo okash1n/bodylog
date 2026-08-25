@@ -41,6 +41,7 @@ ${accessLine}
 - GET ${root}/api/exercise/menus?q=&category= — 運動種目（マスタ）一覧・検索（利用頻度順）。category=cardio|strengthで絞れる
 - GET ${root}/api/exercise/logs?days=30 — 運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）
 - GET ${root}/api/exercise/daily?days=30 — 日次の基礎代謝（Katch-McArdle推定）・運動消費kcal・総ボリューム。期間内の全日を返す
+- GET ${root}/api/exercise/records?menu_id= — 筋トレ種目の自己ベスト（最大重量・REP数ごとの最大・推定1RM(Epley, reps<=12)・最大REP・最大セット/セッションボリューム・前回セッション）。都度集計。全記録を取らずにこれを使う
 - GET ${root}/api/coaching/latest — AIコーチの最新講評（daily=日次総括 / weekly=過去の週次総括・現在は生成されない。未生成はnull）
 - GET ${root}/api/coaching?days=30 — AIコーチ講評の履歴（新しい順、最大200件）
 - GET ${root}/api/metabolism — 直近28日の実測データからの実効消費カロリー推定（摂取記録が8割未満の期間はinsufficient_data）
@@ -403,6 +404,30 @@ export function openapiSpec(
           },
         },
       },
+      '/api/exercise/records': {
+        get: {
+          operationId: 'getExerciseRecords',
+          summary:
+            '筋トレ種目の自己ベスト（最大重量・REP数ごとの最大重量・推定1RM・最大REP・最大セット/セッションボリューム・前回セッション）。都度集計',
+          parameters: [
+            {
+              name: 'menu_id',
+              in: 'query',
+              required: true,
+              description: '種目ID（/api/exercise/menus で取得。筋トレ種目のみ）',
+              schema: { type: 'string' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: '自己ベスト',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ExerciseRecords' } } },
+            },
+            '400': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
       '/api/exercise/daily': {
         get: {
           operationId: 'getDailyExercise',
@@ -632,6 +657,71 @@ export function openapiSpec(
             weight_kg: { type: ['number', 'null'] },
             effective_weight_kg: { type: 'number' },
             volume: { type: 'number' },
+          },
+        },
+        ExerciseRecords: {
+          type: 'object',
+          description:
+            '筋トレ種目の自己ベスト（都度集計）。max_weight / rep_maxes / estimated_1rm は追加重量（weight_kg）基準で純自重セットは対象外、' +
+            'max_set_volume / max_session_volume は実効重量（自重種目は体重×係数込み）基準。estimated_1rm は Epley（weight×(1+reps/30)）で ' +
+            'reps<=12 のセットのみ、自重種目は常に null。各項目の performed_at / log_id は達成したセット（同値なら最初に達成した日）',
+          properties: {
+            menu: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                category: { type: 'string', enum: ['cardio', 'strength'] },
+                muscle_group: { type: ['string', 'null'] },
+                is_bodyweight: { type: 'boolean' },
+                bodyweight_factor: { type: 'number' },
+              },
+            },
+            sessions: { type: 'integer' },
+            first_performed_at: { type: ['string', 'null'], format: 'date-time' },
+            last_performed_at: { type: ['string', 'null'], format: 'date-time' },
+            max_weight: {
+              type: ['object', 'null'],
+              properties: { weight_kg: { type: 'number' }, reps: { type: 'integer' }, performed_at: { type: 'string' }, log_id: { type: 'string' } },
+            },
+            rep_maxes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: { reps: { type: 'integer' }, weight_kg: { type: 'number' }, performed_at: { type: 'string' }, log_id: { type: 'string' } },
+              },
+            },
+            estimated_1rm: {
+              type: ['object', 'null'],
+              properties: {
+                value_kg: { type: 'number' }, weight_kg: { type: 'number' }, reps: { type: 'integer' },
+                performed_at: { type: 'string' }, log_id: { type: 'string' },
+              },
+            },
+            max_reps: {
+              type: ['object', 'null'],
+              properties: { reps: { type: 'integer' }, weight_kg: { type: ['number', 'null'] }, performed_at: { type: 'string' }, log_id: { type: 'string' } },
+            },
+            max_set_volume: {
+              type: ['object', 'null'],
+              properties: {
+                volume: { type: 'number' }, reps: { type: 'integer' }, effective_weight_kg: { type: 'number' },
+                performed_at: { type: 'string' }, log_id: { type: 'string' },
+              },
+            },
+            max_session_volume: {
+              type: ['object', 'null'],
+              properties: { volume: { type: 'number' }, sets: { type: 'integer' }, performed_at: { type: 'string' }, log_id: { type: 'string' } },
+            },
+            last_session: {
+              type: ['object', 'null'],
+              properties: {
+                performed_at: { type: 'string' },
+                log_id: { type: 'string' },
+                total_volume: { type: 'number' },
+                sets: { type: 'array', items: { $ref: '#/components/schemas/ExerciseSet' } },
+              },
+            },
           },
         },
         ExerciseLog: {

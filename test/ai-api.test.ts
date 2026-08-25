@@ -154,14 +154,17 @@ describe('AI向けREST拡張', () => {
       expect(text).toContain('log_weight');
     });
 
-    it('openapi.jsonの全pathが実ルータで200を返す（削除/改名ドリフトの検知）', async () => {
+    it('openapi.jsonの全pathが実ルータで配信される（削除/改名ドリフトの検知）', async () => {
       const spec = (await (await request('/openapi.json')).json()) as {
-        paths: Record<string, { get?: { parameters?: { name: string }[] } }>;
+        paths: Record<string, { get?: { parameters?: { name: string; required?: boolean }[] } }>;
       };
       for (const [path, ops] of Object.entries(spec.paths)) {
-        const needsRange = ops.get?.parameters?.some((p) => p.name === 'days');
+        const params = ops.get?.parameters ?? [];
+        const needsRange = params.some((p) => p.name === 'days');
+        // days 以外の必須クエリを持つ path は、パラメータ無しで検証エラー（400）を返せば配信されている
+        const requiresQuery = params.some((p) => p.required && p.name !== 'days');
         const res = await request(needsRange ? `${path}?days=1` : path);
-        expect(res.status, `documented path ${path} should be served`).toBe(200);
+        expect(res.status, `documented path ${path} should be served`).toBe(requiresQuery ? 400 : 200);
       }
     });
 

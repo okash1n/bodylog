@@ -196,3 +196,26 @@ describe('MCP 運動ツール（/mcp）', () => {
     expect(found.menus.map((m) => m.name)).toEqual(['ベンチ']);
   });
 });
+
+describe('GET /api/exercise/records', () => {
+  beforeEach(async () => {
+    await resetTables();
+  });
+
+  it('menu_id 必須・未知は404・有酸素は400・筋トレは自己ベストを返す', async () => {
+    expect((await request('/api/exercise/records')).status).toBe(400);
+    expect((await request('/api/exercise/records?menu_id=nope')).status).toBe(404);
+    const run = await createExerciseMenu(testEnv, { name: 'ラン', category: 'cardio', mets: 8 });
+    expect((await request(`/api/exercise/records?menu_id=${run.id}`)).status).toBe(400);
+
+    const bench = await createExerciseMenu(testEnv, { name: 'ベンチプレス', category: 'strength' });
+    await logExercise(testEnv, { menu_id: bench.id, performed_at: '2026-08-01T03:00:00Z', sets: [{ reps: 5, weight_kg: 80 }] });
+    const res = await request(`/api/exercise/records?menu_id=${bench.id}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    const body = (await res.json()) as { menu: { id: string }; max_weight: { weight_kg: number }; rep_maxes: unknown[] };
+    expect(body.menu.id).toBe(bench.id);
+    expect(body.max_weight.weight_kg).toBe(80);
+    expect(body.rep_maxes).toHaveLength(1);
+  });
+});

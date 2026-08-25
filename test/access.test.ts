@@ -46,7 +46,10 @@ describe('READ_ACCESS=private の読み取り保護', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('データ系読み取りは無認証で401（JSON・no-store）', async () => {
-    for (const path of ['/api/summary', '/api/measurements?days=7', '/api/raw?days=7', '/llms.txt', '/openapi.json']) {
+    for (const path of [
+      '/api/summary', '/api/measurements?days=7', '/api/raw?days=7', '/api/exercise/records?menu_id=x',
+      '/llms.txt', '/openapi.json',
+    ]) {
       const res = await get(privateEnv, path);
       expect(res.status, path).toBe(401);
       expect(res.headers.get('Cache-Control'), path).toBe('no-store');
