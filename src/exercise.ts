@@ -13,6 +13,7 @@ import type {
   ExerciseSet,
 } from './types';
 import { addDaysYmd, escapeLikeValue, isPositiveFinite, isoNow, newId, tzModifier } from './util';
+import { effectiveWeight } from './exercise-records';
 
 const MAX_METS = 30;
 const MAX_DURATION_MIN = 1440; // 24h
@@ -177,7 +178,7 @@ const LOG_COLS =
   'id, menu_id, performed_at, category, menu_name, note, is_bodyweight, bodyweight_factor, duration_min, mets, body_weight_kg, calories, created_at';
 
 function toSet(is_bodyweight: boolean, bodyWeight: number | null, factor: number, r: SetRow): ExerciseSet {
-  const eff = (r.weight_kg ?? 0) + (is_bodyweight ? (bodyWeight ?? 0) * factor : 0);
+  const eff = effectiveWeight(is_bodyweight, bodyWeight, factor, r.weight_kg);
   return {
     set_index: r.set_index,
     reps: r.reps,

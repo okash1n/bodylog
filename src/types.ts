@@ -247,6 +247,44 @@ export interface ExerciseLog {
   created_at: string;
   sets: ExerciseSet[]; // strengthのみ（cardioは空配列）
   total_volume: number | null; // strengthのみ（Σ volume）
+  records_broken?: RecordBroken[]; // logExercise の戻り値にだけ付く（自己ベスト更新。cardio は []）
+}
+
+/** 記録を達成したセット/セッションへの参照 */
+export interface RecordRef {
+  performed_at: string; // 達成日時（同値なら最初に達成した日）
+  log_id: string;
+}
+
+/**
+ * 筋トレ種目の自己ベスト（都度集計。DBには保持しない）。
+ * max_weight / rep_maxes / estimated_1rm は追加重量（weight_kg）基準で null/0 のセットは対象外、
+ * max_set_volume / max_session_volume は実効重量（自重種目は体重×係数込み）基準。
+ * estimated_1rm は Epley（weight×(1+reps/30)）で reps<=12 のセットのみ、自重種目は常に null。
+ */
+export interface ExerciseRecords {
+  menu: Pick<ExerciseMenu, 'id' | 'name' | 'category' | 'muscle_group' | 'is_bodyweight' | 'bodyweight_factor'>;
+  sessions: number; // 記録した log 数
+  first_performed_at: string | null;
+  last_performed_at: string | null;
+  max_weight: (RecordRef & { weight_kg: number; reps: number }) | null;
+  rep_maxes: (RecordRef & { reps: number; weight_kg: number })[]; // reps 昇順
+  estimated_1rm: (RecordRef & { value_kg: number; weight_kg: number; reps: number }) | null;
+  max_reps: (RecordRef & { reps: number; weight_kg: number | null }) | null;
+  max_set_volume: (RecordRef & { volume: number; reps: number; effective_weight_kg: number }) | null;
+  max_session_volume: (RecordRef & { volume: number; sets: number }) | null;
+  last_session: (RecordRef & { total_volume: number; sets: ExerciseSet[] }) | null;
+}
+
+export type RecordKind =
+  | 'max_weight' | 'rep_max' | 'estimated_1rm' | 'max_reps' | 'max_set_volume' | 'max_session_volume';
+
+/** 記録時に更新した自己ベスト1件。rep_max のときだけ reps が付く。previous は更新前の値（初回は null） */
+export interface RecordBroken {
+  kind: RecordKind;
+  reps?: number;
+  previous: number | null;
+  current: number;
 }
 
 /**

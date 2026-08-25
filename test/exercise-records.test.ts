@@ -1,0 +1,170 @@
+/**
+ * 筋トレ種目の自己ベスト集計（src/exercise-records.ts）のテスト。
+ * 定義は docs/superpowers/specs/2026-08-26-exercise-records-design.md の「集計の定義」節。
+ */
+import { describe, expect, it } from 'vitest';
+import type { ExerciseMenu, ExerciseRecords } from '../src/types';
+import { computeRecords, diffRecords, effectiveWeight, type RecordSetRow } from '../src/exercise-records';
+
+const bench: ExerciseMenu = {
+  id: 'm-bench', name: 'ベンチプレス', category: 'strength', mets: null, muscle_group: '胸',
+  is_bodyweight: false, bodyweight_factor: 1, note: null, archived: false,
+  created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z',
+};
+const pullup: ExerciseMenu = { ...bench, id: 'm-pullup', name: '懸垂', muscle_group: '背中', is_bodyweight: true };
+
+/** セット行を作る。log の順序は performed_at 昇順で渡すこと（DB の ORDER BY と同じ前提） */
+function row(
+  log: string, performed: string, setIndex: number, reps: number, weight: number | null,
+  bw: { factor?: number; body?: number | null } | null = null,
+): RecordSetRow {
+  return {
+    log_id: log, performed_at: performed, set_index: setIndex, reps, weight_kg: weight,
+    is_bodyweight: bw ? 1 : 0, bodyweight_factor: bw?.factor ?? 1, body_weight_kg: bw ? bw.body ?? null : null,
+  };
+}
+
+describe('effectiveWeight', () => {
+  it('自重種目は追加重量+体重×係数、それ以外は追加重量（nullは0）', () => {
+    expect(effectiveWeight(false, 80, 1, 60)).toBe(60);
+    expect(effectiveWeight(false, 80, 1, null)).toBe(0);
+    expect(effectiveWeight(true, 80, 1, null)).toBe(80);
+    expect(effectiveWeight(true, 80, 0.5, 10)).toBe(50);
+    expect(effectiveWeight(true, null, 1, 5)).toBe(5);
+  });
+});
+
+describe('computeRecords', () => {
+  it('記録が無ければ全項目 null / 空', () => {
+    const r = computeRecords(bench, []);
+    expect(r.sessions).toBe(0);
+    expect(r.first_performed_at).toBeNull();
+    expect(r.max_weight).toBeNull();
+    expect(r.rep_maxes).toEqual([]);
+    expect(r.estimated_1rm).toBeNull();
+    expect(r.max_reps).toBeNull();
+    expect(r.max_set_volume).toBeNull();
+    expect(r.max_session_volume).toBeNull();
+    expect(r.last_session).toBeNull();
+    expect(r.menu).toEqual({
+      id: 'm-bench', name: 'ベンチプレス', category: 'strength', muscle_group: '胸', is_bodyweight: false, bodyweight_factor: 1,
+    });
+  });
+
+  it('最大重量・レップマックス表・推定1RM・最大REP・セット/セッションボリューム・前回セッションを集計する', () => {
+    const rows = [
+      row('L1', '2026-08-01T03:00:00Z', 1, 8, 80), // vol 640
+      row('L1', '2026-08-01T03:00:00Z', 2, 8, 80),
+      row('L1', '2026-08-01T03:00:00Z', 3, 6, 80), // L1 total 1760
+      row('L2', '2026-08-05T03:00:00Z', 1, 5, 90), // vol 450, 1RM 105
+      row('L2', '2026-08-05T03:00:00Z', 2, 3, 100), // vol 300, 1RM 110 → 最大
+      row('L2', '2026-08-05T03:00:00Z', 3, 12, 60), // vol 720 → 最大セット
+    ];
+    const r = computeRecords(bench, rows);
+    expect(r.sessions).toBe(2);
+    expect(r.first_performed_at).toBe('2026-08-01T03:00:00Z');
+    expect(r.last_performed_at).toBe('2026-08-05T03:00:00Z');
+    expect(r.max_weight).toEqual({ weight_kg: 100, reps: 3, performed_at: '2026-08-05T03:00:00Z', log_id: 'L2' });
+    expect(r.rep_maxes).toEqual([
+      { reps: 3, weight_kg: 100, performed_at: '2026-08-05T03:00:00Z', log_id: 'L2' },
+      { reps: 5, weight_kg: 90, performed_at: '2026-08-05T03:00:00Z', log_id: 'L2' },
+      { reps: 6, weight_kg: 80, performed_at: '2026-08-01T03:00:00Z', log_id: 'L1' },
+      { reps: 8, weight_kg: 80, performed_at: '2026-08-01T03:00:00Z', log_id: 'L1' },
+      { reps: 12, weight_kg: 60, performed_at: '2026-08-05T03:00:00Z', log_id: 'L2' },
+    ]);
+    expect(r.estimated_1rm).toEqual({ value_kg: 110, weight_kg: 100, reps: 3, performed_at: '2026-08-05T03:00:00Z', log_id: 'L2' });
+    expect(r.max_reps).toEqual({ reps: 12, weight_kg: 60, performed_at: '2026-08-05T03:00:00Z', log_id: 'L2' });
+    expect(r.max_set_volume).toEqual({ volume: 720, reps: 12, effective_weight_kg: 60, performed_at: '2026-08-05T03:00:00Z', log_id: 'L2' });
+    expect(r.max_session_volume).toEqual({ volume: 1760, sets: 3, performed_at: '2026-08-01T03:00:00Z', log_id: 'L1' });
+    expect(r.last_session).toEqual({
+      performed_at: '2026-08-05T03:00:00Z', log_id: 'L2', total_volume: 1470,
+      sets: [
+        { set_index: 1, reps: 5, weight_kg: 90, effective_weight_kg: 90, volume: 450 },
+        { set_index: 2, reps: 3, weight_kg: 100, effective_weight_kg: 100, volume: 300 },
+        { set_index: 3, reps: 12, weight_kg: 60, effective_weight_kg: 60, volume: 720 },
+      ],
+    });
+  });
+
+  it('同値は最初に達成した日が残る（先勝ち）', () => {
+    const rows = [
+      row('L1', '2026-08-01T03:00:00Z', 1, 5, 100),
+      row('L2', '2026-08-08T03:00:00Z', 1, 5, 100),
+    ];
+    const r = computeRecords(bench, rows);
+    expect(r.max_weight?.log_id).toBe('L1');
+    expect(r.rep_maxes[0].log_id).toBe('L1');
+    expect(r.estimated_1rm?.log_id).toBe('L1');
+    expect(r.max_set_volume?.log_id).toBe('L1');
+    expect(r.max_session_volume?.log_id).toBe('L1');
+    expect(r.last_session?.log_id).toBe('L2');
+  });
+
+  it('推定1RMは reps<=12 のセットだけから計算し、小数1桁に丸める', () => {
+    const rows = [
+      row('L1', '2026-08-01T03:00:00Z', 1, 20, 60), // 60×(1+20/30)=100 だが対象外
+      row('L1', '2026-08-01T03:00:00Z', 2, 10, 70), // 70×(1+10/30)=93.33 → 93.3
+    ];
+    expect(computeRecords(bench, rows).estimated_1rm).toMatchObject({ value_kg: 93.3, weight_kg: 70, reps: 10 });
+  });
+
+  it('自重種目: 純自重セットは最大重量/レップマックス/1RMの対象外、ボリュームは実効重量で計算し、1RMは常にnull', () => {
+    const rows = [
+      row('L1', '2026-08-01T03:00:00Z', 1, 10, null, { body: 80 }), // 実効80, vol 800
+      row('L1', '2026-08-01T03:00:00Z', 2, 5, 10, { body: 80 }), // 実効90, vol 450
+    ];
+    const r = computeRecords(pullup, rows);
+    expect(r.max_weight).toMatchObject({ weight_kg: 10, reps: 5 });
+    expect(r.rep_maxes).toEqual([{ reps: 5, weight_kg: 10, performed_at: '2026-08-01T03:00:00Z', log_id: 'L1' }]);
+    expect(r.estimated_1rm).toBeNull();
+    expect(r.max_reps).toMatchObject({ reps: 10, weight_kg: null });
+    expect(r.max_set_volume).toMatchObject({ volume: 800, reps: 10, effective_weight_kg: 80 });
+    expect(r.max_session_volume).toMatchObject({ volume: 1250, sets: 2 });
+  });
+
+  it('純自重のみの種目は max_weight が null', () => {
+    const r = computeRecords(pullup, [row('L1', '2026-08-01T03:00:00Z', 1, 12, null, { body: 80 })]);
+    expect(r.max_weight).toBeNull();
+    expect(r.rep_maxes).toEqual([]);
+    expect(r.max_reps).toMatchObject({ reps: 12 });
+  });
+});
+
+describe('diffRecords', () => {
+  const empty = computeRecords(bench, []);
+  const first = computeRecords(bench, [row('L1', '2026-08-01T03:00:00Z', 1, 5, 80)]);
+
+  it('初回記録は previous=null で全項目が更新扱い', () => {
+    expect(diffRecords(empty, first)).toEqual([
+      { kind: 'max_weight', previous: null, current: 80 },
+      { kind: 'rep_max', reps: 5, previous: null, current: 80 },
+      { kind: 'estimated_1rm', previous: null, current: 93.3 },
+      { kind: 'max_reps', previous: null, current: 5 },
+      { kind: 'max_set_volume', previous: null, current: 400 },
+      { kind: 'max_session_volume', previous: null, current: 400 },
+    ]);
+  });
+
+  it('上回った項目だけを返し、同値は更新扱いにしない', () => {
+    const after = computeRecords(bench, [
+      row('L1', '2026-08-01T03:00:00Z', 1, 5, 80),
+      row('L2', '2026-08-03T03:00:00Z', 1, 5, 80), // 同値
+      row('L2', '2026-08-03T03:00:00Z', 2, 8, 70), // 新しい reps の記録。セッション 400+560=960
+    ]);
+    expect(diffRecords(first, after)).toEqual([
+      { kind: 'rep_max', reps: 8, previous: null, current: 70 },
+      { kind: 'max_reps', previous: 5, current: 8 },
+      { kind: 'max_set_volume', previous: 400, current: 560 },
+      { kind: 'max_session_volume', previous: 400, current: 960 },
+    ]);
+  });
+
+  it('何も上回らなければ空', () => {
+    const after: ExerciseRecords = computeRecords(bench, [
+      row('L1', '2026-08-01T03:00:00Z', 1, 5, 80),
+      row('L2', '2026-08-03T03:00:00Z', 1, 3, 60),
+    ]);
+    expect(diffRecords(first, after)).toEqual([{ kind: 'rep_max', reps: 3, previous: null, current: 60 }]);
+    expect(diffRecords(after, after)).toEqual([]);
+  });
+});
