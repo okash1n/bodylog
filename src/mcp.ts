@@ -1,5 +1,5 @@
 /**
- * MCP（Model Context Protocol）サーバー。読み取り専用ツール7つ（体重3 / 食事2 / 運動2）を
+ * MCP（Model Context Protocol）サーバー。読み取り専用ツール8つ（体重3 / 食事2 / 運動3）を
  * 公開し、認証済みエンドポイント（/mcp）では書き込みツール6つ（log_meal / create_menu /
  * log_exercise / create_exercise_menu / set_goal / log_weight）を追加で公開する。
  * リクエストごとにサーバー/トランスポートを生成するステートレス構成
@@ -17,9 +17,10 @@ import { getDailySeries, getRawMeasurements, getSummary } from './queries';
 import { parseSetGoalInput, setGoal } from './goals';
 import { createMenu, listMealLogs, listMenus, logMeal, parseMealFields, parseMenuInput } from './meals';
 import {
-  createExerciseMenu, listExerciseLogs, listExerciseMenus, logExercise,
+  createExerciseMenu, getExerciseMenu, listExerciseLogs, listExerciseMenus, logExercise,
   parseExerciseLogFields, parseExerciseMenuInput,
 } from './exercise';
+import { getExerciseRecords } from './exercise-records';
 import type { Env } from './types';
 import { ensurePublicOrigin, LIMITS, localToday, noindexHeaders, offsetHours, resolveRange } from './util';
 import { logWeight, parseWeightInput } from './weight';
@@ -36,6 +37,7 @@ function instructions(tzOffsetHours: number): string {
     '食事記録はsearch_menus / get_meal_logsで照会できる（記録・メニュー作成は認可済みエンドポイント/mcpのみ）。',
     'PFC（protein_g/fat_g/carbs_g）はグラム数。比率を出すときはP×4/F×9/C×4kcalに換算し3者の合計を100%として正規化すること。登録カロリーで割ってはいけない（食物繊維等の差で換算合計と登録kcalは一致せず、100%を超えうる）。',
     '運動記録はsearch_exercise_menus / get_exercise_logsで照会できる（有酸素は消費kcal、筋トレはセット明細と総ボリューム。記録・種目作成は/mcpのみ）。',
+    '筋トレ種目の自己ベスト（最大重量・REP数ごとの最大・推定1RM・最大REP・最大セット/セッションボリューム）と前回セッションの内容は get_exercise_records で引く（get_exercise_logs で全記録を取って推論しない）。log_exercise の応答の records_broken に自己ベスト更新が入るので、更新があれば伝える。',
     '目標（体重・脂肪量）はget_weight_summaryのgoalで確認でき、set_goalで設定・解除できる（ユーザーが明示的に依頼したときだけ変更すること）。',
     '体重はlog_weightで手動記録できる（体重計が無い/Withings未連携の場合の記録手段。ユーザーが体重を報告したときに使う）。',
   ].join('\n');
@@ -183,6 +185,31 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       return jsonResult({ logs: await listExerciseLogs(env, range.from, range.to) });
     }),
   );
+  server.registerTool(
+    'get_exercise_records',
+    {
+      description:
+        '筋トレ種目の自己ベストを返す: max_weight（REP数問わずの最大重量）、rep_maxes（REP数ごとの最大重量）、estimated_1rm（Epley推定、reps<=12のセットから。自重種目はnull）、max_reps、max_set_volume（1セットのreps×実効重量）、max_session_volume（1回のトレーニングの総ボリューム）、last_session（前回のセット明細）。menu_id か menu_name で種目を指定する。有酸素種目は対象外',
+      inputSchema: {
+        menu_id: z.string().optional().describe('種目ID（search_exercise_menusで取得）'),
+        menu_name: z.string().optional().describe('種目名（完全一致→一意な部分一致の順で解決）'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    (args) => guarded('get_exercise_records', async () => {
+      let menuId = args.menu_id;
+      if (!menuId && args.menu_name) {
+        const resolved = resolveIdByName(await listExerciseMenus(env, { q: args.menu_name }), args.menu_name);
+        if (!resolved.ok) return errorResult(resolved.error);
+        menuId = resolved.id;
+      }
+      if (!menuId) return errorResult('menu_id or menu_name is required');
+      const menu = await getExerciseMenu(env, menuId);
+      if (!menu) return errorResult('menu not found');
+      if (menu.category !== 'strength') return errorResult('records are only available for strength menus');
+      return jsonResult(await getExerciseRecords(env, menu));
+    }),
+  );
   if (opts.write) {
     server.registerTool(
       'log_meal',
@@ -236,7 +263,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       'log_exercise',
       {
         description:
-          '運動を記録する。menu_id か menu_name で登録済み種目を指定する。有酸素は duration_min（分）、筋トレは sets（[{reps, weight_kg?}]）を渡す。種目にない運動は記録できない（無ければ確認の上create_exercise_menuで登録してから）',
+          '運動を記録する。menu_id か menu_name で登録済み種目を指定する。有酸素は duration_min（分）、筋トレは sets（[{reps, weight_kg?}]）を渡す。種目にない運動は記録できない（無ければ確認の上create_exercise_menuで登録してから）。応答の records_broken に自己ベスト更新（kind / reps / previous / current）が入る',
         inputSchema: {
           menu_id: z.string().optional().describe('種目ID（search_exercise_menusで取得）'),
           menu_name: z.string().optional().describe('種目名（完全一致→一意な部分一致の順で解決）'),

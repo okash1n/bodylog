@@ -1,6 +1,7 @@
 import { createExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import worker from '../src/index';
+import { createExerciseMenu, logExercise } from '../src/exercise';
 import {
   insertMeasurement, localYmdDaysAgo, mcpRpc, obtainAccessToken, parseToolJson,
   resetTables, rootTestEnv as rootEnv,
@@ -86,7 +87,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     );
     expect(authed.status).toBe(200);
     const body = (await authed.json()) as RpcResponse;
-    expect((body.result as { tools: unknown[] }).tools).toHaveLength(13);
+    expect((body.result as { tools: unknown[] }).tools).toHaveLength(14);
   });
 
   it('initializeに応答する（ステートレス・セッションIDなし）', async () => {
@@ -102,7 +103,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     expect(serverInfo.name).toBe('bodylog');
   });
 
-  it('tools/list が読み取り7＋書き込み6ツールを返す', async () => {
+  it('tools/list が読み取り8＋書き込み6ツールを返す', async () => {
     const res = await rwRpc(token, 'tools/list');
     expect(res.status).toBe(200);
     const body = (await res.json()) as RpcResponse;
@@ -112,6 +113,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
       'create_menu',
       'get_daily_series',
       'get_exercise_logs',
+      'get_exercise_records',
       'get_meal_logs',
       'get_raw_measurements',
       'get_weight_summary',
@@ -122,6 +124,33 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
       'search_menus',
       'set_goal',
     ]);
+  });
+
+  it('get_exercise_records は menu_name で解決し自己ベストを返す。曖昧・未知・有酸素はエラー', async () => {
+    const bench = await createExerciseMenu(rootEnv, { name: 'ベンチプレス', category: 'strength' });
+    await createExerciseMenu(rootEnv, { name: 'インクラインベンチプレス', category: 'strength' });
+    await createExerciseMenu(rootEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    await logExercise(rootEnv, {
+      menu_id: bench.id, performed_at: '2026-08-01T03:00:00Z', sets: [{ reps: 5, weight_kg: 80 }, { reps: 8, weight_kg: 70 }],
+    });
+
+    const call = async (args: Record<string, unknown>): Promise<RpcResponse> =>
+      (await (await rwRpc(token, 'tools/call', { name: 'get_exercise_records', arguments: args })).json()) as RpcResponse;
+
+    const ok = await call({ menu_name: 'ベンチプレス' });
+    expect(ok.error).toBeUndefined();
+    const records = parseToolJson<{
+      menu: { id: string }; max_weight: { weight_kg: number }; rep_maxes: { reps: number }[]; last_session: { total_volume: number };
+    }>(ok.result as Record<string, unknown>);
+    expect(records.menu.id).toBe(bench.id); // 完全一致が部分一致より優先
+    expect(records.max_weight.weight_kg).toBe(80);
+    expect(records.rep_maxes.map((r) => r.reps)).toEqual([5, 8]);
+    expect(records.last_session.total_volume).toBe(960);
+
+    expect(((await call({ menu_name: 'ベンチ' })).result as { isError?: boolean }).isError).toBe(true); // 曖昧
+    expect(((await call({ menu_name: 'ランニング' })).result as { isError?: boolean }).isError).toBe(true); // 有酸素
+    expect(((await call({ menu_id: 'nope' })).result as { isError?: boolean }).isError).toBe(true); // 未知
+    expect(((await call({})).result as { isError?: boolean }).isError).toBe(true); // 指定なし
   });
 
   it('log_weight で手動体重を記録できる', async () => {
@@ -235,7 +264,7 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     const res = await rwRpc(token, 'tools/list', {}, { 'MCP-Protocol-Version': '2026-07-28' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as RpcResponse;
-    expect((body.result as { tools: unknown[] }).tools).toHaveLength(13);
+    expect((body.result as { tools: unknown[] }).tools).toHaveLength(14);
   });
 
   it('未対応バージョンヘッダ付きinitializeはサーバー対応版へ交渉される', async () => {
