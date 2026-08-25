@@ -1,7 +1,7 @@
 /**
  * AIコーチング講評の生成ジョブ。GitHub Actions のスケジュール実行から呼ばれる。
  *
- * 1. bodylog 公開APIから直近データを取得
+ * 1. bodylog 公開APIから直近データを取得（体重・食事・運動・目標・代謝推定＋前日までの講評7日分）
  * 2. Claude Agent SDK（CLAUDE_CODE_OAUTH_TOKEN = サブスク認証）で講評テキストを生成
  * 3. POST /api/coaching（Bearer: COACHING_API_SECRET）で保存 → WorkerがSlack配信・表示
  *
@@ -21,10 +21,11 @@
  * 注意: パブリックリポのActionsログは公開されるため、講評本文や取得データはログに出さない。
  */
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { fetchRange, localYmd, resolveTargetDate } from './dates.mjs';
-import { deriveTerms } from './derive.mjs';
+import { addDaysYmd, fetchRange, localYmd, resolveTargetDate } from './dates.mjs';
+import { deriveTerms, selectPreviousNotes } from './derive.mjs';
 
 const FETCH_DAYS = 15; // 前日分＋14日トレンドを賄う取得幅
+const PREVIOUS_NOTE_DAYS = 7; // 前日までの講評を何日分プロンプトに渡すか（矛盾防止用）
 
 function requiredEnv(name) {
   const v = process.env[name];
@@ -74,13 +75,16 @@ async function collectData(date, today) {
   const isPast = date !== today;
   const { from, to } = fetchRange(date, FETCH_DAYS);
   const range = `from=${from}&to=${to}`;
-  const [summary, measurements, meals, exercise, metabolism] = await Promise.all([
+  const noteRange = `from=${addDaysYmd(date, -PREVIOUS_NOTE_DAYS)}&to=${addDaysYmd(date, -1)}`;
+  const [summary, measurements, meals, exercise, metabolism, coaching] = await Promise.all([
     getJson('/api/summary'),
     getJson(`/api/measurements?${range}`),
     getJson(`/api/meals/daily?${range}`),
     getJson(`/api/exercise/daily?${range}`),
     // 実効代謝は補助情報。取得失敗しても講評生成は続ける
     isPast ? Promise.resolve(null) : getJson('/api/metabolism').catch(() => null),
+    // 直近の講評（前日まで）。無くても生成は続ける
+    getJson(`/api/coaching?${noteRange}`).catch(() => ({ notes: [] })),
   ]);
   const days = measurements.days || [];
   const terms = isPast
@@ -119,6 +123,8 @@ async function collectData(date, today) {
       f: round1(d.fat_g),
       c: round1(d.carbs_g),
     })),
+    // 直近の講評（対象日より前、日付昇順、各800字まで）。前日と矛盾しない評価・方針を書かせるため
+    previous_notes: selectPreviousNotes(coaching?.notes, date),
     // bmr=基礎代謝推定, burn=有酸素消費kcal, volume=筋トレ総ボリューム。総消費= bmr + burn
     exercise: (exercise.days || []).map((d) => ({
       d: d.d,
@@ -158,6 +164,10 @@ function buildPrompt(data, date) {
 構成（全体で2〜4行）:
 - 今日の評価: 収支・食事の質・運動内容を、直近7〜14日のトレンドと目標との位置関係を踏まえて講評
 - 明日の行動方針: 食事・運動で具体的に1〜2個
+
+連続性: previous_notes は直近の講評（日付昇順）。評価と方針はこれと連続させ、前日と結論が変わる場合は
+理由を一言添える。同じ助言の言い回しの繰り返しは避け、継続中の方針は「継続」と明示する。
+previous_notes が空なら初回として書く。
 ${COMMON_RULES}
 
 データ（直近${FETCH_DAYS}日）: ${dataJson}`;

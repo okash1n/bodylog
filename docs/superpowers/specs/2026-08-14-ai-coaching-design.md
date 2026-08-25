@@ -90,6 +90,7 @@ CREATE TABLE coaching_notes (
   4. Agent SDK `query()`: ツール不許可・1ターン・テキストのみ受け取り
   5. `POST {BODYLOG_BASE_URL}/api/coaching` へ保存。失敗時は非0終了（Actionsの失敗通知で気付ける）
   - ログには講評本文・データを出力しない（パブリックリポのActionsログは公開されるため）
+  - **2026-08-26 更新**: 前日までの講評 7 日分（daily、各 800 字まで、日付昇順）を `previous_notes` としてプロンプトに渡し、「評価・方針を直近の講評と連続させる／結論が変わるなら理由を添える／同じ助言の繰り返しを避ける」を出力ルールに加えた（日ごとに言うことが変わるのを防ぐ）。過去日の再生成（`COACHING_DATE`）でもその日より前の講評だけを参照する
 
 ## GitHub Actions（.github/workflows/coaching.yml）
 

@@ -39,3 +39,21 @@ export function deriveTerms(days, date) {
   );
   return { recent7_avg: recent7, diff_vs_prev7: diff };
 }
+
+/**
+ * 直近の講評（previous_notes）を選ぶ: 対象日より前の daily だけを日付昇順にし、本文は maxChars で切る。
+ * 前日の講評と矛盾しない総括を書かせるためにプロンプトへ渡す（トークン節約のため上限つき）。
+ * @param notes /api/coaching の notes（{kind, date, content} の配列。順序は問わない）
+ * @param date 対象日 YYYY-MM-DD（この日以降の講評は除く＝過去日の再生成でも未来を見ない）
+ */
+export function selectPreviousNotes(notes, date, { maxChars = 800 } = {}) {
+  return (notes ?? [])
+    .filter(
+      (n) => n && n.kind === 'daily' && typeof n.date === 'string' && n.date < date && typeof n.content === 'string',
+    )
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    .map((n) => ({
+      date: n.date,
+      content: n.content.length > maxChars ? `${n.content.slice(0, maxChars)}…` : n.content,
+    }));
+}

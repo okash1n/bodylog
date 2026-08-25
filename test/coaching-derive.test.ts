@@ -3,7 +3,7 @@
  * Worker 側 getTermStats と同じ定義（recent7 = D-6〜D、prev7 = D-13〜D-7 の日平均の平均）を固定する。
  */
 import { describe, expect, it } from 'vitest';
-import { deriveTerms } from '../coaching/derive.mjs';
+import { deriveTerms, selectPreviousNotes } from '../coaching/derive.mjs';
 
 function day(d: string, weight: number | null, fat_mass: number | null = null, fat_free_mass: number | null = null) {
   return { d, weight, fat_mass, fat_free_mass };
@@ -50,5 +50,27 @@ describe('deriveTerms', () => {
       recent7_avg: { weight: null, fat_mass: null, fat_free_mass: null },
       diff_vs_prev7: { weight: null, fat_mass: null, fat_free_mass: null },
     });
+  });
+});
+
+describe('selectPreviousNotes', () => {
+  it('対象日より前の daily だけを日付昇順で返し、本文は上限で切る', () => {
+    const notes = [
+      { kind: 'daily', date: '2026-08-24', content: 'b' },
+      { kind: 'weekly', date: '2026-08-23', content: 'weekly' },
+      { kind: 'daily', date: '2026-08-25', content: '対象日当日' },
+      { kind: 'daily', date: '2026-08-26', content: '未来' },
+      { kind: 'daily', date: '2026-08-22', content: 'x'.repeat(20) },
+    ];
+    const picked = selectPreviousNotes(notes, '2026-08-25', { maxChars: 10 });
+    expect(picked).toEqual([
+      { date: '2026-08-22', content: `${'x'.repeat(10)}…` },
+      { date: '2026-08-24', content: 'b' },
+    ]);
+  });
+
+  it('notes が無ければ空配列', () => {
+    expect(selectPreviousNotes(undefined, '2026-08-25')).toEqual([]);
+    expect(selectPreviousNotes([], '2026-08-25')).toEqual([]);
   });
 });
