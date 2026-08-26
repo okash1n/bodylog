@@ -941,6 +941,7 @@ Expected: 全ファイル PASS（`test/mcp.test.ts` のツール数 14、`test/m
 - [ ] **Step 6: 実値スキャンとコミット**
 
 ```bash
+# 本番ドメインの文字列はこの文書に書かない（ローカル wrangler.toml の値を PROD_DOMAIN に入れて実行する）
 git --no-pager diff | grep -nE "${PROD_DOMAIN}|[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" || echo clean
 git add src/mcp.ts README.md test/mcp.test.ts
 git commit -m "feat: get_exercise_records MCP tool for per-menu strength records"
