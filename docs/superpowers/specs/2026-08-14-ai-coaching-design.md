@@ -9,6 +9,9 @@
 > **2026-08-28 更新**: GitHub の schedule 遅延が日付をまたいだ場合（実事例: 2026-08-27 の 23:30 予定が
 > 翌 03:14 JST 開始）、当日扱いだと対象日がずれて本来の日の講評が欠けるため、schedule 実行では
 > 「直近の予定スロット（23:30 JST）が属する日」を対象にするガードを generate.mjs / dates.mjs に追加した。
+> あわせて起動の主経路を Worker（Cloudflare cron、23:30 JST、`src/coaching-dispatch.ts`）からの
+> workflow_dispatch（対象日を `date` 入力で明示。`GITHUB_DISPATCH_TOKEN` / `GITHUB_DISPATCH_REPO`
+> 設定時のみ）に変更。GitHub の schedule はフォールバックとして残し、対象日の講評が既にあればスキップする。
 
 ## 目的
 

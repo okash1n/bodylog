@@ -19,7 +19,9 @@
  *                           計算しない値）は過去日では使わない
  *   COACHING_SCHEDULED      任意。'true' のとき schedule 実行として扱い、COACHING_DATE が空なら
  *                           「直近の予定スロット（23:30 JST）が属する日」を対象にする。GitHub の
- *                           schedule 遅延が日付をまたいでも前日（本来の対象日）の講評を生成するため
+ *                           schedule 遅延が日付をまたいでも前日（本来の対象日）の講評を生成するため。
+ *                           さらに対象日の講評が既にあればスキップする（schedule は Worker からの
+ *                           workflow_dispatch 起動のフォールバックのため。二重生成を避ける）
  *
  * 注意: パブリックリポのActionsログは公開されるため、講評本文や取得データはログに出さない。
  */
@@ -230,9 +232,9 @@ const kind = 'daily'; // 週次の別枠は廃止（週間視点は毎日の総�
 const today = localYmd(Date.now(), tzOffsetHours);
 // schedule 実行（date 入力なし）は「直近の予定スロットが属する日」を対象にする。GitHub の schedule が
 // 遅延して日付をまたいだ場合に、当日扱いでほぼ空の翌日分を作って本来の対象日が欠けるのを防ぐ
-const isDelayedSchedule =
+const isScheduleRun =
   process.env.COACHING_SCHEDULED === 'true' && (process.env.COACHING_DATE ?? '').trim() === '';
-const target = isDelayedSchedule
+const target = isScheduleRun
   ? { ok: true, date: scheduleTargetDate(Date.now(), tzOffsetHours) }
   : resolveTargetDate(process.env.COACHING_DATE, today);
 if (!target.ok) {
@@ -241,6 +243,17 @@ if (!target.ok) {
 }
 const date = target.date;
 console.log(`kind=${kind} date=${date} today=${today} model=${model}`);
+
+if (isScheduleRun) {
+  // schedule 実行は Worker からの workflow_dispatch 起動（対象日を明示）や手動実行のフォールバック。
+  // 対象日の講評が既にあれば二重生成（Claude利用の重複・後勝ち上書き）を避けて終了する。
+  // dispatch 経由の実行はこのチェックを通らず、常に生成・上書きする（再生成の経路として維持）
+  const existing = await getJson(`/api/coaching?from=${date}&to=${date}`).catch(() => null);
+  if (existing?.notes?.some((n) => n.kind === 'daily' && n.date === date)) {
+    console.log(`daily note for ${date} already exists; skipping (schedule run is a fallback)`);
+    process.exit(0);
+  }
+}
 
 try {
   const data = await collectData(date, today);

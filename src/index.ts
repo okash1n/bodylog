@@ -21,6 +21,7 @@ import {
   startInitialImport,
 } from './ingest';
 import { processNotificationBatches, runDailyDigestIfDue } from './slack';
+import { dispatchCoachingIfDue } from './coaching-dispatch';
 import { createDashboardRouter, createRootDashboardRouter } from './dashboard';
 import { registerOauthRoutes } from './oauth';
 
@@ -333,6 +334,8 @@ async function scheduled(
     } else {
       console.warn('[index] settings.public_origin is not set; skipping notification send');
     }
+    // 23:30ローカルを過ぎた最初のtickでAIコーチング生成（GitHub Actions）を起動する（任意機能・未設定ならno-op）
+    await runStep('dispatchCoachingIfDue', () => dispatchCoachingIfDue(env));
     // import未完了かの判定はresumeInitialImport自身が行う（done/errorなら即return）
     await runStep('resumeInitialImport', () => resumeInitialImport(env));
     return;

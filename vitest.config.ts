@@ -25,6 +25,9 @@ export default defineConfig({
             GOOGLE_OAUTH_CLIENT_ID: 'gcid',
             GOOGLE_OAUTH_CLIENT_SECRET: 'gsec',
             OWNER_EMAILS: 'owner@example.com',
+            // ローカルwrangler.tomlのGITHUB_DISPATCH_REPO実値がテストへ流れ込まないよう空で固定する
+            // （トークン（Secret）が無い限りdispatchはno-opだが、convention どおり実値非依存にする）
+            GITHUB_DISPATCH_REPO: '',
           },
         },
       };

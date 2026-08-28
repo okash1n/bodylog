@@ -11,6 +11,8 @@ export interface Env {
   TZ_OFFSET_HOURS?: string;
   /** 読み取りアクセス制御: 'public'（既定）=無認証読み取り / 'private'=データ系読み取りをオーナー認証必須に */
   READ_ACCESS?: string;
+  /** 任意: AIコーチング生成をWorkerから起動する場合の対象リポジトリ（owner/repo）。GITHUB_DISPATCH_TOKENとセット */
+  GITHUB_DISPATCH_REPO?: string;
   // Secrets（未設定でもWorker自体は起動できるようoptionalにし、使用箇所で明示エラーにする）
   WITHINGS_CLIENT_ID?: string;
   WITHINGS_CLIENT_SECRET?: string;
@@ -22,6 +24,7 @@ export interface Env {
   OWNER_EMAILS?: string; // カンマ区切りの許可メール
   COACHING_API_SECRET?: string; // POST /api/coaching（AI講評保存）と POST /api/digest（ダイジェスト送り直し）のサーバー間Bearer認証。未設定なら両方404
   OG_ACCESS_TOKEN?: string; // READ_ACCESS=private時、Slack埋め込み用に og.png?key= を通す任意トークン
+  GITHUB_DISPATCH_TOKEN?: string; // 任意: AIコーチング生成をWorkerから起動するfine-grained PAT（対象リポのActions: Read and writeのみ）
 }
 
 /** immediate=計測ごとに通知（既定） / daily=日次ダイジェストのみ / both=両方 */
