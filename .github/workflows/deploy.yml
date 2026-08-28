@@ -53,6 +53,14 @@ jobs:
           else
             cp wrangler.toml.example wrangler.toml
           fi
+      # wrangler が routes のカスタムドメインをログへ出力しうるため、先にマスクする
+      # （WRANGLER_TOML 全体は Secret として自動マスクされるが、その一部＝ドメイン単体は対象外。
+      #   パブリックリポのログは公開されるので、本番ホスト名を出さない。AGENTS.md 参照）
+      - name: Mask custom domains in logs
+        run: |
+          grep -oE 'pattern *= *"[^"]+"' wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | sort -u | while read -r domain; do
+            [ -n "$domain" ] && echo "::add-mask::$domain"
+          done
       - run: npm ci
       - run: npm run typecheck
       # npm test は sync-vendor を内包する（typecheck の副作用に依存しない）
@@ -78,6 +86,12 @@ jobs:
             exit 1
           fi
           printf '%s' "$WRANGLER_TOML" > wrangler.toml
+      # wrangler deploy がカスタムドメインをログへ出力するため、先にマスクする（test ジョブと同じ理由）
+      - name: Mask custom domains in logs
+        run: |
+          grep -oE 'pattern *= *"[^"]+"' wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | sort -u | while read -r domain; do
+            [ -n "$domain" ] && echo "::add-mask::$domain"
+          done
       - run: npm ci
       - name: Apply D1 migrations
         env:
