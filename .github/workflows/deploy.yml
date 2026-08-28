@@ -58,8 +58,11 @@ jobs:
       #   パブリックリポのログは公開されるので、本番ホスト名を出さない。AGENTS.md 参照）
       - name: Mask custom domains in logs
         run: |
-          grep -oE 'pattern *= *"[^"]+"' wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | sort -u | while read -r domain; do
-            [ -n "$domain" ] && echo "::add-mask::$domain"
+          # ホスト名の形をした値だけをマスク登録する（余計な短い断片を登録すると、ログ中の
+          # その文字すべてが***化されて可読性が壊れるため。tr -d はCRLF対策）
+          grep -oE 'pattern *= *"[^"]+"' wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r' \
+            | grep -E '^[A-Za-z0-9*][A-Za-z0-9.*-]+\.[A-Za-z0-9-]+$' | sort -u | while read -r domain; do
+            echo "::add-mask::$domain"
           done
       - run: npm ci
       - run: npm run typecheck
@@ -89,8 +92,11 @@ jobs:
       # wrangler deploy がカスタムドメインをログへ出力するため、先にマスクする（test ジョブと同じ理由）
       - name: Mask custom domains in logs
         run: |
-          grep -oE 'pattern *= *"[^"]+"' wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | sort -u | while read -r domain; do
-            [ -n "$domain" ] && echo "::add-mask::$domain"
+          # ホスト名の形をした値だけをマスク登録する（余計な短い断片を登録すると、ログ中の
+          # その文字すべてが***化されて可読性が壊れるため。tr -d はCRLF対策）
+          grep -oE 'pattern *= *"[^"]+"' wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r' \
+            | grep -E '^[A-Za-z0-9*][A-Za-z0-9.*-]+\.[A-Za-z0-9-]+$' | sort -u | while read -r domain; do
+            echo "::add-mask::$domain"
           done
       - run: npm ci
       - name: Apply D1 migrations
