@@ -2,7 +2,7 @@ import { createExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import worker from '../src/index';
 import type { Env } from '../src/types';
-import { coachingDigestBlocks, parseCoachingInput } from '../src/coaching';
+import { coachingDigestBlocks, isFreshCoachingNote, parseCoachingInput } from '../src/coaching';
 import type { CoachingNote } from '../src/coaching';
 import { resetTables, rootTestEnv } from './helpers';
 
@@ -177,5 +177,30 @@ describe('coaching ユニット', () => {
       .map((b) => b.text?.text ?? '')
       .join('\n');
     expect(joined).toBe(note.content);
+  });
+});
+
+describe('isFreshCoachingNote（ダイジェスト差し込みの鮮度ガード）', () => {
+  const note = (created_at: string): CoachingNote => ({
+    id: 'n1',
+    kind: 'daily',
+    date: '2026-08-28',
+    content: 'x',
+    model: null,
+    created_at,
+  });
+
+  it('その夜のスロット（23:30ローカル）以降に生成された講評だけを差し込み対象にする', () => {
+    expect(isFreshCoachingNote(note('2026-08-28 14:30:00'), 9)).toBe(true); // 23:30 JST ちょうど
+    expect(isFreshCoachingNote(note('2026-08-28 14:33:00'), 9)).toBe(true); // 23:33 JST（正規の夜間生成）
+    expect(isFreshCoachingNote(note('2026-08-28 15:05:00'), 9)).toBe(true); // 日跨ぎ保存（翌 0:05 JST）
+    expect(isFreshCoachingNote(note('2026-08-29 00:15:00'), 9)).toBe(true); // 後日のバックフィル再生成
+    expect(isFreshCoachingNote(note('2026-08-27 18:14:52'), 9)).toBe(false); // 未明 3:14 JST の遅延実行（2026-08-28の実事例）
+    expect(isFreshCoachingNote(note('2026-08-28 04:00:00'), 9)).toBe(false); // 日中 13:00 JST の部分データ再生成
+  });
+
+  it('null・不正な created_at は差し込まない側に倒す', () => {
+    expect(isFreshCoachingNote(null, 9)).toBe(false);
+    expect(isFreshCoachingNote(note('bogus'), 9)).toBe(false);
   });
 });

@@ -17,7 +17,7 @@ import {
 } from './queries';
 import { getIntakeForDay } from './meals';
 import { getExerciseForDay } from './exercise';
-import { coachingDigestBlocks, getCoachingNote } from './coaching';
+import { coachingDigestBlocks, getCoachingNote, isFreshCoachingNote } from './coaching';
 import type { CoachingNote } from './coaching';
 import { OG_RENDERER_VERSION } from './og';
 
@@ -463,6 +463,9 @@ async function buildDailyDigestMessage(env: Env, origin: string, batchId: string
       getCoachingNote(env, 'daily', date),
       getStatsParts(env, date),
     ]);
+    // その夜のスロット（23:30ローカル）以降に生成された講評だけを差し込む。古い講評
+    // （未明の遅延実行が残した空データ分や日中の部分データ再生成）が残っていても配信しない
+    const freshCoaching = isFreshCoachingNote(coaching, offsetHours(env)) ? coaching : null;
     const day: DayPoint | null = series[series.length - 1] ?? null;
     const hasActivity =
       intake !== null || (exercise !== null && exercise.cardio_count + exercise.strength_count > 0);
@@ -489,7 +492,7 @@ async function buildDailyDigestMessage(env: Env, origin: string, batchId: string
         stats,
         intake,
         exercise,
-        coaching,
+        coaching: freshCoaching,
         dashboardUrl: `${base}?v=${date}`,
         ogImageUrl: ogImageUrlFor(env, base, v),
       }),

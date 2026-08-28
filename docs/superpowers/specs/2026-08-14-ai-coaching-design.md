@@ -12,6 +12,12 @@
 > あわせて起動の主経路を Worker（Cloudflare cron、23:30 JST、`src/coaching-dispatch.ts`）からの
 > workflow_dispatch（対象日を `date` 入力で明示。`GITHUB_DISPATCH_TOKEN` / `GITHUB_DISPATCH_REPO`
 > 設定時のみ）に変更。GitHub の schedule はフォールバックとして残し、対象日の講評が既にあればスキップする。
+>
+> **2026-08-29 更新**: 8/28 は GitHub が schedule を発火させず、未明の遅延実行（8/28 03:14）が残した
+> 空データの 8/28 分講評が上書きされないままダイジェストに載った。対策として schedule を
+> 23:30 / 23:50 JST の2本に冗長化し、fallback のスキップ条件を「講評が存在する」から
+> 「その夜のスロット（23:30 ローカル）以降に生成された講評が存在する」（`slotTimeForDate` /
+> `parseCreatedAtUtc`）に修正した。
 
 ## 目的
 

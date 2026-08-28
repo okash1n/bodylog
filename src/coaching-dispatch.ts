@@ -5,7 +5,7 @@
  * 時刻どおり発火する Cloudflare cron（5分毎）から、23:30 ローカルを過ぎた最初の tick で
  * workflow_dispatch により起動する。対象日を date 入力で明示するので、ランナーの起動が
  * 遅れても生成対象日はずれない。coaching.yml の schedule はフォールバックとして残る
- * （schedule 実行側は対象日の講評が既にあればスキップする。generate.mjs 参照）。
+ * （schedule 実行側は「その夜のスロット以降に生成された講評」があればスキップする。generate.mjs 参照）。
  *
  * GITHUB_DISPATCH_TOKEN / GITHUB_DISPATCH_REPO 未設定なら何もしない（任意機能）。
  * 注意: 対象日は TZ_OFFSET_HOURS で計算する。生成ジョブ側の COACHING_TZ_OFFSET_HOURS（既定9）と

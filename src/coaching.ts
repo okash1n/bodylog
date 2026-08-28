@@ -115,6 +115,37 @@ export async function listCoachingNotes(env: Env, from: string, to: string): Pro
   return res.results;
 }
 
+/** 生成スロット（毎晩23:30ローカル）のUTCアンカー分。coaching.yml の cron / coaching/dates.mjs と対で保つ */
+const SLOT_UTC_MINUTES = 14 * 60 + 30;
+const DAY_MS = 86_400_000;
+
+/** 対象ローカル日付の生成スロット時刻（エポックms）。coaching/dates.mjs の slotTimeForDate と同じ定義 */
+export function coachingSlotMs(date: string, tzOffsetHours: number): number {
+  const localMidnightUtcMs = Date.parse(`${date}T00:00:00Z`) - tzOffsetHours * 3_600_000;
+  const sinceMidnightUtc = ((localMidnightUtcMs % DAY_MS) + DAY_MS) % DAY_MS;
+  let slotMs = localMidnightUtcMs - sinceMidnightUtc + SLOT_UTC_MINUTES * 60_000;
+  if (slotMs < localMidnightUtcMs) slotMs += DAY_MS;
+  return slotMs;
+}
+
+/** created_at（D1の datetime('now') = 'YYYY-MM-DD HH:MM:SS' UTC、またはISO 8601）→エポックms。不正はNaN */
+function createdAtMs(s: string): number {
+  const t = s.includes('T') ? s : s.replace(' ', 'T');
+  return Date.parse(/Z$|[+-]\d{2}:?\d{2}$/.test(t) ? t : `${t}Z`);
+}
+
+/**
+ * ダイジェストに差し込んでよい講評か: その夜のスロット（23:30ローカル）以降に生成されたものだけを許す。
+ * 未明の遅延実行が残した空データ講評や、日中の部分データ再生成をそのまま配信しないため
+ * （2026-08-28 に、未明に生成された空データ講評が上書きされないままダイジェストに載った事象への対策）。
+ * 判定不能（created_at 不正）は差し込まない側に倒す（数値のみのダイジェストになるだけで実害が小さい）
+ */
+export function isFreshCoachingNote(note: CoachingNote | null, tzOffsetHours: number): boolean {
+  if (!note) return false;
+  const created = createdAtMs(note.created_at);
+  return Number.isFinite(created) && created >= coachingSlotMs(note.date, tzOffsetHours);
+}
+
 /** Slackのsection.textは3000文字上限のため、余裕を持って行単位で分割する */
 const SLACK_SECTION_LIMIT = 2800;
 

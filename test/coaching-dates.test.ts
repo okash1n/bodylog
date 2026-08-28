@@ -6,10 +6,13 @@ import { describe, expect, it } from 'vitest';
 import {
   addDaysYmd,
   fetchRange,
+  hasFreshDailyNote,
   isValidYmd,
   localYmd,
+  parseCreatedAtUtc,
   resolveTargetDate,
   scheduleTargetDate,
+  slotTimeForDate,
 } from '../coaching/dates.mjs';
 
 describe('localYmd', () => {
@@ -91,5 +94,53 @@ describe('scheduleTargetDate', () => {
     // UTC+10 では 14:30 UTC スロット = 翌 00:30 ローカル。UTC 日付のまま返す誤実装はここで落ちる
     expect(scheduleTargetDate(Date.UTC(2026, 7, 26, 14, 40), 10)).toBe('2026-08-27');
     expect(scheduleTargetDate(Date.UTC(2026, 7, 27, 10, 0), 10)).toBe('2026-08-27'); // 翌日 20:00 ローカルでも直近スロットは同じ
+  });
+});
+
+describe('slotTimeForDate / parseCreatedAtUtc', () => {
+  it('ローカル日付に対応するスロット時刻（エポックms）を返す', () => {
+    expect(slotTimeForDate('2026-08-28', 9)).toBe(Date.UTC(2026, 7, 28, 14, 30)); // 23:30 JST
+    expect(slotTimeForDate('2026-08-28', 0)).toBe(Date.UTC(2026, 7, 28, 14, 30)); // 14:30 ローカル
+    expect(slotTimeForDate('2026-08-28', 10)).toBe(Date.UTC(2026, 7, 27, 14, 30)); // 現地 00:30
+    expect(slotTimeForDate('2026-08-28', -5)).toBe(Date.UTC(2026, 7, 28, 14, 30)); // 現地 09:30
+  });
+  it('scheduleTargetDate との往復が常に一致する（逆関数性）', () => {
+    for (const tz of [9, 0, 10, -5, 5.5]) {
+      for (const d of ['2026-08-01', '2026-08-28', '2026-12-31']) {
+        expect(scheduleTargetDate(slotTimeForDate(d, tz), tz)).toBe(d);
+      }
+    }
+  });
+  it('created_at（D1のSQLite形式UTC / ISO 8601）を解釈し、不正はNaN', () => {
+    expect(parseCreatedAtUtc('2026-08-28 14:31:00')).toBe(Date.UTC(2026, 7, 28, 14, 31));
+    expect(parseCreatedAtUtc('2026-08-28T14:31:00Z')).toBe(Date.UTC(2026, 7, 28, 14, 31));
+    expect(parseCreatedAtUtc('2026-08-28T14:31:00+09:00')).toBe(Date.UTC(2026, 7, 28, 5, 31));
+    expect(Number.isNaN(parseCreatedAtUtc('bogus'))).toBe(true);
+    expect(Number.isNaN(parseCreatedAtUtc(undefined))).toBe(true);
+  });
+  it('2026-08-28 の実事例: 未明の遅延実行が作った講評はスロット前＝上書き対象、夜の生成分はスキップ対象', () => {
+    const staleMs = parseCreatedAtUtc('2026-08-27 18:14:52'); // 8/28 03:14 JST に保存された空データ講評
+    expect(staleMs < slotTimeForDate('2026-08-28', 9)).toBe(true);
+    const primaryMs = parseCreatedAtUtc('2026-08-28 14:33:00'); // 8/28 23:33 JST の正規生成
+    expect(primaryMs >= slotTimeForDate('2026-08-28', 9)).toBe(true);
+  });
+});
+
+describe('hasFreshDailyNote（scheduleフォールバックのスキップ判定）', () => {
+  const notes = (createdAt: string) => [{ kind: 'daily', date: '2026-08-28', created_at: createdAt }];
+
+  it('スロット以降に生成された対象日の daily 講評だけを「生成済み」とみなす', () => {
+    expect(hasFreshDailyNote(notes('2026-08-28 14:33:00'), '2026-08-28', 9)).toBe(true);
+    expect(hasFreshDailyNote(notes('2026-08-27 18:14:52'), '2026-08-28', 9)).toBe(false); // 未明の遅延実行（実事例）→再生成
+    expect(hasFreshDailyNote(notes('2026-08-28 04:00:00'), '2026-08-28', 9)).toBe(false); // 日中の再生成→夜に上書き
+  });
+
+  it('kind・日付の不一致や不正入力は「生成済みでない」= 再生成に倒す', () => {
+    expect(
+      hasFreshDailyNote([{ kind: 'weekly', date: '2026-08-28', created_at: '2026-08-28 14:33:00' }], '2026-08-28', 9),
+    ).toBe(false);
+    expect(hasFreshDailyNote(notes('2026-08-28 14:33:00'), '2026-08-27', 9)).toBe(false);
+    expect(hasFreshDailyNote(undefined, '2026-08-28', 9)).toBe(false);
+    expect(hasFreshDailyNote(notes('bogus'), '2026-08-28', 9)).toBe(false);
   });
 });

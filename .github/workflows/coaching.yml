@@ -16,11 +16,14 @@ on:
     # 23:30 JST。当日分を生成し、23:55の日次ダイジェスト（Slack）が本文に差し込む。
     # GitHubのscheduleは遅延するため、Worker（Cloudflare cron。時刻どおり発火）からの
     # workflow_dispatch起動が主経路（GITHUB_DISPATCH_TOKEN設定時。README「AIコーチング」参照）。
-    # このscheduleはそのフォールバックで、対象日の講評が既にあればジョブ側でスキップする。
+    # このscheduleはそのフォールバックで、その夜のスロット以降に生成された講評が既にあればジョブ側でスキップする。
     # 遅延で日付をまたいで起動した場合は前日分（本来の対象日）を生成する（generate.mjs のガード）。
     # この時刻を変えるときは coaching/dates.mjs の scheduleTargetDate 既定値（14:30 UTC）と
     # src/coaching-dispatch.ts の起動時刻（23:30ローカル）も合わせること
     - cron: "30 14 * * *"
+    # 保険の2本目（23:50 JST）。GitHubがscheduleの発火自体を落とすことがある（2026-08-28に発生）。
+    # 1本目やWorker起動が生成済み（スロット以降のcreated_at）なら、ジョブ側のスキップ判定で終わる
+    - cron: "50 14 * * *"
   workflow_dispatch:
     inputs:
       date:

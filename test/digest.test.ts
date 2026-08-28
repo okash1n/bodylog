@@ -14,7 +14,7 @@ import {
 import type { DailyExercise, DailyIntake } from '../src/types';
 import { createMenu, logMeal } from '../src/meals';
 import { createExerciseMenu, logExercise } from '../src/exercise';
-import { upsertCoachingNote } from '../src/coaching';
+import { coachingSlotMs, upsertCoachingNote } from '../src/coaching';
 import { offsetHours, ymdWithOffset } from '../src/util';
 import { insertMeasurement, resetTables, setSetting, stubFetch, testEnv } from './helpers';
 
@@ -24,6 +24,16 @@ const ORIGIN = 'https://origin.example';
 
 function envWith(webhooks: string): Env {
   return { ...testEnv, SLACK_WEBHOOKS: webhooks };
+}
+
+/** 講評のcreated_atを固定する。upsert直後は now=テスト実行時刻で、23:30ローカル前だと鮮度ガードに弾かれるため */
+async function setNoteCreatedAt(date: string, epochMs: number): Promise<void> {
+  const sqlite = new Date(epochMs).toISOString().slice(0, 19).replace('T', ' ');
+  await testEnv.DB.prepare(
+    "UPDATE coaching_notes SET created_at = ?1 WHERE kind = 'daily' AND date = ?2",
+  )
+    .bind(sqlite, date)
+    .run();
 }
 
 const DAILY_ENV = envWith('[{"id":"night","url":"https://hooks.slack.com/services/T0/B0/X","mode":"daily"}]');
@@ -118,12 +128,15 @@ describe('runDailyDigest', () => {
       weight: 82.0,
       fat_free_mass: 62.0,
     });
+    const noteDate = ymdWithOffset(new Date().toISOString(), offsetHours(testEnv));
     await upsertCoachingNote(testEnv, {
       kind: 'daily',
-      date: ymdWithOffset(new Date().toISOString(), offsetHours(testEnv)),
+      date: noteDate,
       content: '今日の総括テスト。明日はタンパク質を増やす。',
       model: null,
     });
+    // 実運用の生成時刻（その夜のスロット以降）に合わせて固定する
+    await setNoteCreatedAt(noteDate, coachingSlotMs(noteDate, offsetHours(testEnv)) + 3 * 60_000);
     const stub = stubFetch().on({
       host: SLACK_HOST,
       path: SLACK_PATH,
@@ -135,6 +148,33 @@ describe('runDailyDigest', () => {
     const body = stub.requests({ host: SLACK_HOST })[0].body;
     expect(body).toContain('AIコーチ');
     expect(body).toContain('今日の総括テスト');
+  });
+
+  it('スロット前に作られた古い講評（未明の遅延実行の残り等）はダイジェストに差し込まない', async () => {
+    await insertMeasurement({
+      grpid: 9402,
+      measured_at: new Date().toISOString(),
+      weight: 82.0,
+    });
+    const noteDate = ymdWithOffset(new Date().toISOString(), offsetHours(testEnv));
+    await upsertCoachingNote(testEnv, {
+      kind: 'daily',
+      date: noteDate,
+      content: '未明に生成された空データ講評',
+      model: null,
+    });
+    await setNoteCreatedAt(noteDate, coachingSlotMs(noteDate, offsetHours(testEnv)) - 60 * 60_000);
+    const stub = stubFetch().on({
+      host: SLACK_HOST,
+      path: SLACK_PATH,
+      method: 'POST',
+      times: 1,
+      reply: () => new Response('ok'),
+    });
+    await runDailyDigest(DAILY_ENV, ORIGIN);
+    const body = stub.requests({ host: SLACK_HOST })[0].body;
+    expect(body).not.toContain('AIコーチ');
+    expect(body).not.toContain('未明に生成された空データ講評');
   });
 
   it('当日の記録（体重・食事・運動）が何も無ければ送らない', async () => {

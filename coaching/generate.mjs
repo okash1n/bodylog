@@ -20,13 +20,21 @@
  *   COACHING_SCHEDULED      任意。'true' のとき schedule 実行として扱い、COACHING_DATE が空なら
  *                           「直近の予定スロット（23:30 JST）が属する日」を対象にする。GitHub の
  *                           schedule 遅延が日付をまたいでも前日（本来の対象日）の講評を生成するため。
- *                           さらに対象日の講評が既にあればスキップする（schedule は Worker からの
- *                           workflow_dispatch 起動のフォールバックのため。二重生成を避ける）
+ *                           さらに「その夜のスロット以降に生成された講評」が既にあればスキップする
+ *                           （schedule は Worker からの workflow_dispatch 起動のフォールバックのため。
+ *                           古い講評＝未明の遅延実行や日中の手動再生成の残りは上書きする）
  *
  * 注意: パブリックリポのActionsログは公開されるため、講評本文や取得データはログに出さない。
  */
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { addDaysYmd, fetchRange, localYmd, resolveTargetDate, scheduleTargetDate } from './dates.mjs';
+import {
+  addDaysYmd,
+  fetchRange,
+  hasFreshDailyNote,
+  localYmd,
+  resolveTargetDate,
+  scheduleTargetDate,
+} from './dates.mjs';
 import { deriveTerms, selectPreviousNotes } from './derive.mjs';
 
 const FETCH_DAYS = 15; // 前日分＋14日トレンドを賄う取得幅
@@ -246,11 +254,12 @@ console.log(`kind=${kind} date=${date} today=${today} model=${model}`);
 
 if (isScheduleRun) {
   // schedule 実行は Worker からの workflow_dispatch 起動（対象日を明示）や手動実行のフォールバック。
-  // 対象日の講評が既にあれば二重生成（Claude利用の重複・後勝ち上書き）を避けて終了する。
-  // dispatch 経由の実行はこのチェックを通らず、常に生成・上書きする（再生成の経路として維持）
+  // 「その夜のスロット（23:30ローカル）以降に生成された講評」がある場合だけスキップして二重生成を避ける。
+  // 単なる存在チェックだと、未明の遅延実行が残した空データ講評や日中の手動再生成が夜の上書きを
+  // 妨げてしまう（2026-08-28 に実際に起きた）。dispatch 経由の実行はこのチェックを通らず常に生成・上書きする
   const existing = await getJson(`/api/coaching?from=${date}&to=${date}`).catch(() => null);
-  if (existing?.notes?.some((n) => n.kind === 'daily' && n.date === date)) {
-    console.log(`daily note for ${date} already exists; skipping (schedule run is a fallback)`);
+  if (hasFreshDailyNote(existing?.notes, date, tzOffsetHours)) {
+    console.log(`daily note for ${date} already generated after the slot; skipping (schedule fallback)`);
     process.exit(0);
   }
 }
