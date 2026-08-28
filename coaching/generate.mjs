@@ -17,11 +17,14 @@
  *                           対象日を末尾とする直近 FETCH_DAYS 日を取得して生成する。直近7日平均・前週比は
  *                           対象日時点で導出し、基準日との差と実効消費推定（Worker が実行時点基準でしか
  *                           計算しない値）は過去日では使わない
+ *   COACHING_SCHEDULED      任意。'true' のとき schedule 実行として扱い、COACHING_DATE が空なら
+ *                           「直近の予定スロット（23:30 JST）が属する日」を対象にする。GitHub の
+ *                           schedule 遅延が日付をまたいでも前日（本来の対象日）の講評を生成するため
  *
  * 注意: パブリックリポのActionsログは公開されるため、講評本文や取得データはログに出さない。
  */
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { addDaysYmd, fetchRange, localYmd, resolveTargetDate } from './dates.mjs';
+import { addDaysYmd, fetchRange, localYmd, resolveTargetDate, scheduleTargetDate } from './dates.mjs';
 import { deriveTerms, selectPreviousNotes } from './derive.mjs';
 
 const FETCH_DAYS = 15; // 前日分＋14日トレンドを賄う取得幅
@@ -225,7 +228,13 @@ async function save(kind, date, content, usedModel) {
 
 const kind = 'daily'; // 週次の別枠は廃止（週間視点は毎日の総括に常に含める）
 const today = localYmd(Date.now(), tzOffsetHours);
-const target = resolveTargetDate(process.env.COACHING_DATE, today);
+// schedule 実行（date 入力なし）は「直近の予定スロットが属する日」を対象にする。GitHub の schedule が
+// 遅延して日付をまたいだ場合に、当日扱いでほぼ空の翌日分を作って本来の対象日が欠けるのを防ぐ
+const isDelayedSchedule =
+  process.env.COACHING_SCHEDULED === 'true' && (process.env.COACHING_DATE ?? '').trim() === '';
+const target = isDelayedSchedule
+  ? { ok: true, date: scheduleTargetDate(Date.now(), tzOffsetHours) }
+  : resolveTargetDate(process.env.COACHING_DATE, today);
 if (!target.ok) {
   console.error(target.error);
   process.exit(1);

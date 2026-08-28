@@ -37,3 +37,17 @@ export function resolveTargetDate(raw, today) {
 export function fetchRange(date, days) {
   return { from: addDaysYmd(date, -(days - 1)), to: date };
 }
+
+/**
+ * schedule 実行の生成対象日: 実行時刻から見て「直近の予定スロットが属するローカル日付」を返す。
+ * スロットは既定 14:30 UTC（= 23:30 JST。coaching.yml の cron と対で保つこと）。
+ * 予定どおり〜同日内の遅延では当日、GitHub の遅延で日付をまたいで起動した場合は前日になる
+ * （実事例: 2026-08-27 の 23:30 予定が翌 03:14 JST 開始になり、当日扱いだと対象日が 08-28 にずれた）。
+ */
+export function scheduleTargetDate(nowMs, tzOffsetHours, slotUtcMinutes = 14 * 60 + 30) {
+  const dayMs = 86_400_000;
+  const sinceMidnightUtc = ((nowMs % dayMs) + dayMs) % dayMs;
+  const todaySlotMs = nowMs - sinceMidnightUtc + slotUtcMinutes * 60_000;
+  const lastSlotMs = todaySlotMs <= nowMs ? todaySlotMs : todaySlotMs - dayMs;
+  return localYmd(lastSlotMs, tzOffsetHours);
+}

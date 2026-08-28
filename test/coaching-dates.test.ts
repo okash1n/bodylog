@@ -3,7 +3,14 @@
  * ジョブ本体（generate.mjs）は環境変数とネットワークに依存するため、日付の解決だけをここで固定する。
  */
 import { describe, expect, it } from 'vitest';
-import { addDaysYmd, fetchRange, isValidYmd, localYmd, resolveTargetDate } from '../coaching/dates.mjs';
+import {
+  addDaysYmd,
+  fetchRange,
+  isValidYmd,
+  localYmd,
+  resolveTargetDate,
+  scheduleTargetDate,
+} from '../coaching/dates.mjs';
 
 describe('localYmd', () => {
   it('UTC+9 では 14:59Z が当日、15:00Z が翌日になる', () => {
@@ -57,5 +64,32 @@ describe('fetchRange', () => {
   it('対象日を末尾とする直近N日（両端含む）を返す', () => {
     expect(fetchRange('2026-08-24', 15)).toEqual({ from: '2026-08-10', to: '2026-08-24' });
     expect(fetchRange('2026-08-24', 1)).toEqual({ from: '2026-08-24', to: '2026-08-24' });
+  });
+});
+
+describe('scheduleTargetDate', () => {
+  it('JST: 予定どおり〜同日内の遅延は当日を対象にする', () => {
+    expect(scheduleTargetDate(Date.UTC(2026, 7, 26, 14, 30), 9)).toBe('2026-08-26'); // 23:30 JST ちょうど
+    expect(scheduleTargetDate(Date.UTC(2026, 7, 26, 14, 47), 9)).toBe('2026-08-26'); // 23:47 JST（通常の遅延）
+    expect(scheduleTargetDate(Date.UTC(2026, 7, 26, 14, 54), 9)).toBe('2026-08-26'); // 23:54 JST（間に合う限界近く）
+  });
+  it('JST: 日付をまたいだ遅延は前日を対象にする（2026-08-27 の実事例）', () => {
+    expect(scheduleTargetDate(Date.UTC(2026, 7, 27, 18, 14), 9)).toBe('2026-08-27'); // 翌 03:14 JST 開始
+    expect(scheduleTargetDate(Date.UTC(2026, 7, 27, 15, 0), 9)).toBe('2026-08-27'); // 翌 00:00 JST 開始
+    expect(scheduleTargetDate(Date.UTC(2026, 7, 28, 5, 29), 9)).toBe('2026-08-27'); // 翌 14:29 JST（次スロット直前）
+  });
+  it('offset 0: スロットは 14:30 ローカル。前後で当日/前日が切り替わる', () => {
+    expect(scheduleTargetDate(Date.UTC(2026, 7, 26, 14, 40), 0)).toBe('2026-08-26');
+    expect(scheduleTargetDate(Date.UTC(2026, 7, 27, 2, 0), 0)).toBe('2026-08-26');
+  });
+  it('負のオフセットでも直近スロットのローカル日付になる', () => {
+    // UTC-5 ではスロットは 09:30 ローカル。09:00 ローカル起動は前日スロット扱い、10:00 ローカルは当日
+    expect(scheduleTargetDate(Date.UTC(2026, 7, 27, 14, 0), -5)).toBe('2026-08-26');
+    expect(scheduleTargetDate(Date.UTC(2026, 7, 27, 15, 0), -5)).toBe('2026-08-27');
+  });
+  it('スロットがローカルで日付をまたぐオフセットでは、ローカル側の日付になる（tz変換の検証）', () => {
+    // UTC+10 では 14:30 UTC スロット = 翌 00:30 ローカル。UTC 日付のまま返す誤実装はここで落ちる
+    expect(scheduleTargetDate(Date.UTC(2026, 7, 26, 14, 40), 10)).toBe('2026-08-27');
+    expect(scheduleTargetDate(Date.UTC(2026, 7, 27, 10, 0), 10)).toBe('2026-08-27'); // 翌日 20:00 ローカルでも直近スロットは同じ
   });
 });

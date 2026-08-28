@@ -13,7 +13,9 @@ name: AI Coaching
 
 on:
   schedule:
-    # 23:30 JST。当日分を生成し、23:55の日次ダイジェスト（Slack）が本文に差し込む
+    # 23:30 JST。当日分を生成し、23:55の日次ダイジェスト（Slack）が本文に差し込む。
+    # 遅延で日付をまたいで起動した場合は前日分（本来の対象日）を生成する（generate.mjs のガード）。
+    # この時刻を変えるときは coaching/dates.mjs の scheduleTargetDate 既定値（14:30 UTC）も合わせること
     - cron: "30 14 * * *"
   workflow_dispatch:
     inputs:
@@ -24,7 +26,9 @@ on:
         default: ""
 
 # 対象日ごとに直列化する。group を固定にすると、待機中の実行が次の投入で置き換えられる GitHub の仕様により
-# 複数の過去日を続けて投入したとき先の日付の再生成が黙って消える。schedule / date 未指定は 'today' に集約
+# 複数の過去日を続けて投入したとき先の日付の再生成が黙って消える。schedule / date 未指定は 'today' に集約。
+# 注意: 遅延で日付をまたいだ schedule 実行は実際には前日分を書くため、同じ前日を date 指定で手動投入すると
+# group が別（today / 日付）になり直列化されない（どちらも有効な講評の upsert なので後勝ちで実害は小さい）
 concurrency:
   group: coaching-${{ inputs.date || 'today' }}
   cancel-in-progress: false
@@ -75,5 +79,7 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           COACHING_API_SECRET: ${{ secrets.COACHING_API_SECRET }}
           BODYLOG_BASE_URL: ${{ secrets.BODYLOG_BASE_URL }}
-          # schedule 実行では inputs が空 → 当日分（従来どおり）
+          # schedule 実行では inputs が空 → 直近の予定スロットが属する日（通常は当日、
+          # 遅延で日付をまたいだ場合は前日）を generate.mjs が対象にする
           COACHING_DATE: ${{ inputs.date }}
+          COACHING_SCHEDULED: ${{ github.event_name == 'schedule' }}
