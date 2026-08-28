@@ -351,7 +351,7 @@ ChatGPT・Claude などのAIクライアントから体重推移・食事記録�
 
 生成ジョブの起動は二段構え:
 
-- **推奨: Worker からの起動** — Worker の 5 分毎 cron が 23:30 JST を過ぎた最初の実行で、GitHub API（workflow_dispatch）により `coaching.yml` を起動し、生成対象日を `date` 入力で明示する。GitHub の schedule は数分〜十数分（まれに数時間）遅れるため、時刻どおり発火する Cloudflare cron を起点にすると 23:55 のダイジェストに確実に間に合う。起動に失敗した夜は管理者向け Slack アラートが届き、下のフォールバックに委ねる。有効化手順: 1) GitHub の Fine-grained PAT を作成（Repository access = このリポジトリのみ、Permissions = **Actions: Read and write**。有効期限あり・失効前に更新）、2) `npx wrangler secret put GITHUB_DISPATCH_TOKEN` で登録、3) `wrangler.toml` の `[vars]` に `GITHUB_DISPATCH_REPO = "<owner>/<repo>"` を追加してデプロイ（CI 利用時は `WRANGLER_TOML` Secret も更新）
+- **推奨: Worker からの起動** — Worker の 5 分毎 cron が 23:30 JST を過ぎた最初の実行で、GitHub API（workflow_dispatch）により `coaching.yml` を起動し、生成対象日を `date` 入力で明示する。GitHub の schedule は数分〜十数分（まれに数時間）遅れるため、時刻どおり発火する Cloudflare cron を起点にすると 23:55 のダイジェストに確実に間に合う。起動に失敗した夜は管理者向け Slack アラートが届き、下のフォールバックに委ねる。有効化手順: 1) GitHub の Fine-grained PAT を作成（Repository access = このリポジトリのみ、Permissions = **Actions: Read and write**。有効期限あり・失効前に更新）、2) `npx wrangler secret put GITHUB_DISPATCH_TOKEN` で登録、3) `npx wrangler secret put GITHUB_DISPATCH_REPO` で対象リポジトリ（`<owner>/<repo>`）を登録（`wrangler.toml` の `[vars]` に書いてデプロイでもよい。その場合 CI 利用時は `WRANGLER_TOML` Secret も更新）
 - **フォールバック: GitHub の schedule（23:30 JST）** — 従来どおり `coaching.yml` に残る。対象日の講評が既に保存されていればスキップし（Worker 起動分の生成が完了する前に schedule 側が走った場合は二重生成になりうるが、同内容の upsert で実害はない）、遅延で日付をまたいで起動した場合は前日分（本来の対象日）を生成する。PAT を設定しない場合はこの経路だけで従来どおり動く
 
 セットアップ（GitHub Secrets を3つ登録する。ダイジェストの送り直し `digest.yml` だけを使うなら `COACHING_API_SECRET` と `BODYLOG_BASE_URL` の2つで足りる）:
