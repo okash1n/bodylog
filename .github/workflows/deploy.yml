@@ -59,7 +59,10 @@ jobs:
       - name: Mask custom domains in logs
         run: |
           # ホスト名の形をした値だけをマスク登録する（余計な短い断片を登録すると、ログ中の
-          # その文字すべてが***化されて可読性が壊れるため。tr -d はCRLF対策）
+          # その文字すべてが***化されて可読性が壊れるため。tr -d はCRLF対策）。
+          # 注意: routes は { pattern = "ホスト名", custom_domain = true } の形式を維持すること。
+          # zone ルート形式（"host/path"）や単一引用符の TOML 文字列に変えるとこの抽出に掛からず、
+          # マスクされないままステップは成功してしまう（サイレント失敗）
           grep -oE 'pattern *= *"[^"]+"' wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r' \
             | grep -E '^[A-Za-z0-9*][A-Za-z0-9.*-]+\.[A-Za-z0-9-]+$' | sort -u | while read -r domain; do
             echo "::add-mask::$domain"
@@ -93,7 +96,10 @@ jobs:
       - name: Mask custom domains in logs
         run: |
           # ホスト名の形をした値だけをマスク登録する（余計な短い断片を登録すると、ログ中の
-          # その文字すべてが***化されて可読性が壊れるため。tr -d はCRLF対策）
+          # その文字すべてが***化されて可読性が壊れるため。tr -d はCRLF対策）。
+          # 注意: routes は { pattern = "ホスト名", custom_domain = true } の形式を維持すること。
+          # zone ルート形式（"host/path"）や単一引用符の TOML 文字列に変えるとこの抽出に掛からず、
+          # マスクされないままステップは成功してしまう（サイレント失敗）
           grep -oE 'pattern *= *"[^"]+"' wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r' \
             | grep -E '^[A-Za-z0-9*][A-Za-z0-9.*-]+\.[A-Za-z0-9-]+$' | sort -u | while read -r domain; do
             echo "::add-mask::$domain"
