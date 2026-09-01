@@ -42,8 +42,9 @@ function instructions(tzOffsetHours: number): string {
     'まず get_weight_summary で全体像を取り、詳細な推移が必要なときだけ get_daily_series / get_raw_measurements を使う。',
     '食事記録はsearch_menus / get_meal_logsで照会できる（記録・メニュー作成は認可済みエンドポイント/mcpのみ）。',
     'PFC（protein_g/fat_g/carbs_g）はグラム数。比率を出すときはP×4/F×9/C×4kcalに換算し3者の合計を100%として正規化すること。登録カロリーで割ってはいけない（食物繊維等の差で換算合計と登録kcalは一致せず、100%を超えうる）。',
-    '運動記録はsearch_exercise_menus / get_exercise_logsで照会できる（有酸素は消費kcal、筋トレはセット明細と総ボリューム。記録・種目作成は/mcpのみ）。',
-    '筋トレ種目の自己ベスト（最大重量・REP数ごとの最大・推定1RM・最大REP・最大セット/セッションボリューム）と前回セッションの内容は get_exercise_records で引く（get_exercise_logs で全記録を取って推論しない）。log_exercise の応答の records_broken に自己ベスト更新が入るので、更新があれば伝える。',
+    '運動記録はsearch_exercise_menus / get_exercise_logsで照会できる（有酸素は消費kcal、筋トレはセット明細と総ボリューム。筋トレも時間を記録でき、種目にMETsがあれば消費kcalが自動算出される。記録・種目作成は/mcpのみ）。',
+    'サーキット/AMRAP（複数種目を1ラウンドとして繰り返す運動）は circuit 構成付きの種目として登録し、記録は rounds（ラウンド数）だけ渡す。換算ボリューム・種目別レップ・消費kcalはサーバが算出するので、クライアント側で換算値を計算・入力しない。',
+    '筋トレ種目の自己ベスト（最大重量・REP数ごとの最大・推定1RM・最大REP・最大セット/セッションボリューム）と前回セッションの内容は get_exercise_records で引く（get_exercise_logs で全記録を取って推論しない）。自己ベストは単独トレーニングのみ対象で、サーキット内の実績は含まない。log_exercise の応答の records_broken に自己ベスト更新が入るので、更新があれば伝える。',
     '目標（体重・脂肪量）はget_weight_summaryのgoalで確認でき、set_goalで設定・解除できる（ユーザーが明示的に依頼したときだけ変更すること）。',
     '体重はlog_weightで手動記録できる（体重計が無い/Withings未連携の場合の記録手段。ユーザーが体重を報告したときに使う）。',
     '誤登録の修正は update_menu / update_exercise_menu（メニュー・種目の編集）、update_meal_log（食事記録の倍率・日時・区分）、archive_menu / archive_exercise_menu（一覧から非表示。archived=falseで復元）、delete_meal_log / delete_exercise_log / delete_weight（記録の削除）で行える。いずれもユーザーが明示的に依頼したときだけ使い、削除・アーカイブの前に対象（名前・日時・値）を確認すること。運動記録の編集はできないので削除して記録し直す。',
@@ -66,6 +67,32 @@ async function guarded(tool: string, fn: () => Promise<CallToolResult>): Promise
     console.error(`[mcp] ${tool} failed`, err);
     return errorResult('internal error');
   }
+}
+
+/**
+ * サーキット構成の各項目を menu_id に解決する（menu_name は完全一致→一意な部分一致）。
+ * 解決後の配列は parseExerciseMenuInput / parseExerciseMenuPatch の circuit として渡す
+ */
+async function resolveCircuitArg(
+  env: Env,
+  circuit: { menu_id?: string; menu_name?: string; reps: number }[] | undefined,
+): Promise<{ ok: true; value?: { menu_id: string; reps: number }[] } | { ok: false; error: string }> {
+  if (!circuit) return { ok: true };
+  const out: { menu_id: string; reps: number }[] = [];
+  for (const it of circuit) {
+    let menuId = it.menu_id;
+    if (!menuId && it.menu_name) {
+      const resolved = resolveIdByName(
+        await listExerciseMenus(env, { q: it.menu_name, category: 'strength' }),
+        it.menu_name,
+      );
+      if (!resolved.ok) return resolved;
+      menuId = resolved.id;
+    }
+    if (!menuId) return { ok: false, error: 'circuit item requires menu_id or menu_name' };
+    out.push({ menu_id: menuId, reps: it.reps });
+  }
+  return { ok: true, value: out };
 }
 
 /**
@@ -182,7 +209,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
     'get_exercise_logs',
     {
       description:
-        '運動記録を返す。有酸素は消費kcal（METs×体重×時間×1.05）、筋トレはセット明細と総ボリューム付き。daysまたはfrom/toで期間指定',
+        '運動記録を返す。有酸素は消費kcal（METs×体重×時間×1.05）、筋トレはセット明細と総ボリューム付き（時間を記録した筋トレは消費kcalも付く）。サーキットは親ログ（rounds・時間・kcal）と構成種目の子ログが group_id で束なって返る。daysまたはfrom/toで期間指定',
       inputSchema: rangeShape,
       annotations: { readOnlyHint: true },
     },
@@ -196,7 +223,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
     'get_exercise_records',
     {
       description:
-        '筋トレ種目の自己ベストを返す: max_weight（REP数問わずの最大重量）、rep_maxes（REP数ごとの最大重量）、estimated_1rm（Epley推定、reps<=12のセットから。自重種目はnull）、max_reps、max_set_volume（1セットのreps×実効重量）、max_session_volume（1回のトレーニングの総ボリューム）、last_session（前回のセット明細）。menu_id か menu_name で種目を指定する。有酸素種目は対象外',
+        '筋トレ種目の自己ベストを返す: max_weight（REP数問わずの最大重量）、rep_maxes（REP数ごとの最大重量）、estimated_1rm（Epley推定、reps<=12のセットから。自重種目はnull）、max_reps、max_set_volume（1セットのreps×実効重量）、max_session_volume（1回のトレーニングの総ボリューム）、last_session（前回のセット明細）。自己ベストは単独トレーニングのみ対象（サーキット内の実績は含まない）。menu_id か menu_name で種目を指定する。有酸素種目は対象外',
       inputSchema: {
         menu_id: z.string().optional().describe('種目ID（search_exercise_menusで取得）'),
         menu_name: z.string().optional().describe('種目名（完全一致→一意な部分一致の順で解決）'),
@@ -270,17 +297,28 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       'log_exercise',
       {
         description:
-          '運動を記録する。menu_id か menu_name で登録済み種目を指定する。有酸素は duration_min（分）、筋トレは sets（[{reps, weight_kg?}]）を渡す。種目にない運動は記録できない（無ければ確認の上create_exercise_menuで登録してから）。応答の records_broken に自己ベスト更新（kind / reps / previous / current）が入る',
+          '運動を記録する。menu_id か menu_name で登録済み種目を指定する。有酸素は duration_min（分）、筋トレは sets（[{reps, weight_kg?}]）、サーキット種目は rounds（ラウンド数）を渡す。種目にない運動は記録できない（無ければ確認の上create_exercise_menuで登録してから）。ボリューム・消費kcal等の換算値はサーバが算出するので、クライアント側で計算・入力しない。応答の records_broken に自己ベスト更新（kind / reps / previous / current）が入る（サーキットは常に空）',
         inputSchema: {
           menu_id: z.string().optional().describe('種目ID（search_exercise_menusで取得）'),
           menu_name: z.string().optional().describe('種目名（完全一致→一意な部分一致の順で解決）'),
           performed_at: z.string().optional().describe('実施日時 ISO8601（省略時は現在時刻）'),
           note: z.string().optional(),
-          duration_min: z.number().positive().optional().describe('有酸素: 実施時間（分）'),
+          duration_min: z.number().positive().max(1440).optional().describe(
+            '実施時間（分）。有酸素は必須。筋トレ・サーキットは任意（種目にMETsが設定されていれば消費kcalを自動算出して記録する）',
+          ),
           sets: z
-            .array(z.object({ reps: z.number().int().positive(), weight_kg: z.number().nonnegative().optional() }))
+            .array(z.object({
+              reps: z.number().int().positive().max(1000),
+              weight_kg: z.number().nonnegative().max(1000).optional(),
+            }))
+            .max(50)
             .optional()
-            .describe('筋トレ: セット明細。weight_kgは追加/バーの重量（自重種目は体重が自動算入される）'),
+            .describe(
+              '筋トレ: セット明細。weight_kgは追加/バーの重量（自重種目は体重×bodyweight_factorが自動算入される。実効重量 = weight_kg + 体重×係数）。サーキット種目には渡さない（roundsを使う）',
+            ),
+          rounds: z.number().int().min(1).max(50).optional().describe(
+            'サーキット: ラウンド数。サーバが1ラウンド=構成種目の1セットに展開し、種目別レップ・換算ボリュームを算出する。サーキット以外の種目には渡せない',
+          ),
         },
       },
       (args) => guarded('log_exercise', async () => {
@@ -305,23 +343,41 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       'create_exercise_menu',
       {
         description:
-          '運動種目（マスタ）を新規登録する。ユーザーが明示的に種目登録を依頼したときだけ使うこと。有酸素はmets必須、筋トレは自重種目ならis_bodyweight=true',
+          '運動種目（マスタ）を新規登録する。ユーザーが明示的に種目登録を依頼したときだけ使うこと。有酸素はmets必須、筋トレは自重種目ならis_bodyweight=true（bodyweight_factorも必ず目安から指定する）。サーキット/AMRAP（例: Cindy）は既存の筋トレ種目を circuit で組み合わせて登録し、記録時は rounds を渡すだけでよい',
         inputSchema: {
           name: z.string().describe('種目名'),
-          category: z.enum(['cardio', 'strength']).describe('cardio=有酸素 / strength=筋トレ'),
-          mets: z.number().positive().optional().describe('有酸素の運動強度（安静時比）。cardioで必須'),
-          muscle_group: z.string().optional().describe('筋トレの対象部位（任意）'),
-          is_bodyweight: z.boolean().optional().describe('筋トレの自重種目（懸垂・腕立て等）'),
-          bodyweight_factor: z.number().min(0).max(1).optional().describe(
-            '自重種目のボリューム補正係数0〜1（既定1.0=全体重）。体の一部しか動かさない種目で下げる（例: コア系0.1〜0.4、腕立て0.65）',
+          category: z.enum(['cardio', 'strength']).describe('cardio=有酸素 / strength=筋トレ（サーキットもstrength）'),
+          mets: z.number().positive().max(30).optional().describe(
+            '運動強度METs（安静時比）。cardioで必須。strengthでも任意で設定でき、duration_min記録時に消費kcalを自動算出する（目安: 高強度サーキット8前後、通常ウェイト3.5〜6）',
           ),
+          muscle_group: z.string().optional().describe('筋トレの対象部位（任意）'),
+          is_bodyweight: z.boolean().optional().describe('筋トレの自重種目（懸垂・腕立て等）。サーキット自体には付けない（構成種目側に付ける）'),
+          bodyweight_factor: z.number().min(0).max(1).optional().describe(
+            '自重種目の体重算入係数0〜1（実効重量 = weight_kg + 体重×係数）。自重種目は必ず目安から指定する（既定1.0=全体重は過大評価になりやすい）。目安: 懸垂0.8 / ディップス0.85 / スクワット0.4 / ランジ0.5 / 腕立て0.6 / 膝つき腕立て0.45 / コア系0.2〜0.35。アシスト付き自重は (係数×体重 − アシストkg) / 体重 で設定する（換算はこちらで行い、ユーザーにはさせない）',
+          ),
+          circuit: z
+            .array(z.object({
+              menu_id: z.string().optional().describe('構成種目のID'),
+              menu_name: z.string().optional().describe('構成種目名（完全一致→一意な部分一致で解決）'),
+              reps: z.number().int().min(1).max(1000).describe('1ラウンドあたりの回数'),
+            }))
+            .min(1)
+            .max(10)
+            .optional()
+            .describe(
+              'サーキットの1ラウンド分の構成（登録済みの筋トレ種目を参照、最大10種目）。構成種目が未登録なら先にcreate_exercise_menuで登録する。この定義を後から変えても過去の記録は変わらない',
+            ),
           note: z.string().optional(),
         },
       },
       (args) => guarded('create_exercise_menu', async () => {
-        const parsed = parseExerciseMenuInput(args);
+        const circuit = await resolveCircuitArg(env, args.circuit);
+        if (!circuit.ok) return errorResult(circuit.error);
+        const parsed = parseExerciseMenuInput({ ...args, circuit: circuit.value });
         if (!parsed.ok) return errorResult(parsed.error);
-        return jsonResult(await createExerciseMenu(env, parsed.value));
+        const menu = await createExerciseMenu(env, parsed.value);
+        if ('error' in menu) return errorResult(menu.error);
+        return jsonResult(menu);
       }),
     );
     server.registerTool(
@@ -439,22 +495,42 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       'update_exercise_menu',
       {
         description:
-          '運動種目（マスタ）を編集する。指定した項目だけ更新し、mets / muscle_group / note は null で消せる。category は変更できない（作り直す）。過去の運動記録は記録時点のスナップショットなので変わらない。ユーザーが明示的に修正を依頼したときだけ使うこと',
+          '運動種目（マスタ）を編集する。指定した項目だけ更新し、mets / muscle_group / circuit / note は null で消せる。category は変更できない（作り直す）。過去の運動記録は記録時点のスナップショットなので変わらない。ユーザーが明示的に修正を依頼したときだけ使うこと',
         inputSchema: {
           menu_id: z.string().describe('種目ID（search_exercise_menusで取得）'),
           name: z.string().optional().describe('種目名'),
-          mets: z.number().positive().nullable().optional().describe('有酸素の運動強度'),
+          mets: z.number().positive().max(30).nullable().optional().describe(
+            '運動強度METs。strengthでも設定でき、duration_min記録時に消費kcalを自動算出する',
+          ),
           muscle_group: z.string().nullable().optional().describe('筋トレの対象部位'),
           is_bodyweight: z.boolean().optional().describe('筋トレの自重種目か'),
-          bodyweight_factor: z.number().min(0).max(1).nullable().optional().describe('自重種目のボリューム補正係数0〜1（null で既定1.0）'),
+          bodyweight_factor: z.number().min(0).max(1).nullable().optional().describe(
+            '自重種目の体重算入係数0〜1（null で既定1.0）。目安: 懸垂0.8 / ディップス0.85 / スクワット0.4 / ランジ0.5 / 腕立て0.6 / コア系0.2〜0.35',
+          ),
+          circuit: z
+            .array(z.object({
+              menu_id: z.string().optional().describe('構成種目のID'),
+              menu_name: z.string().optional().describe('構成種目名（完全一致→一意な部分一致で解決）'),
+              reps: z.number().int().min(1).max(1000).describe('1ラウンドあたりの回数'),
+            }))
+            .min(1)
+            .max(10)
+            .nullable()
+            .optional()
+            .describe('サーキット構成の差し替え（nullでサーキット構成を外して通常種目に戻す）。過去の記録は変わらない'),
           note: z.string().nullable().optional(),
         },
       },
       (args) => guarded('update_exercise_menu', async () => {
-        const { menu_id, ...patch } = args;
-        const parsed = parseExerciseMenuPatch(patch);
+        const { menu_id, circuit: circuitArg, ...patch } = args;
+        const circuit = await resolveCircuitArg(env, circuitArg ?? undefined);
+        if (!circuit.ok) return errorResult(circuit.error);
+        const parsed = parseExerciseMenuPatch(
+          circuitArg === undefined ? patch : { ...patch, circuit: circuitArg === null ? null : circuit.value },
+        );
         if (!parsed.ok) return errorResult(parsed.error);
         const menu = await updateExerciseMenu(env, menu_id, parsed.value);
+        if (menu && 'error' in menu) return errorResult(menu.error);
         return menu ? jsonResult(menu) : errorResult('menu not found');
       }),
     );
@@ -479,7 +555,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       'delete_exercise_log',
       {
         description:
-          '運動記録を1件削除する（セット明細ごと）。運動記録は編集できないので、直したいときは削除して log_exercise し直す。ユーザーが明示的に依頼したときだけ使い、実行前に対象（種目名・日時）を確認すること',
+          '運動記録を1件削除する（セット明細ごと）。サーキットの親ログID（group_idが自身のidと一致する行）を指定するとグループ全体（構成種目の子ログ含む）が削除される。運動記録は編集できないので、直したいときは削除して log_exercise し直す。ユーザーが明示的に依頼したときだけ使い、実行前に対象（種目名・日時）を確認すること',
         inputSchema: { log_id: z.string().describe('運動記録ID（get_exercise_logsで取得）') },
         annotations: { destructiveHint: true },
       },

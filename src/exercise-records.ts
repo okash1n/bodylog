@@ -144,13 +144,14 @@ export function diffRecords(before: ExerciseRecords, after: ExerciseRecords): Re
  * 1種目の全セットを実施時刻順（同時刻は log_id, set_index）で取る。絞り込みは idx_exercise_logs_menu_performed。
  * performed_at は入力の ISO8601 文字列をそのまま保存しているため（'Z' と '+09:00' が混在しうる）、
  * 文字列順ではなく julianday() で時刻順にする。個人1人分（年数百行）なので上限は設けない。
+ * 自己ベストは単独トレーニングのみ対象（サーキット展開の子セットは group_id 付きのため除外。D7）。
  */
 export async function fetchRecordRows(env: Env, menuId: string): Promise<RecordSetRow[]> {
   const res = await env.DB.prepare(
     `SELECT s.log_id, l.performed_at, s.set_index, s.reps, s.weight_kg,
         l.is_bodyweight, l.bodyweight_factor, l.body_weight_kg
 FROM exercise_sets s JOIN exercise_logs l ON l.id = s.log_id
-WHERE l.menu_id = ?1 AND l.category = 'strength'
+WHERE l.menu_id = ?1 AND l.category = 'strength' AND l.group_id IS NULL
 ORDER BY julianday(l.performed_at), l.id, s.set_index`,
   )
     .bind(menuId)

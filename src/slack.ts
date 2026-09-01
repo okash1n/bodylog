@@ -222,16 +222,18 @@ export function formatNetLine(intake: DailyIntake | null, exercise: DailyExercis
   return `*カロリー収支* : ${Math.round(intake.calories - total)} kcal`;
 }
 
-/** 運動内訳行 = 筋トレ件数・総ボリューム / 有酸素件数・消費kcal。どちらも無い日は出さない */
+/** 運動内訳行 = 筋トレ件数・総ボリューム・消費kcal / 有酸素件数・消費kcal。どちらも無い日は出さない */
 export function formatExerciseLine(exercise: DailyExercise | null): string | null {
   if (!exercise) return null;
   const parts: string[] = [];
   if (exercise.strength_count > 0) {
-    const vol = exercise.strength_volume != null ? ` (Vol ${Math.round(exercise.strength_volume)})` : '';
-    parts.push(`筋トレ ${exercise.strength_count}件${vol}`);
+    const details: string[] = [];
+    if (exercise.strength_volume != null) details.push(`Vol ${Math.round(exercise.strength_volume)}`);
+    if (exercise.strength_calories != null) details.push(`${Math.round(exercise.strength_calories)} kcal`);
+    parts.push(`筋トレ ${exercise.strength_count}件${details.length ? ` (${details.join(', ')})` : ''}`);
   }
   if (exercise.cardio_count > 0) {
-    const kcal = exercise.calories_burned != null ? ` (${Math.round(exercise.calories_burned)} kcal)` : '';
+    const kcal = exercise.cardio_calories != null ? ` (${Math.round(exercise.cardio_calories)} kcal)` : '';
     parts.push(`有酸素 ${exercise.cardio_count}件${kcal}`);
   }
   if (parts.length === 0) return null;
