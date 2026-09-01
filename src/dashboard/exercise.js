@@ -93,9 +93,11 @@
   // ---- 種目管理 ----
   function menuMeta(m) {
     if (m.category === 'cardio') return `有酸素 · ${m.mets} METs`;
+    if (m.circuit) return `サーキット · ${m.circuit.length}種目${m.mets ? ` · ${m.mets} METs` : ''}`;
     const parts = ['筋トレ'];
     if (m.muscle_group) parts.push(m.muscle_group);
     if (m.is_bodyweight) parts.push(m.bodyweight_factor != null && m.bodyweight_factor < 1 ? `自重×${m.bodyweight_factor}` : '自重');
+    if (m.mets) parts.push(`${m.mets} METs`);
     return parts.join(' · ');
   }
   // 種目管理一覧: 絞り込み・アーカイブ済み表示・件数（種目が増えても見失わないように）
@@ -148,16 +150,39 @@
     }
   });
 
-  // カテゴリ選択でMETs（有酸素）／部位・自重（筋トレ）の入力欄を出し分ける
+  // カテゴリ選択でMETs／部位・自重（筋トレ）・サーキット構成の入力欄を出し分ける。
+  // METsは両カテゴリで使える（筋トレは任意。時間を記録すると消費kcalを自動算出）
   function syncMenuFormFields() {
     const isCardio = $('exercise-menu-category').value === 'cardio';
-    $('exercise-menu-mets').hidden = !isCardio;
+    $('exercise-menu-mets').placeholder = isCardio ? 'METs' : 'METs(任意)';
     $('exercise-menu-muscle').hidden = isCardio;
-    $('exercise-menu-bw-wrap').hidden = isCardio;
-    $('exercise-menu-bwf-wrap').hidden = isCardio;
+    $('exercise-menu-circuit-wrap').hidden = isCardio;
+    const isCircuit = !isCardio && $('exercise-menu-circuit').checked;
+    $('exercise-circuit-editor').hidden = !isCircuit;
+    if (isCircuit && $('exercise-circuit-items').children.length === 0) addCircuitItemRow();
+    // 自重/係数はサーキット自体には付けない（構成種目側に付ける）
+    $('exercise-menu-bw-wrap').hidden = isCardio || isCircuit;
+    $('exercise-menu-bwf-wrap').hidden = isCardio || isCircuit;
   }
   $('exercise-menu-category').addEventListener('change', syncMenuFormFields);
+  $('exercise-menu-circuit').addEventListener('change', syncMenuFormFields);
   syncMenuFormFields();
+
+  // サーキット構成エディタ（構成種目のselect + 1ラウンドの回数）
+  function addCircuitItemRow() {
+    const candidates = menus.filter((m) => m.category === 'strength' && !m.circuit);
+    const div = document.createElement('div');
+    div.className = 'set-row';
+    div.innerHTML =
+      `<select class="circuit-menu" aria-label="構成種目">${candidates.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select>` +
+      '<input class="circuit-reps" type="number" min="1" max="1000" step="1" placeholder="回" aria-label="1ラウンドの回数">' +
+      '<button type="button" class="ghost-btn circuit-remove">×</button>';
+    $('exercise-circuit-items').appendChild(div);
+  }
+  $('exercise-circuit-add').addEventListener('click', addCircuitItemRow);
+  $('exercise-circuit-items').addEventListener('click', (e) => {
+    if (e.target.classList.contains('circuit-remove')) e.target.closest('.set-row').remove();
+  });
 
   $('exercise-menu-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -166,38 +191,62 @@
     if (category === 'cardio') {
       body.mets = Number($('exercise-menu-mets').value);
     } else {
+      const metsRaw = $('exercise-menu-mets').value;
+      if (metsRaw !== '') body.mets = Number(metsRaw);
       const muscle = $('exercise-menu-muscle').value.trim();
       if (muscle) body.muscle_group = muscle;
-      body.is_bodyweight = $('exercise-menu-bw').checked;
-      if (body.is_bodyweight) {
-        // 体重算入係数（0〜1）。未入力・不正値は既定1.0（サーバー側の既定に任せる）
-        const factor = parseFloat($('exercise-menu-bwf').value);
-        if (Number.isFinite(factor) && factor >= 0 && factor <= 1) body.bodyweight_factor = factor;
+      if ($('exercise-menu-circuit').checked) {
+        const items = [];
+        for (const row of $('exercise-circuit-items').children) {
+          const menuId = row.querySelector('.circuit-menu').value;
+          const reps = Number(row.querySelector('.circuit-reps').value);
+          if (menuId && reps) items.push({ menu_id: menuId, reps });
+        }
+        if (!items.length) return toast('サーキットの構成種目と回数を入力してください', { tone: 'error' });
+        body.circuit = items;
+      } else {
+        body.is_bodyweight = $('exercise-menu-bw').checked;
+        if (body.is_bodyweight) {
+          // 係数は明示必須（既定1.0=全体重は過大評価になりやすいため黙って適用しない。D5）
+          const factor = parseFloat($('exercise-menu-bwf').value);
+          if (!Number.isFinite(factor) || factor < 0 || factor > 1) {
+            return toast('自重種目は係数を指定してください（目安: 懸垂0.8 / ディップス0.85 / 腕立て0.6 / スクワット0.4 / ランジ0.5 / コア系0.2〜0.35）', { tone: 'error' });
+          }
+          body.bodyweight_factor = factor;
+        }
       }
     }
     const res = await rw('exercise/menus', 'POST', body);
     if (!res.ok) return toast(`種目追加に失敗: ${(await res.json()).error ?? res.status}`, { tone: 'error' });
     toast('種目を追加しました');
     e.target.reset();
+    $('exercise-circuit-items').innerHTML = '';
     syncMenuFormFields();
     refresh();
   });
 
-  // ---- 履歴テーブル（直近50日、日付グループ化） ----
+  // ---- 履歴テーブル（直近50日、日付グループ化。サーキットは親1行に畳み、クリックで子明細を展開） ----
   function setsLabel(log) {
     return log.sets
       .map((s) => `${s.weight_kg != null ? s.weight_kg : (log.is_bodyweight ? '自重' : 0)}×${s.reps}`)
       .join(', ');
   }
+  const kcalCell = (l) => (l.calories != null ? `${Math.round(l.calories)} kcal` : '—');
   function renderHistory(logs) {
     if (!logs.length) {
       $('exercise-history').innerHTML = '<p class="meals-empty">まだ記録がありません。</p>';
       return;
     }
     const canDel = loggedIn();
+    // サーキットの子ログは親の展開行として描くため、トップレベルの一覧からは外す
+    const childrenByGroup = Object.create(null);
+    logs.forEach((l) => {
+      if (l.group_id && l.group_id !== l.id) (childrenByGroup[l.group_id] ??= []).push(l);
+    });
     const groups = [];
     const byDate = Object.create(null);
     logs.forEach((l) => {
+      if (l.group_id && l.group_id !== l.id) return;
       const d = localDateOf(l.performed_at);
       if (!byDate[d]) {
         byDate[d] = { d, items: [] };
@@ -205,12 +254,17 @@
       }
       byDate[d].items.push(l);
     });
+    // サーキット親のボリュームは子ログの合計（親自身はsetsを持たない）
+    const volOf = (l) =>
+      l.group_id === l.id
+        ? (childrenByGroup[l.id] ?? []).reduce((a, c) => a + (c.total_volume || 0), 0)
+        : (l.total_volume || 0);
     const span = canDel ? 5 : 4;
     const rows = groups
       .map((g) => {
         g.items.sort((a, b) => String(a.performed_at).localeCompare(String(b.performed_at)));
         const burn = g.items.reduce((a, l) => a + (l.calories || 0), 0);
-        const vol = g.items.reduce((a, l) => a + (l.total_volume || 0), 0);
+        const vol = g.items.reduce((a, l) => a + volOf(l), 0);
         const totals = [];
         if (burn > 0) totals.push(`消費 ${Math.round(burn)} kcal`);
         if (vol > 0) totals.push(`ボリューム ${Math.round(vol)}`);
@@ -220,7 +274,21 @@
             if (l.category === 'cardio') {
               return `<tr><td>${esc(l.menu_name)}</td><td>${l.duration_min}分</td><td class="mh-num">${Math.round(l.calories || 0)} kcal</td><td class="mh-num">—</td>${canDel ? delCell(l.id) : ''}</tr>`;
             }
-            return `<tr><td>${esc(l.menu_name)}</td><td>${esc(setsLabel(l))}</td><td class="mh-num">—</td><td class="mh-num">${Math.round(l.total_volume || 0)}</td>${canDel ? delCell(l.id) : ''}</tr>`;
+            if (l.group_id === l.id) {
+              const kids = childrenByGroup[l.id] ?? [];
+              const desc = `${l.rounds ?? '?'}R${l.duration_min ? ` / ${l.duration_min}分` : ''}`;
+              const parent =
+                `<tr class="circuit-parent" data-group="${l.id}"><td>▸ ${esc(l.menu_name)}</td><td>${desc}</td><td class="mh-num">${kcalCell(l)}</td><td class="mh-num">${Math.round(volOf(l))}</td>${canDel ? delCell(l.id) : ''}</tr>`;
+              const childRows = kids
+                .map((c) => {
+                  const reps = c.sets[0] ? c.sets[0].reps : '?';
+                  return `<tr class="circuit-child" data-parent="${l.id}" hidden><td>┗ ${esc(c.menu_name)}</td><td>${reps}回 × ${c.sets.length}R</td><td class="mh-num">—</td><td class="mh-num">${Math.round(c.total_volume || 0)}</td>${canDel ? '<td></td>' : ''}</tr>`;
+                })
+                .join('');
+              return parent + childRows;
+            }
+            const dur = l.duration_min ? ` · ${l.duration_min}分` : '';
+            return `<tr><td>${esc(l.menu_name)}</td><td>${esc(setsLabel(l))}${dur}</td><td class="mh-num">${kcalCell(l)}</td><td class="mh-num">${Math.round(l.total_volume || 0)}</td>${canDel ? delCell(l.id) : ''}</tr>`;
           })
           .join('');
         return head + items;
@@ -234,29 +302,53 @@
   $('exercise-history').addEventListener('click', async (e) => {
     if (e.target.closest('[data-retry]')) return refresh();
     const btn = e.target.closest('button[data-del]');
-    if (btn && confirm('この記録を削除しますか？')) {
-      const res = await rw(`exercise/logs/${btn.dataset.del}`, 'DELETE');
-      toast(res.ok ? '削除しました' : '削除に失敗しました');
-      refresh();
+    if (btn) {
+      const parentRow = btn.closest('tr.circuit-parent');
+      const msg = parentRow ? 'このサーキット記録を削除しますか？（種目別の明細もまとめて消えます）' : 'この記録を削除しますか？';
+      if (confirm(msg)) {
+        const res = await rw(`exercise/logs/${btn.dataset.del}`, 'DELETE');
+        toast(res.ok ? '削除しました' : '削除に失敗しました');
+        refresh();
+      }
+      return;
+    }
+    // サーキット親行のクリックで子明細を開閉する
+    const row = e.target.closest('tr.circuit-parent');
+    if (row) {
+      const open = row.classList.toggle('open');
+      row.querySelector('td').textContent = row.querySelector('td').textContent.replace(open ? '▸' : '▾', open ? '▾' : '▸');
+      $('exercise-history')
+        .querySelectorAll(`tr.circuit-child[data-parent="${row.dataset.group}"]`)
+        .forEach((tr) => { tr.hidden = !open; });
     }
   });
 
-  // ---- 筋トレ総ボリューム × 除脂肪体重 グラフ ----
+  // ---- 筋トレボリューム（実重量/自重換算の積み上げ）× 除脂肪体重 グラフ ----
   function renderVolumeChart() {
     const to = todayJst();
     const from = addDays(to, -(HISTORY_DAYS - 1));
     const labels = buildDateLabels(from, to);
-    const volBy = Object.create(null);
+    const dailyBy = Object.create(null);
     lastDaily.forEach((r) => {
-      volBy[r.d] = r.strength_volume;
+      dailyBy[r.d] = r;
     });
     const ffmBy = Object.create(null);
     lastMeas.forEach((r) => {
       ffmBy[r.d] = r.fat_free_mass;
     });
-    const vol = labels.map((l) => (volBy[l] != null ? volBy[l] : null));
+    // 内訳が返らない過去キャッシュ等では合算を実重量側に落とす（合計は常に一致）
+    const weighted = labels.map((l) => {
+      const r = dailyBy[l];
+      if (!r || r.strength_volume == null) return null;
+      return r.weighted_volume != null ? r.weighted_volume : r.strength_volume;
+    });
+    const bodyweight = labels.map((l) => {
+      const r = dailyBy[l];
+      if (!r || r.strength_volume == null) return null;
+      return r.bodyweight_volume != null ? r.bodyweight_volume : 0;
+    });
     const ffm = labels.map((l) => (ffmBy[l] != null ? ffmBy[l] : null));
-    const hasVol = vol.some((v) => v != null && v > 0);
+    const hasVol = labels.some((l) => dailyBy[l] && dailyBy[l].strength_volume > 0);
     $('exercise-volume-wrap').hidden = !hasVol;
     if (!hasVol) {
       if (volumeChart) {
@@ -270,12 +362,17 @@
       muted: readVar('--text-muted'),
       grid: readVar('--grid'),
       accent: readVar('--accent'),
+      accent2: readVar('--accent-2'),
       ffm: readVar('--accent-3'),
     };
     const datasets = [
       {
-        type: 'bar', label: '総ボリューム', data: vol, yAxisID: 'yVol',
-        backgroundColor: hexToRgba(t.accent, 0.5), borderWidth: 0, order: 2,
+        type: 'bar', label: '実重量', data: weighted, yAxisID: 'yVol', stack: 'vol',
+        backgroundColor: hexToRgba(t.accent, 0.6), borderWidth: 0, order: 2,
+      },
+      {
+        type: 'bar', label: '自重換算', data: bodyweight, yAxisID: 'yVol', stack: 'vol',
+        backgroundColor: hexToRgba(t.accent2, 0.45), borderWidth: 0, order: 2,
       },
       {
         type: 'line', label: '除脂肪体重', data: ffm, yAxisID: 'yFfm',
@@ -305,15 +402,15 @@
               label: (ctx) => {
                 const v = ctx.parsed.y;
                 if (ctx.dataset.yAxisID === 'yFfm') return ` 除脂肪体重: ${v == null ? '—' : v.toFixed(1) + ' kg'}`;
-                return ` 総ボリューム: ${v == null ? '—' : Math.round(v)}`;
+                return ` ${ctx.dataset.label}: ${v == null ? '—' : Math.round(v)}`;
               },
             },
           },
         },
         scales: {
-          x: { ticks: { color: t.muted, maxRotation: 0, maxTicksLimit: 8 }, grid: { display: false }, border: { color: t.grid } },
+          x: { stacked: true, ticks: { color: t.muted, maxRotation: 0, maxTicksLimit: 8 }, grid: { display: false }, border: { color: t.grid } },
           yVol: {
-            type: 'linear', position: 'left', beginAtZero: true, min: 0,
+            type: 'linear', position: 'left', beginAtZero: true, min: 0, stacked: true,
             title: { display: true, text: 'ボリューム', color: t.muted },
             ticks: { color: t.muted }, grid: { color: t.grid }, border: { display: false },
           },
@@ -369,29 +466,34 @@
     },
   });
 
-  // 選択した種目のカテゴリで有酸素／筋トレの入力欄を出し分ける
+  // 選択した種目のカテゴリで有酸素／サーキット／筋トレの入力欄を出し分ける
   function syncRecordFields() {
     const isCardio = selectedMenu && selectedMenu.category === 'cardio';
-    const isStrength = selectedMenu && selectedMenu.category === 'strength';
+    const isCircuit = selectedMenu && !!selectedMenu.circuit;
+    const isStrength = selectedMenu && selectedMenu.category === 'strength' && !isCircuit;
     $('exercise-cardio-fields').hidden = !isCardio;
+    $('exercise-circuit-fields').hidden = !isCircuit;
     $('exercise-strength-fields').hidden = !isStrength;
     if (isStrength && $('exercise-sets').children.length === 0) addSetRow();
-    if (isCardio) updateKcalPreview();
+    updateKcalPreview();
+  }
+  function kcalPreviewText(min) {
+    if (!selectedMenu || !selectedMenu.mets || !min) return '';
+    if (latestWeight == null) return '体重の実測がないと消費kcalを算出できません';
+    return `推定 ${Math.round(selectedMenu.mets * latestWeight * (min / 60) * 1.05)} kcal`;
   }
   function updateKcalPreview() {
-    const min = Number($('exercise-duration').value);
-    const el = $('exercise-kcal-preview');
-    if (!selectedMenu || !selectedMenu.mets || !min) {
-      el.textContent = '';
-      return;
-    }
-    if (latestWeight == null) {
-      el.textContent = '体重の実測がないと消費kcalを算出できません';
-      return;
-    }
-    el.textContent = `推定 ${Math.round(selectedMenu.mets * latestWeight * (min / 60) * 1.05)} kcal`;
+    const m = selectedMenu;
+    $('exercise-kcal-preview').textContent =
+      m && m.category === 'cardio' ? kcalPreviewText(Number($('exercise-duration').value)) : '';
+    $('exercise-circuit-kcal-preview').textContent =
+      m && m.circuit ? kcalPreviewText(Number($('exercise-circuit-duration').value)) : '';
+    $('exercise-strength-kcal-preview').textContent =
+      m && m.category === 'strength' && !m.circuit ? kcalPreviewText(Number($('exercise-strength-duration').value)) : '';
   }
   $('exercise-duration').addEventListener('input', updateKcalPreview);
+  $('exercise-circuit-duration').addEventListener('input', updateKcalPreview);
+  $('exercise-strength-duration').addEventListener('input', updateKcalPreview);
 
   function addSetRow(reps, weight) {
     const div = document.createElement('div');
@@ -434,6 +536,12 @@
       const min = Number($('exercise-duration').value);
       if (!min) return toast('時間（分）を入力してください', { tone: 'error' });
       body.duration_min = min;
+    } else if (selectedMenu.circuit) {
+      const rounds = Number($('exercise-rounds').value);
+      if (!rounds) return toast('ラウンド数を入力してください', { tone: 'error' });
+      body.rounds = rounds;
+      const min = Number($('exercise-circuit-duration').value);
+      if (min) body.duration_min = min;
     } else {
       const sets = [];
       for (const row of $('exercise-sets').children) {
@@ -444,6 +552,8 @@
       }
       if (!sets.length) return toast('セット（回数）を入力してください', { tone: 'error' });
       body.sets = sets;
+      const min = Number($('exercise-strength-duration').value);
+      if (min) body.duration_min = min;
     }
     const res = await rw('exercise/logs', 'POST', body);
     if (!res.ok) return toast(`記録に失敗: ${(await res.json()).error ?? res.status}`, { tone: 'error' });
@@ -451,8 +561,13 @@
     selectedMenu = null;
     $('exercise-menu-search').value = '';
     $('exercise-duration').value = '';
+    $('exercise-rounds').value = '';
+    $('exercise-circuit-duration').value = '';
+    $('exercise-strength-duration').value = '';
     $('exercise-sets').innerHTML = '';
     $('exercise-kcal-preview').textContent = '';
+    $('exercise-circuit-kcal-preview').textContent = '';
+    $('exercise-strength-kcal-preview').textContent = '';
     syncRecordFields();
     refresh();
   });

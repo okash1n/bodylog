@@ -249,9 +249,16 @@
         <label>時間 <input id="exercise-duration" type="number" min="1" max="1440" step="1"><span class="unit">分</span></label>
         <span id="exercise-kcal-preview" class="hint"></span>
       </div>
+      <div id="exercise-circuit-fields" hidden>
+        <label>ラウンド数 <input id="exercise-rounds" type="number" min="1" max="50" step="1"></label>
+        <label>時間(任意) <input id="exercise-circuit-duration" type="number" min="1" max="1440" step="1"><span class="unit">分</span></label>
+        <span id="exercise-circuit-kcal-preview" class="hint"></span>
+      </div>
       <div id="exercise-strength-fields" hidden>
         <div id="exercise-sets"></div>
         <button type="button" id="exercise-add-set" class="ghost-btn">＋セット</button>
+        <label>時間(任意) <input id="exercise-strength-duration" type="number" min="1" max="1440" step="1"><span class="unit">分</span></label>
+        <span id="exercise-strength-kcal-preview" class="hint"></span>
       </div>
       <button type="submit">記録</button>
     </form>
@@ -266,7 +273,13 @@
         <input id="exercise-menu-mets" type="number" placeholder="METs" aria-label="METs（運動強度）" min="0.5" max="30" step="0.1">
         <input id="exercise-menu-muscle" placeholder="部位(任意)" aria-label="対象部位（任意）" hidden>
         <label id="exercise-menu-bw-wrap" class="calorie-toggle" hidden><input id="exercise-menu-bw" type="checkbox"> 自重</label>
-        <label id="exercise-menu-bwf-wrap" class="calorie-toggle" hidden title="体重をどれだけ負荷に算入するか（懸垂1.0 / 腕立て0.65 / コア系0.1〜0.4）">係数 <input id="exercise-menu-bwf" type="number" min="0" max="1" step="0.05" value="1" style="width:4.5em"></label>
+        <label id="exercise-menu-bwf-wrap" class="calorie-toggle" hidden title="体重をどれだけ負荷に算入するか（目安: 懸垂0.8 / ディップス0.85 / 腕立て0.6 / スクワット0.4 / ランジ0.5 / コア系0.2〜0.35）">係数 <input id="exercise-menu-bwf" type="number" min="0" max="1" step="0.05" placeholder="0.8" style="width:4.5em"></label>
+        <label id="exercise-menu-circuit-wrap" class="calorie-toggle" hidden><input id="exercise-menu-circuit" type="checkbox"> サーキット</label>
+        <div id="exercise-circuit-editor" hidden>
+          <div id="exercise-circuit-items"></div>
+          <button type="button" id="exercise-circuit-add" class="ghost-btn">＋構成種目</button>
+          <span class="hint">1ラウンド分の構成（登録済みの筋トレ種目から選ぶ）。記録時はラウンド数を入れるだけ</span>
+        </div>
         <button type="submit">追加</button>
       </form>
       <div class="menus-tools">

@@ -48,6 +48,12 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     expect(html).toContain('id="tab-exercise"');
     expect(html).toContain('id="panel-exercise"');
     expect(html).toContain('id="exercise-history"');
+    // 運動モデルv2のフォーム要素: 筋トレの時間欄・サーキットのラウンド入力・構成エディタ
+    expect(html).toContain('id="exercise-strength-duration"');
+    expect(html).toContain('id="exercise-rounds"');
+    expect(html).toContain('id="exercise-circuit-duration"');
+    expect(html).toContain('id="exercise-circuit-items"');
+    expect(html).toContain('id="exercise-menu-circuit"');
   });
 
   it('manifestの start_url / scope が / になる', async () => {
