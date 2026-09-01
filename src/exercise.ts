@@ -66,14 +66,35 @@ function toMenu(r: MenuRow): ExerciseMenu {
 const MENU_COLS =
   'id, name, category, mets, muscle_group, is_bodyweight, bodyweight_factor, circuit_json, note, archived, created_at, updated_at';
 
-/** サーキット構成の参照整合性（存在・strength・非archived・入れ子禁止）。作成/更新時に検証する */
+/** サーキット構成の参照整合性（存在・strength・自重・非archived・入れ子禁止）。作成/更新時に検証する */
 async function validateCircuitRefs(env: Env, circuit: CircuitItem[]): Promise<{ error: string } | null> {
   for (const item of circuit) {
     const m = await getExerciseMenu(env, item.menu_id);
     if (!m) return { error: `circuit item menu not found: ${item.menu_id}` };
     if (m.category !== 'strength') return { error: `circuit item "${m.name}" must be a strength menu` };
     if (m.circuit) return { error: `circuit item "${m.name}" is itself a circuit — nesting is not supported` };
+    // 展開セットは weight_kg NULL で入るため、非自重種目は黙ってボリューム0になる。拒否して明示する（D8）
+    if (!m.is_bodyweight) {
+      return { error: `circuit item "${m.name}" is not a bodyweight menu — register it as is_bodyweight with a factor, or log it standalone with sets` };
+    }
     if (m.archived) return { error: `circuit item "${m.name}" is archived — unarchive it or remove it from the circuit` };
+  }
+  return null;
+}
+
+/**
+ * この種目を構成に含むサーキットを1件返す（無ければ null）。
+ * 被参照種目を後から circuit 化すると参照元サーキットが記録不能になるため、更新時の逆方向チェックに使う。
+ * id は newId() 生成の英数字なので LIKE に安全だが、部分一致の誤検知を防ぐため JSON を再確認する
+ */
+async function findReferencingCircuit(env: Env, menuId: string): Promise<{ name: string } | null> {
+  const rows = await env.DB.prepare(
+    `SELECT name, circuit_json FROM exercise_menus WHERE circuit_json IS NOT NULL AND id != ?1 AND circuit_json LIKE ?2`,
+  )
+    .bind(menuId, `%"${menuId}"%`)
+    .all<{ name: string; circuit_json: string }>();
+  for (const r of rows.results) {
+    if (parseCircuitJson(r.circuit_json)?.some((it) => it.menu_id === menuId)) return { name: r.name };
   }
   return null;
 }
@@ -125,12 +146,32 @@ export async function updateExerciseMenu(
   id: string,
   patch: Partial<Omit<ExerciseMenuInput, 'category'>>,
 ): Promise<ExerciseMenu | null | { error: string }> {
+  // カテゴリ整合が要る項目を含むときだけ現在行を引く（factor=1 は既定値なのでガード不要）
+  const wantsFactor = typeof patch.bodyweight_factor === 'number' && patch.bodyweight_factor !== 1;
+  const needsGuard =
+    patch.circuit != null || typeof patch.muscle_group === 'string' || patch.is_bodyweight === true || wantsFactor;
+  const current = needsGuard ? await getExerciseMenu(env, id) : null;
+  if (needsGuard && !current) return null;
+  if (current?.category === 'cardio') {
+    // strength専用フィールドのcardioへの黙殺をやめて明示エラーにする（D8）
+    if (typeof patch.muscle_group === 'string') return { error: 'muscle_group is not allowed for cardio menus' };
+    if (patch.is_bodyweight === true) return { error: 'is_bodyweight is not allowed for cardio menus' };
+    if (wantsFactor) return { error: 'bodyweight_factor is not allowed for cardio menus' };
+  }
+  if (current?.category === 'strength' && wantsFactor) {
+    const effectiveBw = 'is_bodyweight' in patch ? patch.is_bodyweight === true : current.is_bodyweight;
+    const effectiveCircuit = 'circuit' in patch ? patch.circuit != null : current.circuit != null;
+    if (!effectiveBw || effectiveCircuit) return { error: 'bodyweight_factor requires is_bodyweight: true' };
+  }
   if (patch.circuit) {
-    const current = await getExerciseMenu(env, id);
-    if (!current) return null;
-    if (current.category !== 'strength') return { error: 'circuit is only valid for strength menus' };
+    if (current!.category !== 'strength') return { error: 'circuit is only valid for strength menus' };
     if (patch.circuit.some((it) => it.menu_id === id)) {
       return { error: 'a circuit cannot reference itself' };
+    }
+    // 被参照種目のcircuit化は参照元サーキットを記録不能にするため拒否する（入れ子禁止の逆方向）
+    const ref = await findReferencingCircuit(env, id);
+    if (ref) {
+      return { error: `menu "${current!.name}" is a circuit item of "${ref.name}" — remove it from that circuit first` };
     }
     const invalid = await validateCircuitRefs(env, patch.circuit);
     if (invalid) return invalid;
@@ -367,6 +408,7 @@ async function logCircuitExercise(
 ): Promise<ExerciseLog | { error: string }> {
   if (input.sets) return { error: `sets is not allowed for circuit menu "${menu.name}" — pass rounds` };
   if (input.rounds == null) return { error: `rounds is required for circuit menu "${menu.name}"` };
+  // 作成時にも検証済みだが、構成種目は後から archive / circuit化 / 非自重化されうるため記録時に再検証する
   const children: ExerciseMenu[] = [];
   for (const item of items) {
     const m = await getExerciseMenu(env, item.menu_id);
@@ -375,6 +417,9 @@ async function logCircuitExercise(
       return { error: `circuit item "${m.name}" is archived — unarchive it or remove it from the circuit` };
     }
     if (m.circuit) return { error: `circuit item "${m.name}" is itself a circuit — nesting is not supported` };
+    if (!m.is_bodyweight) {
+      return { error: `circuit item "${m.name}" is not a bodyweight menu — register it as is_bodyweight with a factor, or log it standalone with sets` };
+    }
     children.push(m);
   }
   const wantsKcal = menu.mets != null && input.duration_min != null;
@@ -459,15 +504,32 @@ export async function deleteExerciseLog(env: Env, id: string): Promise<boolean> 
   return (logRes.meta.changes ?? 0) > 0;
 }
 
+/**
+ * LIMIT がサーキットグループの途中で切れると「rounds不明の親」や「親のない子」が返るため、
+ * 上限到達時は末尾の不完全なグループを丸ごと落とす（ORDER BY のタイブレーカでグループは必ず隣接する）
+ */
+export function dropIncompleteTrailingGroup<T extends { group_id: string | null }>(rows: T[], limit: number): T[] {
+  if (rows.length < limit) return rows;
+  const lastGroup = rows[rows.length - 1]?.group_id;
+  if (lastGroup == null) return rows;
+  let cut = rows.length;
+  while (cut > 0 && rows[cut - 1].group_id === lastGroup) cut--;
+  return rows.slice(0, cut);
+}
+
+const LOG_LIST_LIMIT = 2000;
+
 export async function listExerciseLogs(env: Env, from: string, to: string): Promise<ExerciseLog[]> {
   const tz = tzModifier(env);
+  // サーキット親子は同一performed_atのため、group単位で隣接するようタイブレーカを固定する
   const logs = await env.DB.prepare(
     `SELECT ${LOG_COLS} FROM exercise_logs
 WHERE date(performed_at, '${tz}') BETWEEN ?1 AND ?2
-ORDER BY performed_at DESC LIMIT 2000`,
+ORDER BY performed_at DESC, COALESCE(group_id, id), id LIMIT ${LOG_LIST_LIMIT}`,
   )
     .bind(from, to)
     .all<LogRow>();
+  logs.results = dropIncompleteTrailingGroup(logs.results, LOG_LIST_LIMIT);
   if (logs.results.length === 0) return [];
   const setRows = await env.DB.prepare(
     `SELECT s.log_id, s.set_index, s.reps, s.weight_kg
@@ -632,6 +694,14 @@ export function parseExerciseMenuInput(body: unknown): Parsed<ExerciseMenuInput>
     if (!isPositiveFinite(b.mets) || (b.mets as number) > MAX_METS) {
       return { ok: false, error: `mets must be a positive number <= ${MAX_METS}` };
     }
+    // strength専用フィールドの黙殺をやめて明示エラーにする（D8。無意味な既定値と同義の指定は許容）
+    if (typeof b.muscle_group === 'string' && b.muscle_group.trim() !== '') {
+      return { ok: false, error: 'muscle_group is not allowed for cardio menus' };
+    }
+    if (b.is_bodyweight === true) return { ok: false, error: 'is_bodyweight is not allowed for cardio menus' };
+    if (typeof b.bodyweight_factor === 'number' && b.bodyweight_factor !== 1) {
+      return { ok: false, error: 'bodyweight_factor is not allowed for cardio menus' };
+    }
   } else if (b.mets !== undefined && b.mets !== null) {
     // strength でも METs を任意設定できる（duration_min 記録時に消費kcalを算出する）
     if (!isPositiveFinite(b.mets) || (b.mets as number) > MAX_METS) {
@@ -643,6 +713,10 @@ export function parseExerciseMenuInput(body: unknown): Parsed<ExerciseMenuInput>
   }
   if (!isValidBodyweightFactor(b.bodyweight_factor)) {
     return { ok: false, error: 'bodyweight_factor must be a number between 0 and 1' };
+  }
+  if (category === 'strength' && b.is_bodyweight !== true
+      && typeof b.bodyweight_factor === 'number' && b.bodyweight_factor !== 1) {
+    return { ok: false, error: 'bodyweight_factor requires is_bodyweight: true' };
   }
   const circuit = parseCircuitField(b.circuit);
   if (!circuit.ok) return circuit;

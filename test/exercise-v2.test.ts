@@ -7,8 +7,9 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  createExerciseMenu, deleteExerciseLog, getDailyExercise, getExerciseMenu, listExerciseLogs,
-  logExercise, parseExerciseLogFields, parseExerciseMenuInput, setExerciseMenuArchived, updateExerciseMenu,
+  createExerciseMenu, deleteExerciseLog, dropIncompleteTrailingGroup, getDailyExercise, getExerciseMenu,
+  listExerciseLogs, logExercise, parseExerciseLogFields, parseExerciseMenuInput, setExerciseMenuArchived,
+  updateExerciseMenu,
 } from '../src/exercise';
 import { getExerciseRecords } from '../src/exercise-records';
 import type { ExerciseMenu } from '../src/types';
@@ -169,10 +170,10 @@ describe('Phase 2: circuitメニューの検証', () => {
     expect(parseExerciseMenuInput({ name: 'C', category: 'strength', circuit: [item] }).ok).toBe(true);
   });
 
-  it('構成種目の参照整合性: 不在・cardio・archived・入れ子はエラー', async () => {
+  it('構成種目の参照整合性: 不在・cardio・非自重・archived・入れ子はエラー', async () => {
     const run = unwrap(await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 }));
     const bench = unwrap(await createExerciseMenu(testEnv, { name: 'ベンチプレス', category: 'strength' }));
-    const { cindy } = await seedCircuitMenus();
+    const { cindy, squat } = await seedCircuitMenus();
 
     expect(await createExerciseMenu(testEnv, {
       name: 'X', category: 'strength', circuit: [{ menu_id: 'no-such-id', reps: 5 }],
@@ -183,11 +184,17 @@ describe('Phase 2: circuitメニューの検証', () => {
     expect(await createExerciseMenu(testEnv, {
       name: 'X', category: 'strength', circuit: [{ menu_id: cindy.id, reps: 5 }],
     })).toEqual({ error: 'circuit item "Cindy" is itself a circuit — nesting is not supported' });
-
-    await setExerciseMenuArchived(testEnv, bench.id, true);
+    // 非自重種目は展開セットが weight_kg NULL で入りボリュームが黙って0になるため拒否する
     expect(await createExerciseMenu(testEnv, {
       name: 'X', category: 'strength', circuit: [{ menu_id: bench.id, reps: 5 }],
-    })).toEqual({ error: 'circuit item "ベンチプレス" is archived — unarchive it or remove it from the circuit' });
+    })).toEqual({
+      error: 'circuit item "ベンチプレス" is not a bodyweight menu — register it as is_bodyweight with a factor, or log it standalone with sets',
+    });
+
+    await setExerciseMenuArchived(testEnv, squat.id, true);
+    expect(await createExerciseMenu(testEnv, {
+      name: 'X', category: 'strength', circuit: [{ menu_id: squat.id, reps: 5 }],
+    })).toEqual({ error: 'circuit item "フルスクワット" is archived — unarchive it or remove it from the circuit' });
   });
 
   it('PATCHでcircuitの差し替え・クリア・自己参照拒否ができる', async () => {
@@ -202,6 +209,51 @@ describe('Phase 2: circuitメニューの検証', () => {
     const cleared = await updateExerciseMenu(testEnv, cindy.id, { circuit: null });
     if (!cleared || 'error' in cleared) throw new Error('update failed');
     expect(cleared.circuit).toBeNull();
+  });
+
+  it('被参照種目へのcircuit付与は拒否される（逆方向の入れ子禁止）', async () => {
+    const { pullup, pushup } = await seedCircuitMenus(); // Cindy が pullup/pushup を参照中
+    const res = await updateExerciseMenu(testEnv, pushup.id, { circuit: [{ menu_id: pullup.id, reps: 10 }] });
+    expect(res).toEqual({
+      error: 'menu "腕立て伏せ" is a circuit item of "Cindy" — remove it from that circuit first',
+    });
+  });
+
+  it('D8: 種目登録でもカテゴリ不一致フィールドは黙殺せずエラーにする', async () => {
+    expect(parseExerciseMenuInput({ name: 'x', category: 'cardio', mets: 8, muscle_group: '脚' }))
+      .toEqual({ ok: false, error: 'muscle_group is not allowed for cardio menus' });
+    expect(parseExerciseMenuInput({ name: 'x', category: 'cardio', mets: 8, is_bodyweight: true }))
+      .toEqual({ ok: false, error: 'is_bodyweight is not allowed for cardio menus' });
+    expect(parseExerciseMenuInput({ name: 'x', category: 'cardio', mets: 8, bodyweight_factor: 0.5 }))
+      .toEqual({ ok: false, error: 'bodyweight_factor is not allowed for cardio menus' });
+    // is_bodyweight 指定漏れの factor は「非自重・係数1.0」として黙って登録される事故のもと
+    expect(parseExerciseMenuInput({ name: '懸垂', category: 'strength', bodyweight_factor: 0.8 }))
+      .toEqual({ ok: false, error: 'bodyweight_factor requires is_bodyweight: true' });
+    // 既定値と同義の指定（factor 1.0 / is_bodyweight false）は許容する
+    expect(parseExerciseMenuInput({ name: 'x', category: 'cardio', mets: 8, bodyweight_factor: 1, is_bodyweight: false }).ok).toBe(true);
+
+    // PATCH側: cardio種目へのstrength専用フィールド、自重でない種目への係数を拒否
+    const run = unwrap(await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 }));
+    expect(await updateExerciseMenu(testEnv, run.id, { muscle_group: '脚' }))
+      .toEqual({ error: 'muscle_group is not allowed for cardio menus' });
+    const bench = unwrap(await createExerciseMenu(testEnv, { name: 'ベンチプレス', category: 'strength' }));
+    expect(await updateExerciseMenu(testEnv, bench.id, { bodyweight_factor: 0.8 }))
+      .toEqual({ error: 'bodyweight_factor requires is_bodyweight: true' });
+    // 自重種目への係数単独更新は従来どおり通る
+    const dips = unwrap(await createExerciseMenu(testEnv, {
+      name: 'ディップス', category: 'strength', is_bodyweight: true, bodyweight_factor: 0.85,
+    }));
+    const updated = await updateExerciseMenu(testEnv, dips.id, { bodyweight_factor: 0.8 });
+    if (!updated || 'error' in updated) throw new Error('update failed');
+    expect(updated.bodyweight_factor).toBe(0.8);
+  });
+
+  it('dropIncompleteTrailingGroup: 上限到達時のみ末尾の不完全グループを落とす', () => {
+    const row = (id: string, group: string | null) => ({ id, group_id: group });
+    const full = [row('a', null), row('p', 'p'), row('c1', 'p')];
+    expect(dropIncompleteTrailingGroup(full, 3)).toEqual([row('a', null)]); // 上限到達→末尾グループ除去
+    expect(dropIncompleteTrailingGroup(full, 4)).toEqual(full); // 上限未満→そのまま
+    expect(dropIncompleteTrailingGroup([row('a', null), row('b', null)], 2)).toEqual([row('a', null), row('b', null)]); // 末尾が単独記録→そのまま
   });
 });
 

@@ -365,7 +365,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
             .max(10)
             .optional()
             .describe(
-              'サーキットの1ラウンド分の構成（登録済みの筋トレ種目を参照、最大10種目）。構成種目が未登録なら先にcreate_exercise_menuで登録する。この定義を後から変えても過去の記録は変わらない',
+              'サーキットの1ラウンド分の構成（登録済みの自重（is_bodyweight）筋トレ種目のみ参照可、最大10種目）。構成種目が未登録なら先にcreate_exercise_menuで登録する。この定義を後から変えても過去の記録は変わらない',
             ),
           note: z.string().optional(),
         },
