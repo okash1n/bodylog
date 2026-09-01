@@ -39,9 +39,9 @@ ${accessLine}
 - GET ${root}/api/meals?days=7 — 食事記録（メニュー名・倍率・実効kcal/PFC付き）
 - GET ${root}/api/meals/daily?days=30 — 日次の摂取カロリー・PFC合計
 - GET ${root}/api/exercise/menus?q=&category= — 運動種目（マスタ）一覧・検索（利用頻度順）。category=cardio|strengthで絞れる
-- GET ${root}/api/exercise/logs?days=30 — 運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）
-- GET ${root}/api/exercise/daily?days=30 — 日次の基礎代謝（Katch-McArdle推定）・運動消費kcal・総ボリューム。期間内の全日を返す
-- GET ${root}/api/exercise/records?menu_id= — 筋トレ種目の自己ベスト（最大重量・REP数ごとの最大・推定1RM(Epley, reps<=12)・最大REP・最大セット/セッションボリューム・前回セッション）。都度集計。全記録を取らずにこれを使う
+- GET ${root}/api/exercise/logs?days=30 — 運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き。サーキットは親+子ログにgroup_idで束なる）
+- GET ${root}/api/exercise/daily?days=30 — 日次の基礎代謝（Katch-McArdle推定）・運動消費kcal（筋トレ含む）・総ボリューム（実荷重/自重換算の内訳付き）。期間内の全日を返す
+- GET ${root}/api/exercise/records?menu_id= — 筋トレ種目の自己ベスト（最大重量・REP数ごとの最大・推定1RM(Epley, reps<=12)・最大REP・最大セット/セッションボリューム・前回セッション）。単独トレのみ対象・都度集計。全記録を取らずにこれを使う
 - GET ${root}/api/coaching/latest — AIコーチの最新講評（daily=日次総括 / weekly=過去の週次総括・現在は生成されない。未生成はnull）
 - GET ${root}/api/coaching?days=30 — AIコーチ講評の履歴（新しい順、最大200件）
 - GET ${root}/api/metabolism — 直近28日の実測データからの実効消費カロリー推定（摂取記録が8割未満の期間はinsufficient_data）
@@ -629,17 +629,27 @@ export function openapiSpec(
         },
         ExerciseMenu: {
           type: 'object',
-          description: '運動種目（マスタ）。cardioはmets、strengthはmuscle_group/is_bodyweightを持つ',
+          description:
+            '運動種目（マスタ）。cardioはmets、strengthはmuscle_group/is_bodyweightを持つ。' +
+            'strengthのmetsは任意（duration_min記録時に消費kcalを算出）。circuitはサーキット構成（1ラウンド分の構成種目+回数。null=通常種目）',
           properties: {
             id: { type: 'string' },
             name: { type: 'string' },
             category: { type: 'string', enum: ['cardio', 'strength'] },
-            mets: { type: ['number', 'null'], description: '有酸素の運動強度（安静時比）' },
+            mets: { type: ['number', 'null'], description: '運動強度（安静時比）。cardio必須、strength任意' },
             muscle_group: { type: ['string', 'null'] },
             is_bodyweight: { type: 'boolean' },
             bodyweight_factor: {
               type: 'number',
-              description: '自重種目のボリューム補正係数0〜1（実効重量=追加重量+体重×係数。既定1.0）',
+              description: '自重種目の体重算入係数0〜1（実効重量=追加重量+体重×係数。既定1.0）',
+            },
+            circuit: {
+              type: ['array', 'null'],
+              description: 'サーキットの1ラウンド分の構成（strength種目への参照。null=通常種目）',
+              items: {
+                type: 'object',
+                properties: { menu_id: { type: 'string' }, reps: { type: 'integer' } },
+              },
             },
             note: { type: ['string', 'null'] },
             archived: { type: 'boolean' },
@@ -728,7 +738,9 @@ export function openapiSpec(
           type: 'object',
           description:
             '運動記録1件。menu_name等は記録時点のスナップショット。cardioはduration_min/mets/caloriesを持ち、' +
-            'strengthはsets（明細）とtotal_volume（総ボリューム）を持つ。caloriesは METs×体重×時間×1.05 の推定消費kcal',
+            'strengthはsets（明細）とtotal_volume（総ボリューム）を持つ（時間・METsがあればcaloriesも付く）。' +
+            'caloriesは METs×体重×時間×1.05 の推定消費kcal。' +
+            'サーキットは親ログ（group_id=自id、rounds付き、sets無し）と構成種目の子ログ（group_id=親id）に展開されて返る',
           properties: {
             id: { type: 'string' },
             menu_id: { type: 'string' },
@@ -743,8 +755,10 @@ export function openapiSpec(
             body_weight_kg: { type: ['number', 'null'] },
             calories: { type: ['number', 'null'] },
             created_at: { type: 'string', format: 'date-time' },
+            group_id: { type: ['string', 'null'], description: 'サーキットの束（親ログのid）。null=単独記録' },
             sets: { type: 'array', items: { $ref: '#/components/schemas/ExerciseSet' } },
             total_volume: { type: ['number', 'null'] },
+            rounds: { type: ['integer', 'null'], description: 'サーキット親ログのみ（子ログのセット数から復元）' },
           },
         },
         CoachingNote: {
@@ -766,13 +780,18 @@ export function openapiSpec(
           description:
             '1日分のエネルギー・運動量。bmrはKatch-McArdle（370 + 21.6×除脂肪体重）による基礎代謝の推定kcal' +
             '（その日以前で最新の実測FFMを使用。実測が無い期間はnull。日常活動・食事誘発熱産生は含まない）。' +
-            'calories_burnedは有酸素の消費kcal合計、strength_volumeは筋トレの総ボリューム合計（該当なしはnull）。' +
-            '総消費 = bmr + calories_burned',
+            'calories_burnedは運動全体の消費kcal合計（有酸素 + 時間・METs付き筋トレ。内訳は cardio_calories / strength_calories）、' +
+            'strength_volumeは筋トレの総ボリューム合計（内訳: weighted_volume=実荷重分、bodyweight_volume=自重換算分。該当なしはnull）。' +
+            'strength_countは1サーキット=1件。総消費 = bmr + calories_burned',
           properties: {
             d: { type: 'string', format: 'date' },
             bmr: { type: ['number', 'null'] },
             calories_burned: { type: ['number', 'null'] },
+            cardio_calories: { type: ['number', 'null'] },
+            strength_calories: { type: ['number', 'null'] },
             strength_volume: { type: ['number', 'null'] },
+            weighted_volume: { type: ['number', 'null'] },
+            bodyweight_volume: { type: ['number', 'null'] },
             cardio_count: { type: 'integer' },
             strength_count: { type: 'integer' },
           },

@@ -141,7 +141,7 @@ async function collectData(date, today) {
     })),
     // 直近の講評（対象日より前、日付昇順、各800字まで）。前日と矛盾しない評価・方針を書かせるため
     previous_notes: selectPreviousNotes(coaching?.notes, date),
-    // bmr=基礎代謝推定, burn=有酸素消費kcal, volume=筋トレ総ボリューム。総消費= bmr + burn
+    // bmr=基礎代謝推定, burn=運動消費kcal（有酸素+時間・METs付き筋トレ）, volume=筋トレ総ボリューム。総消費= bmr + burn
     exercise: (exercise.days || []).map((d) => ({
       d: d.d,
       bmr: d.bmr == null ? null : Math.round(d.bmr),
@@ -159,6 +159,7 @@ const COMMON_RULES = `
 - プレーンテキストのみ。マークダウン記法（* # \` など）や絵文字は使わない。箇条書きは「・」を使う
 - 日本語。数値はデータから引用し概数でよい
 - カロリー収支 = 摂取kcal − (bmr + burn)。日常活動・食事誘発熱産生は含まれない前提で断定しすぎない
+- 2026-09-01以降、burnには筋トレ（時間・METs付き）の消費kcalも含まれる。それ以前のburnは有酸素のみなので、跨いだ比較で消費が増えたと断定しない
 - goalに数値目標（体重・脂肪量）が設定されていれば、目標との差を講評の評価軸に使う（未設定ならpolicyの方針で評価する）
 - metabolismがあれば、実効消費（estimated_tdee_kcal）をモデル値より優先して摂取量の提案に使う。ただし7700kcal/kg換算の参考値なので断定はしない
 - データが欠けている日は無理に言及しない`;

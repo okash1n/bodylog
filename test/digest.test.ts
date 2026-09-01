@@ -291,7 +291,8 @@ describe('ダイジェストの摂取カロリー行', () => {
 describe('ダイジェストの消費（基礎+運動）・ネット行', () => {
   const intake = (cal: number): DailyIntake => ({ d: '2026-08-12', count: 2, calories: cal, protein_g: null, fat_g: null, carbs_g: null });
   const ex = (bmr: number | null, burned: number | null, volume: number | null): DailyExercise => ({
-    d: '2026-08-12', bmr, calories_burned: burned, strength_volume: volume,
+    d: '2026-08-12', bmr, calories_burned: burned, cardio_calories: burned, strength_calories: null,
+    strength_volume: volume, weighted_volume: volume, bodyweight_volume: volume == null ? null : 0,
     cardio_count: burned ? 1 : 0, strength_count: volume ? 1 : 0,
   });
 
@@ -318,14 +319,22 @@ describe('ダイジェストの消費（基礎+運動）・ネット行', () => 
     expect(formatNetLine(intake(1850), ex(null, 0, null))).toBeNull();
   });
 
-  it('運動内訳行: 筋トレ件数・ボリューム / 有酸素件数・kcal。どちらも無い日は出さない', () => {
-    expect(formatExerciseLine({ d: '2026-08-15', bmr: 1700, calories_burned: 417.4, strength_volume: 6463.2, cardio_count: 3, strength_count: 13 }))
+  const exLine = (over: Partial<DailyExercise>): DailyExercise => ({
+    d: '2026-08-15', bmr: 1700, calories_burned: null, cardio_calories: null, strength_calories: null,
+    strength_volume: null, weighted_volume: null, bodyweight_volume: null, cardio_count: 0, strength_count: 0,
+    ...over,
+  });
+  it('運動内訳行: 筋トレ件数・ボリューム・kcal / 有酸素件数・kcal。どちらも無い日は出さない', () => {
+    expect(formatExerciseLine(exLine({ calories_burned: 417.4, cardio_calories: 417.4, strength_volume: 6463.2, cardio_count: 3, strength_count: 13 })))
       .toBe('*運動* : 筋トレ 13件 (Vol 6463) | 有酸素 3件 (417 kcal)');
-    expect(formatExerciseLine({ d: '2026-08-15', bmr: 1700, calories_burned: null, strength_volume: 1200, cardio_count: 0, strength_count: 2 }))
+    expect(formatExerciseLine(exLine({ strength_volume: 1200, strength_count: 2 })))
       .toBe('*運動* : 筋トレ 2件 (Vol 1200)');
-    expect(formatExerciseLine({ d: '2026-08-15', bmr: 1700, calories_burned: 300, strength_volume: null, cardio_count: 1, strength_count: 0 }))
+    expect(formatExerciseLine(exLine({ calories_burned: 300, cardio_calories: 300, cardio_count: 1 })))
       .toBe('*運動* : 有酸素 1件 (300 kcal)');
-    expect(formatExerciseLine({ d: '2026-08-15', bmr: 1700, calories_burned: null, strength_volume: null, cardio_count: 0, strength_count: 0 })).toBeNull();
+    // 時間・METs付き筋トレ（サーキット等）はkcalも並記される
+    expect(formatExerciseLine(exLine({ calories_burned: 196, strength_calories: 196.3, strength_volume: 26512, strength_count: 1 })))
+      .toBe('*運動* : 筋トレ 1件 (Vol 26512, 196 kcal)');
+    expect(formatExerciseLine(exLine({}))).toBeNull();
     expect(formatExerciseLine(null)).toBeNull();
   });
 });

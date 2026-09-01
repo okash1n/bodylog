@@ -4,6 +4,7 @@
  * 食事と同じスナップショット方式（記録時にメニュー由来の値を凍結）。
  */
 import type {
+  CircuitItem,
   DailyExercise,
   Env,
   ExerciseCategory,
@@ -20,14 +21,29 @@ const MAX_DURATION_MIN = 1440; // 24h
 const MAX_REPS = 1000;
 const MAX_WEIGHT_KG = 1000;
 const MAX_SETS = 50;
+const MAX_ROUNDS = MAX_SETS; // 1ラウンド=1セット展開のため sets 上限と連動
+const MAX_CIRCUIT_ITEMS = 10;
+/** exercise_sets の複数行INSERTの1文あたり行数（4バインド/行 × 18 = 72 で D1 の100バインド上限内） */
+const SET_INSERT_CHUNK = 18;
 
 // ---- 種目マスタ ----
 
 interface MenuRow {
   id: string; name: string; category: string;
   mets: number | null; muscle_group: string | null; is_bodyweight: number;
-  bodyweight_factor: number;
+  bodyweight_factor: number; circuit_json: string | null;
   note: string | null; archived: number; created_at: string; updated_at: string;
+}
+
+/** circuit_json は書き込み時に検証済みだが、直接SQLで壊された場合に読み取り全体を落とさない */
+function parseCircuitJson(raw: string | null): CircuitItem[] | null {
+  if (raw == null) return null;
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return Array.isArray(v) && v.length > 0 ? (v as CircuitItem[]) : null;
+  } catch {
+    return null;
+  }
 }
 
 function toMenu(r: MenuRow): ExerciseMenu {
@@ -39,6 +55,7 @@ function toMenu(r: MenuRow): ExerciseMenu {
     muscle_group: r.muscle_group,
     is_bodyweight: r.is_bodyweight !== 0,
     bodyweight_factor: r.bodyweight_factor,
+    circuit: parseCircuitJson(r.circuit_json),
     note: r.note,
     archived: r.archived !== 0,
     created_at: r.created_at,
@@ -47,21 +64,41 @@ function toMenu(r: MenuRow): ExerciseMenu {
 }
 
 const MENU_COLS =
-  'id, name, category, mets, muscle_group, is_bodyweight, bodyweight_factor, note, archived, created_at, updated_at';
+  'id, name, category, mets, muscle_group, is_bodyweight, bodyweight_factor, circuit_json, note, archived, created_at, updated_at';
 
-export async function createExerciseMenu(env: Env, input: ExerciseMenuInput): Promise<ExerciseMenu> {
+/** サーキット構成の参照整合性（存在・strength・非archived・入れ子禁止）。作成/更新時に検証する */
+async function validateCircuitRefs(env: Env, circuit: CircuitItem[]): Promise<{ error: string } | null> {
+  for (const item of circuit) {
+    const m = await getExerciseMenu(env, item.menu_id);
+    if (!m) return { error: `circuit item menu not found: ${item.menu_id}` };
+    if (m.category !== 'strength') return { error: `circuit item "${m.name}" must be a strength menu` };
+    if (m.circuit) return { error: `circuit item "${m.name}" is itself a circuit — nesting is not supported` };
+    if (m.archived) return { error: `circuit item "${m.name}" is archived — unarchive it or remove it from the circuit` };
+  }
+  return null;
+}
+
+export async function createExerciseMenu(
+  env: Env,
+  input: ExerciseMenuInput,
+): Promise<ExerciseMenu | { error: string }> {
+  if (input.circuit) {
+    const invalid = await validateCircuitRefs(env, input.circuit);
+    if (invalid) return invalid;
+  }
   const now = isoNow();
   const id = newId();
   await env.DB.prepare(
     `INSERT INTO exercise_menus (${MENU_COLS})
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?9)`,
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?10)`,
   )
     .bind(
       id, input.name, input.category,
-      input.category === 'cardio' ? input.mets ?? null : null,
+      input.mets ?? null,
       input.category === 'strength' ? input.muscle_group ?? null : null,
       input.category === 'strength' && input.is_bodyweight ? 1 : 0,
       input.category === 'strength' && input.is_bodyweight ? input.bodyweight_factor ?? 1 : 1,
+      input.circuit ? JSON.stringify(input.circuit) : null,
       input.note ?? null, now,
     )
     .run();
@@ -87,7 +124,17 @@ export async function updateExerciseMenu(
   env: Env,
   id: string,
   patch: Partial<Omit<ExerciseMenuInput, 'category'>>,
-): Promise<ExerciseMenu | null> {
+): Promise<ExerciseMenu | null | { error: string }> {
+  if (patch.circuit) {
+    const current = await getExerciseMenu(env, id);
+    if (!current) return null;
+    if (current.category !== 'strength') return { error: 'circuit is only valid for strength menus' };
+    if (patch.circuit.some((it) => it.menu_id === id)) {
+      return { error: 'a circuit cannot reference itself' };
+    }
+    const invalid = await validateCircuitRefs(env, patch.circuit);
+    if (invalid) return invalid;
+  }
   const binds: unknown[] = [id];
   const sets: string[] = [];
   const push = (col: string, value: unknown): void => {
@@ -99,6 +146,7 @@ export async function updateExerciseMenu(
   if ('muscle_group' in patch) push('muscle_group', patch.muscle_group ?? null);
   if ('is_bodyweight' in patch) push('is_bodyweight', patch.is_bodyweight ? 1 : 0);
   if ('bodyweight_factor' in patch) push('bodyweight_factor', patch.bodyweight_factor ?? 1);
+  if ('circuit' in patch) push('circuit_json', patch.circuit ? JSON.stringify(patch.circuit) : null);
   if ('note' in patch) push('note', patch.note ?? null);
   if (sets.length === 0) return getExerciseMenu(env, id);
   binds.push(isoNow());
@@ -167,7 +215,7 @@ interface LogRow {
   menu_name: string; note: string | null; is_bodyweight: number;
   bodyweight_factor: number;
   duration_min: number | null; mets: number | null; body_weight_kg: number | null;
-  calories: number | null; created_at: string;
+  calories: number | null; created_at: string; group_id: string | null;
 }
 
 interface SetRow {
@@ -175,7 +223,7 @@ interface SetRow {
 }
 
 const LOG_COLS =
-  'id, menu_id, performed_at, category, menu_name, note, is_bodyweight, bodyweight_factor, duration_min, mets, body_weight_kg, calories, created_at';
+  'id, menu_id, performed_at, category, menu_name, note, is_bodyweight, bodyweight_factor, duration_min, mets, body_weight_kg, calories, created_at, group_id';
 
 function toSet(is_bodyweight: boolean, bodyWeight: number | null, factor: number, r: SetRow): ExerciseSet {
   const eff = effectiveWeight(is_bodyweight, bodyWeight, factor, r.weight_kg);
@@ -205,12 +253,13 @@ function toLog(r: LogRow, setRows: SetRow[]): ExerciseLog {
     body_weight_kg: r.body_weight_kg,
     calories: r.calories,
     created_at: r.created_at,
+    group_id: r.group_id,
     sets,
     total_volume: r.category === 'strength' ? roundVolume(sets.reduce((a, s) => a + s.volume, 0)) : null,
   };
 }
 
-/** 有酸素の消費kcal = METs × 体重kg × 時間h × 1.05 */
+/** 消費kcal = METs × 体重kg × 時間h × 1.05（cardio / METs付きstrength共通） */
 export function estimateCalories(mets: number, bodyWeightKg: number, durationMin: number): number {
   return mets * bodyWeightKg * (durationMin / 60) * 1.05;
 }
@@ -220,6 +269,7 @@ export interface ExerciseLogFields {
   note?: string | null;
   duration_min?: number;
   sets?: { reps: number; weight_kg?: number | null }[];
+  rounds?: number;
 }
 
 export async function getExerciseLog(env: Env, id: string): Promise<ExerciseLog | null> {
@@ -246,6 +296,11 @@ export async function logExercise(
   const id = newId();
 
   if (menu.category === 'cardio') {
+    // カテゴリ不一致フィールドは黙殺せず明示エラーにする（D8）
+    if (input.sets) return { error: `sets is not allowed for cardio menu "${menu.name}" — pass duration_min` };
+    if (input.rounds != null) {
+      return { error: `rounds is only valid for circuit menus — "${menu.name}" is cardio, pass duration_min` };
+    }
     if (menu.mets == null) return { error: 'cardio menu has no METs' };
     if (input.duration_min == null) return { error: 'duration_min is required for cardio' };
     const bw = await getBodyWeightAt(env, performedAt);
@@ -253,7 +308,7 @@ export async function logExercise(
     const calories = estimateCalories(menu.mets, bw, input.duration_min);
     await env.DB.prepare(
       `INSERT INTO exercise_logs (${LOG_COLS})
-VALUES (?1, ?2, ?3, 'cardio', ?4, ?5, 0, 1, ?6, ?7, ?8, ?9, ?10)`,
+VALUES (?1, ?2, ?3, 'cardio', ?4, ?5, 0, 1, ?6, ?7, ?8, ?9, ?10, NULL)`,
     )
       .bind(id, menu.id, performedAt, menu.name, input.note ?? null,
             input.duration_min, menu.mets, bw, calories, isoNow())
@@ -261,21 +316,29 @@ VALUES (?1, ?2, ?3, 'cardio', ?4, ?5, 0, 1, ?6, ?7, ?8, ?9, ?10)`,
     return { ...(await getExerciseLog(env, id))!, records_broken: [] };
   }
 
-  // strength
+  if (menu.circuit) return logCircuitExercise(env, menu, menu.circuit, input, performedAt, id);
+
+  // strength（単独種目）
+  if (input.rounds != null) {
+    return { error: `rounds is only valid for circuit menus — "${menu.name}" is strength, pass sets: [{reps, weight_kg?}]` };
+  }
   const rawSets = input.sets ?? [];
   if (rawSets.length === 0) return { error: 'sets is required for strength' };
+  // メニューに METs があり時間を記録したときは消費kcalを算出して凍結する（cardioと同一式）
+  const wantsKcal = menu.mets != null && input.duration_min != null;
   let bw: number | null = null;
-  if (menu.is_bodyweight) {
+  if (menu.is_bodyweight || wantsKcal) {
     bw = await getBodyWeightAt(env, performedAt);
     if (bw == null) return { error: 'no body weight measurement on or before performed_at' };
   }
+  const calories = wantsKcal ? estimateCalories(menu.mets!, bw!, input.duration_min!) : null;
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(
       `INSERT INTO exercise_logs (${LOG_COLS})
-VALUES (?1, ?2, ?3, 'strength', ?4, ?5, ?6, ?7, NULL, NULL, ?8, NULL, ?9)`,
+VALUES (?1, ?2, ?3, 'strength', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, NULL)`,
     ).bind(id, menu.id, performedAt, menu.name, input.note ?? null,
            menu.is_bodyweight ? 1 : 0, menu.is_bodyweight ? menu.bodyweight_factor : 1,
-           bw, isoNow()),
+           input.duration_min ?? null, menu.mets ?? null, bw, calories, isoNow()),
     ...rawSets.map((s, i) =>
       env.DB.prepare(
         'INSERT INTO exercise_sets (id, log_id, set_index, reps, weight_kg) VALUES (?1, ?2, ?3, ?4, ?5)',
@@ -289,11 +352,109 @@ VALUES (?1, ?2, ?3, 'strength', ?4, ?5, ?6, ?7, NULL, NULL, ?8, NULL, ?9)`,
   return { ...(await getExerciseLog(env, id))!, records_broken: diffRecords(before, after) };
 }
 
+/**
+ * サーキット記録の展開: 親ログ（時間・kcal・noteを担う。sets無し）+ 構成種目ごとの通常strength子ログ
+ * （1ラウンド=1セットで exercise_sets に展開）を1バッチで挿入する。展開結果そのものがスナップショットで、
+ * circuit_json を後日編集しても過去ログは不変。子セットは自己ベスト対象外（D7）なので records_broken は常に空。
+ */
+async function logCircuitExercise(
+  env: Env,
+  menu: ExerciseMenu,
+  items: CircuitItem[],
+  input: ExerciseLogFields,
+  performedAt: string,
+  parentId: string,
+): Promise<ExerciseLog | { error: string }> {
+  if (input.sets) return { error: `sets is not allowed for circuit menu "${menu.name}" — pass rounds` };
+  if (input.rounds == null) return { error: `rounds is required for circuit menu "${menu.name}"` };
+  const children: ExerciseMenu[] = [];
+  for (const item of items) {
+    const m = await getExerciseMenu(env, item.menu_id);
+    if (!m) return { error: `circuit item menu not found: ${item.menu_id}` };
+    if (m.archived) {
+      return { error: `circuit item "${m.name}" is archived — unarchive it or remove it from the circuit` };
+    }
+    if (m.circuit) return { error: `circuit item "${m.name}" is itself a circuit — nesting is not supported` };
+    children.push(m);
+  }
+  const wantsKcal = menu.mets != null && input.duration_min != null;
+  const needBw = wantsKcal || children.some((m) => m.is_bodyweight);
+  let bw: number | null = null;
+  if (needBw) {
+    bw = await getBodyWeightAt(env, performedAt);
+    if (bw == null) return { error: 'no body weight measurement on or before performed_at' };
+  }
+  const calories = wantsKcal ? estimateCalories(menu.mets!, bw!, input.duration_min!) : null;
+  const now = isoNow();
+  const statements: D1PreparedStatement[] = [
+    // 親ログ: group_id = 自id。ボリュームには寄与しない（is_bodyweight=0 / sets無し）
+    env.DB.prepare(
+      `INSERT INTO exercise_logs (${LOG_COLS})
+VALUES (?1, ?2, ?3, 'strength', ?4, ?5, 0, 1, ?6, ?7, ?8, ?9, ?10, ?1)`,
+    ).bind(parentId, menu.id, performedAt, menu.name, input.note ?? null,
+           input.duration_min ?? null, menu.mets ?? null, bw, calories, now),
+  ];
+  for (const [i, child] of children.entries()) {
+    const childId = newId();
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO exercise_logs (${LOG_COLS})
+VALUES (?1, ?2, ?3, 'strength', ?4, NULL, ?5, ?6, NULL, NULL, ?7, NULL, ?8, ?9)`,
+      ).bind(childId, child.id, performedAt, child.name,
+             child.is_bodyweight ? 1 : 0, child.is_bodyweight ? child.bodyweight_factor : 1,
+             child.is_bodyweight ? bw : null, now, parentId),
+    );
+    // 1ラウンド=1セット。バインド上限（100/文）に収まるよう複数行INSERTを分割する
+    const reps = items[i].reps;
+    for (let start = 1; start <= input.rounds; start += SET_INSERT_CHUNK) {
+      const end = Math.min(start + SET_INSERT_CHUNK - 1, input.rounds);
+      const rows: string[] = [];
+      const binds: unknown[] = [];
+      for (let si = start; si <= end; si++) {
+        rows.push(`(?${binds.length + 1}, ?${binds.length + 2}, ?${binds.length + 3}, ?${binds.length + 4}, NULL)`);
+        binds.push(newId(), childId, si, reps);
+      }
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO exercise_sets (id, log_id, set_index, reps, weight_kg) VALUES ${rows.join(', ')}`,
+        ).bind(...binds),
+      );
+    }
+  }
+  await env.DB.batch(statements);
+  const per = children.map((child, i) => {
+    const eff = effectiveWeight(child.is_bodyweight, bw, child.bodyweight_factor, null);
+    const totalReps = items[i].reps * input.rounds!;
+    return {
+      menu_id: child.id,
+      menu_name: child.name,
+      reps_per_round: items[i].reps,
+      total_reps: totalReps,
+      effective_weight_kg: eff,
+      volume: roundVolume(totalReps * eff),
+    };
+  });
+  return {
+    ...(await getExerciseLog(env, parentId))!,
+    rounds: input.rounds,
+    circuit: {
+      rounds: input.rounds,
+      per_movement: per,
+      total_reps: per.reduce((a, p) => a + p.total_reps, 0),
+      total_volume: roundVolume(per.reduce((a, p) => a + p.volume, 0)),
+    },
+    records_broken: [],
+  };
+}
+
 export async function deleteExerciseLog(env: Env, id: string): Promise<boolean> {
-  // 外部キーのCASCADEに依存せず、セット→ログの順で明示削除（D1のFK有効可否に左右されない）
+  // 外部キーのCASCADEに依存せず、セット→ログの順で明示削除（D1のFK有効可否に左右されない）。
+  // サーキットの親id指定時は group_id 一致の全ログ（親+子）をまとめて削除する
   const [, logRes] = await env.DB.batch([
-    env.DB.prepare('DELETE FROM exercise_sets WHERE log_id = ?1').bind(id),
-    env.DB.prepare('DELETE FROM exercise_logs WHERE id = ?1').bind(id),
+    env.DB.prepare(
+      'DELETE FROM exercise_sets WHERE log_id IN (SELECT id FROM exercise_logs WHERE id = ?1 OR group_id = ?1)',
+    ).bind(id),
+    env.DB.prepare('DELETE FROM exercise_logs WHERE id = ?1 OR group_id = ?1').bind(id),
   ]);
   return (logRes.meta.changes ?? 0) > 0;
 }
@@ -322,7 +483,16 @@ ORDER BY s.log_id, s.set_index`,
     if (arr) arr.push(s);
     else byLog.set(s.log_id, [s]);
   }
-  return logs.results.map((l) => toLog(l, byLog.get(l.id) ?? []));
+  const out = logs.results.map((l) => toLog(l, byLog.get(l.id) ?? []));
+  // サーキット親ログの rounds を子ログのセット数から復元する（1ラウンド=1セット展開のため全子で同数）
+  const roundsByGroup = new Map<string, number>();
+  for (const l of out) {
+    if (l.group_id != null && l.group_id !== l.id && l.sets.length > 0) roundsByGroup.set(l.group_id, l.sets.length);
+  }
+  for (const l of out) {
+    if (l.group_id != null && l.group_id === l.id) l.rounds = roundsByGroup.get(l.id) ?? null;
+  }
+  return out;
 }
 
 /** Katch-McArdle: 除脂肪体重(kg)からの基礎代謝推定 */
@@ -334,18 +504,26 @@ export async function getDailyExercise(env: Env, from: string, to: string): Prom
   const tz = tzModifier(env);
   const [counts, volume, ffmHist, ffmSeed] = await env.DB.batch<{ d: string } & Record<string, number>>([
     env.DB.prepare(
+      // calories_burned は kcal を持つ全記録の合計（cardio + METs付きstrength）。
+      // strength_count は 1サーキット=1件になるよう group_id で畳む
       `SELECT date(performed_at, '${tz}') AS d,
-       SUM(CASE WHEN category = 'cardio' THEN calories ELSE 0 END) AS calories_burned,
+       SUM(CASE WHEN calories IS NOT NULL THEN calories ELSE 0 END) AS calories_burned,
+       SUM(CASE WHEN calories IS NOT NULL THEN 1 ELSE 0 END) AS calories_count,
+       SUM(CASE WHEN category = 'cardio' THEN COALESCE(calories, 0) ELSE 0 END) AS cardio_calories,
+       SUM(CASE WHEN category = 'strength' THEN COALESCE(calories, 0) ELSE 0 END) AS strength_calories,
        SUM(CASE WHEN category = 'cardio' THEN 1 ELSE 0 END) AS cardio_count,
-       SUM(CASE WHEN category = 'strength' THEN 1 ELSE 0 END) AS strength_count
+       COUNT(DISTINCT CASE WHEN category = 'strength' THEN COALESCE(group_id, id) END) AS strength_count
 FROM exercise_logs
 WHERE date(performed_at, '${tz}') BETWEEN ?1 AND ?2
 GROUP BY 1`,
     ).bind(from, to),
     env.DB.prepare(
+      // strength_volume の SUM は従来と同一式のまま残し（過去との数値連続性）、
+      // 実荷重分 weighted_volume だけ追加で出す。自重換算分は読み取り側で差分導出する（D6）
       `SELECT date(l.performed_at, '${tz}') AS d,
        SUM(s.reps * (COALESCE(s.weight_kg, 0)
-         + CASE WHEN l.is_bodyweight = 1 THEN COALESCE(l.body_weight_kg, 0) * l.bodyweight_factor ELSE 0 END)) AS strength_volume
+         + CASE WHEN l.is_bodyweight = 1 THEN COALESCE(l.body_weight_kg, 0) * l.bodyweight_factor ELSE 0 END)) AS strength_volume,
+       SUM(s.reps * COALESCE(s.weight_kg, 0)) AS weighted_volume
 FROM exercise_logs l JOIN exercise_sets s ON s.log_id = l.id
 WHERE l.category = 'strength' AND date(l.performed_at, '${tz}') BETWEEN ?1 AND ?2
 GROUP BY 1`,
@@ -365,12 +543,20 @@ WHERE fat_free_mass IS NOT NULL AND date(measured_at, '${tz}') < ?1
 ORDER BY measured_at DESC LIMIT 1`,
     ).bind(from),
   ]);
-  const volByDate = new Map<string, number>();
-  for (const r of volume.results) volByDate.set(r.d, r.strength_volume);
-  const countsByDate = new Map<string, { calories: number; cardio: number; strength: number }>();
+  const volByDate = new Map<string, { total: number; weighted: number }>();
+  for (const r of volume.results) {
+    volByDate.set(r.d, { total: r.strength_volume, weighted: Number(r.weighted_volume ?? 0) });
+  }
+  const countsByDate = new Map<
+    string,
+    { calories: number; caloriesCount: number; cardioCalories: number; strengthCalories: number; cardio: number; strength: number }
+  >();
   for (const r of counts.results) {
     countsByDate.set(r.d, {
       calories: Number(r.calories_burned ?? 0),
+      caloriesCount: Number(r.calories_count ?? 0),
+      cardioCalories: Number(r.cardio_calories ?? 0),
+      strengthCalories: Number(r.strength_calories ?? 0),
       cardio: Number(r.cardio_count ?? 0),
       strength: Number(r.strength_count ?? 0),
     });
@@ -385,11 +571,16 @@ ORDER BY measured_at DESC LIMIT 1`,
   for (let d = from; d <= to; d = addDaysYmd(d, 1)) {
     if (ffmByDay.has(d)) carry = ffmByDay.get(d)!;
     const c = countsByDate.get(d);
+    const v = volByDate.get(d);
     out.push({
       d,
       bmr: carry != null ? estimateBmr(carry) : null,
-      calories_burned: c && c.cardio > 0 ? c.calories : null,
-      strength_volume: volByDate.has(d) ? volByDate.get(d)! : null,
+      calories_burned: c && c.caloriesCount > 0 ? c.calories : null,
+      cardio_calories: c && c.cardio > 0 ? c.cardioCalories : null,
+      strength_calories: c && c.strengthCalories > 0 ? c.strengthCalories : null,
+      strength_volume: v ? v.total : null,
+      weighted_volume: v ? roundVolume(v.weighted) : null,
+      bodyweight_volume: v ? roundVolume(Math.max(0, v.total - v.weighted)) : null,
       cardio_count: c?.cardio ?? 0,
       strength_count: c?.strength ?? 0,
     });
@@ -410,6 +601,26 @@ function isNonNegativeFinite(v: unknown): v is number {
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 
+/** サーキット構成配列の型チェック（参照整合性の検証は createExerciseMenu / updateExerciseMenu 側で行う） */
+function parseCircuitField(v: unknown): Parsed<CircuitItem[] | null> {
+  if (v === undefined || v === null) return { ok: true, value: null };
+  if (!Array.isArray(v) || v.length === 0) return { ok: false, error: 'circuit must be a non-empty array' };
+  if (v.length > MAX_CIRCUIT_ITEMS) return { ok: false, error: `circuit must be <= ${MAX_CIRCUIT_ITEMS} items` };
+  const out: CircuitItem[] = [];
+  for (const raw of v) {
+    if (typeof raw !== 'object' || raw === null) return { ok: false, error: 'each circuit item must be an object' };
+    const it = raw as Record<string, unknown>;
+    if (typeof it.menu_id !== 'string' || it.menu_id === '') {
+      return { ok: false, error: 'circuit item menu_id is required' };
+    }
+    if (!Number.isInteger(it.reps) || (it.reps as number) < 1 || (it.reps as number) > MAX_REPS) {
+      return { ok: false, error: `circuit item reps must be an integer between 1 and ${MAX_REPS}` };
+    }
+    out.push({ menu_id: it.menu_id, reps: it.reps as number });
+  }
+  return { ok: true, value: out };
+}
+
 export function parseExerciseMenuInput(body: unknown): Parsed<ExerciseMenuInput> {
   const b = (body ?? {}) as Record<string, unknown>;
   if (typeof b.name !== 'string' || b.name.trim() === '') return { ok: false, error: 'name is required' };
@@ -421,6 +632,11 @@ export function parseExerciseMenuInput(body: unknown): Parsed<ExerciseMenuInput>
     if (!isPositiveFinite(b.mets) || (b.mets as number) > MAX_METS) {
       return { ok: false, error: `mets must be a positive number <= ${MAX_METS}` };
     }
+  } else if (b.mets !== undefined && b.mets !== null) {
+    // strength でも METs を任意設定できる（duration_min 記録時に消費kcalを算出する）
+    if (!isPositiveFinite(b.mets) || (b.mets as number) > MAX_METS) {
+      return { ok: false, error: `mets must be a positive number <= ${MAX_METS}` };
+    }
   }
   if (b.muscle_group !== undefined && b.muscle_group !== null && typeof b.muscle_group !== 'string') {
     return { ok: false, error: 'muscle_group must be a string' };
@@ -428,12 +644,20 @@ export function parseExerciseMenuInput(body: unknown): Parsed<ExerciseMenuInput>
   if (!isValidBodyweightFactor(b.bodyweight_factor)) {
     return { ok: false, error: 'bodyweight_factor must be a number between 0 and 1' };
   }
+  const circuit = parseCircuitField(b.circuit);
+  if (!circuit.ok) return circuit;
+  if (circuit.value) {
+    if (category !== 'strength') return { ok: false, error: 'circuit is only valid for strength menus' };
+    if (b.is_bodyweight === true) {
+      return { ok: false, error: 'is_bodyweight is not applicable to circuit menus (set it on the constituent menus)' };
+    }
+  }
   return {
     ok: true,
     value: {
       name: b.name.trim(),
       category,
-      mets: category === 'cardio' ? (b.mets as number) : null,
+      mets: typeof b.mets === 'number' ? b.mets : null,
       muscle_group:
         category === 'strength' && typeof b.muscle_group === 'string' && b.muscle_group.trim() !== ''
           ? b.muscle_group.trim()
@@ -443,6 +667,7 @@ export function parseExerciseMenuInput(body: unknown): Parsed<ExerciseMenuInput>
         category === 'strength' && b.is_bodyweight === true && typeof b.bodyweight_factor === 'number'
           ? b.bodyweight_factor
           : 1,
+      circuit: circuit.value,
       note: typeof b.note === 'string' ? b.note : null,
     },
   };
@@ -484,6 +709,11 @@ export function parseExerciseMenuPatch(body: unknown): Parsed<Partial<Omit<Exerc
     }
     out.bodyweight_factor = typeof b.bodyweight_factor === 'number' ? b.bodyweight_factor : 1;
   }
+  if ('circuit' in b) {
+    const circuit = parseCircuitField(b.circuit);
+    if (!circuit.ok) return circuit;
+    out.circuit = circuit.value; // null = サーキット構成をクリアして通常種目に戻す
+  }
   if ('note' in b) {
     if (b.note === null) out.note = null;
     else if (typeof b.note === 'string') out.note = b.note;
@@ -514,6 +744,12 @@ export function parseExerciseLogFields(body: Record<string, unknown>): Parsed<Ex
       return { ok: false, error: `duration_min must be a positive number <= ${MAX_DURATION_MIN}` };
     }
     out.duration_min = body.duration_min as number;
+  }
+  if (body.rounds !== undefined && body.rounds !== null) {
+    if (!Number.isInteger(body.rounds) || (body.rounds as number) < 1 || (body.rounds as number) > MAX_ROUNDS) {
+      return { ok: false, error: `rounds must be an integer between 1 and ${MAX_ROUNDS}` };
+    }
+    out.rounds = body.rounds as number;
   }
   if (body.sets !== undefined && body.sets !== null) {
     if (!Array.isArray(body.sets) || body.sets.length === 0) {

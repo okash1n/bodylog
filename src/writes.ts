@@ -113,12 +113,15 @@ export function registerWriteRoutes(
   app.post(p('/api/exercise/menus'), w(async (c) => {
     const parsed = parseExerciseMenuInput(await readJson(c));
     if (!parsed.ok) return c.json({ error: parsed.error }, 400, headers());
-    return c.json(await createExerciseMenu(c.env, parsed.value), 201, headers());
+    const menu = await createExerciseMenu(c.env, parsed.value);
+    if ('error' in menu) return c.json({ error: menu.error }, 400, headers());
+    return c.json(menu, 201, headers());
   }));
   app.patch(p('/api/exercise/menus/:id'), w(async (c) => {
     const parsed = parseExerciseMenuPatch(await readJson(c));
     if (!parsed.ok) return c.json({ error: parsed.error }, 400, headers());
     const menu = await updateExerciseMenu(c.env, pid(c), parsed.value);
+    if (menu && 'error' in menu) return c.json({ error: menu.error }, 400, headers());
     return menu ? c.json(menu, 200, headers()) : c.json({ error: 'menu not found' }, 404, headers());
   }));
   app.post(p('/api/exercise/menus/:id/archive'), w(async (c) =>

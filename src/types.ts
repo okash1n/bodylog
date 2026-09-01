@@ -201,14 +201,21 @@ export interface DailyIntake {
 
 export type ExerciseCategory = 'cardio' | 'strength';
 
+/** サーキットの1ラウンド分の構成1件（既存 strength 種目への参照 + ラウンドあたり回数） */
+export interface CircuitItem {
+  menu_id: string;
+  reps: number;
+}
+
 export interface ExerciseMenu {
   id: string;
   name: string;
   category: ExerciseCategory;
-  mets: number | null; // cardio用（安静時比の運動強度）
+  mets: number | null; // 運動強度（安静時比）。cardio必須 / strengthは任意（duration_min記録時のkcal算出用）
   muscle_group: string | null; // strength任意
   is_bodyweight: boolean; // strength用（自重種目）
   bodyweight_factor: number; // 自重種目のボリューム補正係数 0〜1（既定1.0。実効重量=追加重量+体重×係数）
+  circuit: CircuitItem[] | null; // サーキット構成（strengthのみ。null=通常種目）
   note: string | null;
   archived: boolean;
   created_at: string;
@@ -222,6 +229,7 @@ export interface ExerciseMenuInput {
   muscle_group?: string | null;
   is_bodyweight?: boolean;
   bodyweight_factor?: number;
+  circuit?: CircuitItem[] | null;
   note?: string | null;
 }
 
@@ -243,14 +251,32 @@ export interface ExerciseLog {
   note: string | null;
   is_bodyweight: boolean; // スナップショット
   bodyweight_factor: number; // スナップショット（自重種目の体重算入係数）
-  duration_min: number | null; // cardio
-  mets: number | null; // cardio スナップショット
-  body_weight_kg: number | null; // スナップショット（cardio消費kcal / 自重ボリューム用）
-  calories: number | null; // cardio 消費kcal（算出結果）
+  duration_min: number | null; // 実施時間（分）。cardio必須 / strengthは任意
+  mets: number | null; // スナップショット（kcal算出に使った運動強度）
+  body_weight_kg: number | null; // スナップショット（消費kcal / 自重ボリューム用）
+  calories: number | null; // 消費kcal（METs×体重×時間×1.05 の算出結果。算出材料が無い記録は null）
   created_at: string;
-  sets: ExerciseSet[]; // strengthのみ（cardioは空配列）
+  group_id: string | null; // サーキットの束（親ログのid。親自身も自idを持つ）。null=単独記録
+  sets: ExerciseSet[]; // strengthのみ（cardioは空配列。サーキット親も空）
   total_volume: number | null; // strengthのみ（Σ volume）
-  records_broken?: RecordBroken[]; // logExercise の戻り値にだけ付く（自己ベスト更新。cardio は []）
+  rounds?: number | null; // サーキット親ログのみ（子ログのセット数から復元した導出値）
+  records_broken?: RecordBroken[]; // logExercise の戻り値にだけ付く（自己ベスト更新。cardio・サーキットは []）
+  circuit?: CircuitLogSummary; // サーキット記録時の logExercise の戻り値にだけ付く（導出値のまとめ）
+}
+
+/** サーキット記録の導出値（事実は rounds / duration_min のみ。他は全てサーバ算出でDB非保存） */
+export interface CircuitLogSummary {
+  rounds: number;
+  per_movement: {
+    menu_id: string;
+    menu_name: string;
+    reps_per_round: number;
+    total_reps: number;
+    effective_weight_kg: number;
+    volume: number;
+  }[];
+  total_reps: number;
+  total_volume: number;
 }
 
 /** 記録を達成したセット/セッションへの参照 */
@@ -298,8 +324,12 @@ export interface RecordBroken {
 export interface DailyExercise {
   d: string; // ローカル日付 YYYY-MM-DD
   bmr: number | null; // 基礎代謝の推定kcal（Katch-McArdle）
-  calories_burned: number | null; // cardioの消費kcal合計（運動なしはnull）
-  strength_volume: number | null; // strengthの総ボリューム合計（なしはnull）
+  calories_burned: number | null; // 運動全体の消費kcal合計（cardio + kcal付きstrength。なしはnull）
+  cardio_calories: number | null; // 内訳: cardioの消費kcal合計
+  strength_calories: number | null; // 内訳: strength（サーキット含む）の消費kcal合計
+  strength_volume: number | null; // strengthの総ボリューム合計（実荷重+自重換算。なしはnull）
+  weighted_volume: number | null; // 内訳: 実荷重分（Σ reps × weight_kg）
+  bodyweight_volume: number | null; // 内訳: 自重換算分（strength_volume − weighted_volume、下限0）
   cardio_count: number;
-  strength_count: number;
+  strength_count: number; // 1サーキット=1件（group_idで畳んだ件数）
 }
