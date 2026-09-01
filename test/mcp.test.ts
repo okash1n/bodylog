@@ -161,6 +161,53 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
     expect(((await call({})).result as { isError?: boolean }).isError).toBe(true); // 指定なし
   });
 
+  it('circuit: menu_name解決で登録し、roundsだけで記録できる（導出値付き・自己ベスト対象外）', async () => {
+    await createExerciseMenu(rootEnv, {
+      name: 'アシスト懸垂', category: 'strength', is_bodyweight: true, bodyweight_factor: 0.75,
+    });
+    await createExerciseMenu(rootEnv, {
+      name: '腕立て伏せ', category: 'strength', is_bodyweight: true, bodyweight_factor: 0.65,
+    });
+    const created = (await (await rwRpc(token, 'tools/call', {
+      name: 'create_exercise_menu',
+      arguments: {
+        name: 'Cindy', category: 'strength', mets: 8,
+        circuit: [{ menu_name: 'アシスト懸垂', reps: 5 }, { menu_name: '腕立て', reps: 10 }], // 部分一致で一意解決
+      },
+    })).json()) as RpcResponse;
+    expect(created.error).toBeUndefined();
+    const menu = parseToolJson<{ id: string; circuit: { menu_id: string; reps: number }[] }>(
+      created.result as Record<string, unknown>,
+    );
+    expect(menu.circuit).toHaveLength(2);
+
+    const logged = (await (await rwRpc(token, 'tools/call', {
+      name: 'log_exercise',
+      arguments: { menu_name: 'Cindy', rounds: 15, duration_min: 20 },
+    })).json()) as RpcResponse;
+    expect(logged.error).toBeUndefined();
+    const log = parseToolJson<{
+      group_id: string; id: string; rounds: number; body_weight_kg: number; calories: number;
+      records_broken: unknown[];
+      circuit: { total_reps: number; total_volume: number; per_movement: { total_reps: number }[] };
+    }>(logged.result as Record<string, unknown>);
+    expect(log.group_id).toBe(log.id);
+    expect(log.rounds).toBe(15);
+    expect(log.records_broken).toEqual([]);
+    expect(log.circuit.total_reps).toBe(225); // (5+10)×15
+    expect(log.circuit.per_movement.map((p) => p.total_reps)).toEqual([75, 150]);
+    // 換算はサーバ算出: bw×(0.75×5 + 0.65×10)×15、kcal = 8×bw×(20/60)×1.05
+    expect(log.circuit.total_volume).toBeCloseTo(log.body_weight_kg * (0.75 * 5 + 0.65 * 10) * 15, 2);
+    expect(log.calories).toBeCloseTo(8 * log.body_weight_kg * (20 / 60) * 1.05, 2);
+
+    // 構成種目未解決のときは isError
+    const bad = (await (await rwRpc(token, 'tools/call', {
+      name: 'create_exercise_menu',
+      arguments: { name: 'X', category: 'strength', circuit: [{ menu_name: '存在しない種目', reps: 5 }] },
+    })).json()) as RpcResponse;
+    expect((bad.result as { isError?: boolean }).isError).toBe(true);
+  });
+
   it('log_weight で手動体重を記録できる', async () => {
     const res = await rwRpc(token, 'tools/call', {
       name: 'log_weight',
