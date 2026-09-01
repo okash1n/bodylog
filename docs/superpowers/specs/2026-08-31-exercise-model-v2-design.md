@@ -26,7 +26,7 @@ MCP クライアント（ChatGPT）から、Cindy（20分 AMRAP: アシスト懸
 | D5: アシスト付き自重・係数 | スキーマは何も足さない。bodyweight_factor の運用を「文献調査に基づく推奨係数表」（後述の節）で規律する: 係数の定義を「対応する外部負荷種目の kg 数への等価換算」に固定し、上半身は研究由来・下半身/コアは規約値の2層構造とする。自重種目の登録時は係数の明示を促す（デフォルト1.0 の黙示適用をやめる）。アシスト付き自重は factor ≒ (種目の係数 × 体重 − アシスト kg) / 体重 の比例近似ガイドを MCP describe に明記する。固定 kg 差し引きの需要が実証されたら assist_kg 独立フィールド（NULL=恒等、実効重量 = max(0, weight_kg + 体重×factor − assist_kg)）を導入する（予約設計。負 weight_kg 案は「追加重量」列の意味と自己ベストの weight_kg>0 条件を汚すため不採用） | 換算計算を行うのは会話 AI であってユーザーではない。実効重量式は TS/SQL に二重実装されており、式変更は過去全履歴の表示に波及する最重リスク面。実証需要1件（アシスト懸垂）で今払うリスクではない。係数のデフォルト1.0（全体重）は文献実測（腕立て 0.6 台等）に照らして過大評価であり、案内なしでは是正されないため |
 | D6: ボリューム内訳 | volume_type は保存しない。読み取り時に weighted_volume（実荷重分 = Σ reps × COALESCE(weight_kg,0)）を追加算出し、bodyweight_volume = strength_volume − weighted_volume（下限0）を差分導出する。既存の strength_volume の SUM は無改変（合算値が過去とビット同一に保たれ、浮動小数の加算順問題を回避）。ダッシュボードは2色積み上げ bar。Slack・AI コーチング payload は当面合算のまま | セット明細に weight_kg と effective_weight_kg が別々に返るため内訳は過去分も遡及算出できる（保存は式変更時の不整合リスクしか足さない）。サーキット由来の第3内訳は group_id で後から遡及再集計できるため今は作らない |
 | D7: サーキットと自己ベスト | サーキット展開の子セットは構成種目の自己ベスト集計から**除外**する（fetchRecordRows に `group_id IS NULL` 条件を追加）。サーキット記録の応答の records_broken は常に `[]`（cardio と同じ扱い）。除外は自己ベストのみで、日次ボリューム集計・グラフにはサーキット分も従来どおり算入する。get_exercise_records の describe に「自己ベストは単独トレーニングのみ対象（サーキット内の実績は含まない）」と明記する | 「自己ベスト = 単独トレの記録」という意味論を守るため。高ボリュームなサーキット（Cindy の懸垂 75 回等）が単独トレの max_reps / volume 系 PR を上書きするのを避ける。実装は WHERE 句 1 条件で済み、外部 AI の誤読は describe の明記で緩和する |
-| D8: 黙殺の全面廃止 | 宣言済みフィールドのカテゴリ不一致（cardio×sets / 非 circuit×rounds / circuit×sets 等）は Phase 0 で**全面的に明示エラー化**する。エラー文は種目名 + 正しい呼び方入り（例: `sets is not allowed for cardio menu "ランニング" — pass duration_min`）。スキーマに無い完全な未知フィールドは MCP の仕組み上ハンドラ到達前に落ちるため対象外 | 「送ったのに無言でデータが消える」ことが、MCP スキーマしか見えない外部 AI の誤解の最大要因のため。既存クライアントの呼び出しを壊す破壊的変更だが、個人利用でクライアントは会話 AI であり、エラー文からの自己修正 1 回で済む。データの無言消失の方が実害が大きい |
+| D8: 黙殺の全面廃止 | 宣言済みフィールドのカテゴリ不一致（cardio×sets / 非 circuit×rounds / circuit×sets 等）は Phase 0 で**全面的に明示エラー化**する。種目登録も同様（cardio×muscle_group/is_bodyweight/bodyweight_factor、is_bodyweight 無しの bodyweight_factor を拒否。既定値と同義の指定は許容）。エラー文は種目名 + 正しい呼び方入り（例: `sets is not allowed for cardio menu "ランニング" — pass duration_min`）。スキーマに無い完全な未知フィールドは MCP の仕組み上ハンドラ到達前に落ちるため対象外 | 「送ったのに無言でデータが消える」ことが、MCP スキーマしか見えない外部 AI の誤解の最大要因のため。既存クライアントの呼び出しを壊す破壊的変更だが、個人利用でクライアントは会話 AI であり、エラー文からの自己修正 1 回で済む。データの無言消失の方が実害が大きい |
 
 ## 自重種目の推奨係数（bodyweight_factor の目安表）
 
@@ -111,7 +111,7 @@ CREATE INDEX idx_exercise_logs_group ON exercise_logs (group_id);
 
 ### Phase 2（circuit + rounds = フィードバック P1/P3/P4）
 
-- create_exercise_menu / update_exercise_menu に `circuit`: 構成配列（menu_id または menu_name で既存 strength 種目を参照、reps 1..1000、1..10 件）。category は strength のみ。参照先は作成時に存在・strength・非 archived を検証。
+- create_exercise_menu / update_exercise_menu に `circuit`: 構成配列（menu_id または menu_name で既存 strength 種目を参照、reps 1..1000、1..10 件）。category は strength のみ。参照先は作成/更新時に存在・strength・**自重（is_bodyweight）**・非 archived・非入れ子を検証し、記録時にも再検証する（2026-09-01 レビュー反映: 非自重種目は展開セットが weight_kg NULL で入りボリュームが黙って 0 になるため拒否。被参照種目への circuit 付与も逆方向の入れ子として拒否）。
 - log_exercise に `rounds`: int 1..50。circuit メニュー → rounds 必須・sets 禁止（明示エラー）。非 circuit メニューへの rounds は明示エラー（例: `rounds is only valid for circuit menus — "ベンチプレス" is strength, pass sets: [{reps, weight_kg?}]`）。
 - 構成種目にアーカイブ済みが含まれるサーキットの記録は 400 エラー（2026-09-01 決定。「アーカイブ = 記録不可」の意味論を全層で一貫させる）。エラー文に該当種目名を示し、unarchive か構成変更を案内する。
 - 応答に導出節を追加: rounds（事実）と per_movement（種目別 総レップ・実効重量・ボリューム）・total_reps・total_volume・calories（導出値）をフィールドレベルで分離して返す。records_broken は常に `[]`（D7: 子セットは自己ベスト対象外のため。fetchRecordRows に `group_id IS NULL` を追加し、get_exercise_records の describe に単独トレ限定を明記）。
@@ -169,6 +169,7 @@ CREATE INDEX idx_exercise_logs_group ON exercise_logs (group_id);
 - **distance・実測 kcal 入力**: 今回のスコープ外。実測 kcal は「実測された事実」なので、将来 measured_calories として METs 推定と区別して受ける案をメモとして残す。
 - **50ラウンド超の AMRAP・端数ラウンド**（15ラウンド+7レップ等）: rounds 上限は MAX_SETS=50 に連動。端数は構成種目への通常 sets 追記か note で退避（→未解決の論点 4）。
 - **既存の近似記録（bodyweight_factor<1 の単一種目サーキット）の移行**: 当時の事実のまま残す（スナップショット不変性と整合。PATCH 無し・削除→再記録のみの現行方針とも整合）。
+- **サーキット構成への種目別外部荷重（per-item weight_kg）**: 構成は自重種目のみ許可。ケトルベル等の外部荷重種目は展開モデルで表現できない（weight_kg NULL で展開されボリュームが黙って 0 になる）ため明示エラーで拒否し、単独の sets 記録へ誘導する。実需要が出たら構成項目への weight_kg 追加を検討する。
 
 ## 論点の決定記録と残課題
 

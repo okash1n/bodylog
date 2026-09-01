@@ -71,6 +71,7 @@
       latestWeight = lastWeightOf(lastMeas);
       renderHistory(logs);
       renderMenus();
+      rebuildCircuitOptions();
       renderVolumeChart();
     } catch (err) {
       console.error('[exercise] refresh failed', err);
@@ -159,6 +160,8 @@
     $('exercise-menu-circuit-wrap').hidden = isCardio;
     const isCircuit = !isCardio && $('exercise-menu-circuit').checked;
     $('exercise-circuit-editor').hidden = !isCircuit;
+    // 非表示中の行に不正値が残るとブラウザの検証がフォーム送信を無言でブロックするため、disabledも同期する
+    for (const el of $('exercise-circuit-items').querySelectorAll('input,select')) el.disabled = !isCircuit;
     if (isCircuit && $('exercise-circuit-items').children.length === 0) addCircuitItemRow();
     // 自重/係数はサーキット自体には付けない（構成種目側に付ける）
     $('exercise-menu-bw-wrap').hidden = isCardio || isCircuit;
@@ -168,16 +171,27 @@
   $('exercise-menu-circuit').addEventListener('change', syncMenuFormFields);
   syncMenuFormFields();
 
-  // サーキット構成エディタ（構成種目のselect + 1ラウンドの回数）
+  // サーキット構成エディタ（構成種目のselect + 1ラウンドの回数）。構成にできるのは自重の単独種目のみ
+  const circuitCandidates = () => menus.filter((m) => m.category === 'strength' && !m.circuit && m.is_bodyweight);
+  const circuitOptionsHtml = () =>
+    circuitCandidates().map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
   function addCircuitItemRow() {
-    const candidates = menus.filter((m) => m.category === 'strength' && !m.circuit);
     const div = document.createElement('div');
     div.className = 'set-row';
     div.innerHTML =
-      `<select class="circuit-menu" aria-label="構成種目">${candidates.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select>` +
+      `<select class="circuit-menu" aria-label="構成種目">${circuitOptionsHtml()}</select>` +
       '<input class="circuit-reps" type="number" min="1" max="1000" step="1" placeholder="回" aria-label="1ラウンドの回数">' +
       '<button type="button" class="ghost-btn circuit-remove">×</button>';
     $('exercise-circuit-items').appendChild(div);
+  }
+  // menusのロード・更新後に既存行の候補を作り直す（未ロード時に作られた空selectを復活させる。選択値は保持）
+  function rebuildCircuitOptions() {
+    const html = circuitOptionsHtml();
+    for (const sel of $('exercise-circuit-items').querySelectorAll('.circuit-menu')) {
+      const prev = sel.value;
+      sel.innerHTML = html;
+      if (circuitCandidates().some((m) => m.id === prev)) sel.value = prev;
+    }
   }
   $('exercise-circuit-add').addEventListener('click', addCircuitItemRow);
   $('exercise-circuit-items').addEventListener('click', (e) => {
@@ -200,7 +214,11 @@
         for (const row of $('exercise-circuit-items').children) {
           const menuId = row.querySelector('.circuit-menu').value;
           const reps = Number(row.querySelector('.circuit-reps').value);
-          if (menuId && reps) items.push({ menu_id: menuId, reps });
+          // 不完全な行を黙って捨てると意図と違う構成で登録されるため、明示エラーで止める
+          if (!menuId || !reps) {
+            return toast('サーキット構成に未入力の行があります。回数を入れるか×で行を削除してください', { tone: 'error' });
+          }
+          items.push({ menu_id: menuId, reps });
         }
         if (!items.length) return toast('サーキットの構成種目と回数を入力してください', { tone: 'error' });
         body.circuit = items;
