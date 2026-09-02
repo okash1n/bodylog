@@ -7,7 +7,6 @@
  */
 import { createExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Env } from '../src/types';
 import worker from '../src/index';
 import { createMenu, logMeal } from '../src/meals';
 import { logExercise } from '../src/exercise';
