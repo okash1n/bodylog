@@ -143,11 +143,18 @@ export async function processInbox(env: Env): Promise<{ processed: number; faile
   let processed = 0;
   let failed = 0;
   for (const row of results) {
-    // 失敗時もattempts上限で止まるよう、処理前にインクリメントする
+    // 失敗時もattempts上限で止まるよう、処理前にインクリメントする。
+    // 同時にこの更新を楽観claimにする（未処理かつattemptsが読み取り時のまま、の条件付き更新。
+    // cronとwebhookが並走して同じ行をSELECTしても、勝者1人だけがWithings取得を開始する。
+    // slack.ts/withings.tsと同じ「条件付きUPDATE → meta.changes判定」流儀。leaseではないため
+    // 処理が次のtickをまたぐと再claimされ得るが、下流はUPSERT/INSERT OR IGNOREで冪等）
     const attempts = row.attempts + 1;
-    await env.DB.prepare('UPDATE webhook_inbox SET attempts = ?1 WHERE id = ?2')
-      .bind(attempts, row.id)
+    const claim = await env.DB.prepare(
+      'UPDATE webhook_inbox SET attempts = ?1 WHERE id = ?2 AND processed_at IS NULL AND attempts = ?3',
+    )
+      .bind(attempts, row.id, row.attempts)
       .run();
+    if ((claim.meta.changes ?? 0) === 0) continue; // 他のconsumerがclaim済み/処理済み
     try {
       const payload = parseInboxPayload(row.payload);
       // WEBHOOK_MAX_RANGE_DAYS 超の期間は拒否せず分割して取り込む
@@ -168,7 +175,8 @@ export async function processInbox(env: Env): Promise<{ processed: number; faile
       failed += 1;
       const message = errorMessage(err);
       console.error('[ingest] inbox row failed', { id: row.id, attempts, message });
-      await env.DB.prepare('UPDATE webhook_inbox SET last_error = ?1 WHERE id = ?2')
+      // 並走したconsumerが先に処理を完了していた場合、処理済み行へ古いエラーを上書きしない
+      await env.DB.prepare('UPDATE webhook_inbox SET last_error = ?1 WHERE id = ?2 AND processed_at IS NULL')
         .bind(message, row.id)
         .run();
       if (attempts >= LIMITS.MAX_INBOX_ATTEMPTS) {
@@ -200,14 +208,11 @@ export async function ingestRange(
     );
     collectUpserts(page.groups, byGrpid);
     if (!page.more) break;
-    // offsetが前進しない応答は無限ループになるため中断する
+    // offsetが前進しない応答は無限ループになるため失敗にする（部分取得を成功扱いにすると、
+    // このevent自身の再試行・未取得分の即時反映/通知が失われる。兄弟の初期インポート・日次
+    // バックフィルと同じ throw で、呼び出し元 processInbox の attempts/last_error 管理に乗せる）
     if (page.offset <= offset) {
-      console.error('[ingest] pagination offset did not advance, aborting', {
-        context,
-        offset,
-        next: page.offset,
-      });
-      break;
+      throw new Error(`pagination offset did not advance (${offset} -> ${page.offset}) in ${context}`);
     }
     offset = page.offset;
     await sleep(PAGE_INTERVAL_MS);

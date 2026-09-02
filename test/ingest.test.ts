@@ -1,5 +1,7 @@
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ensureSubscription, ingestRange, parseWebhookPayload, runDailyBackfill } from '../src/ingest';
+import worker from '../src/index';
+import { ensureSubscription, ingestRange, parseWebhookPayload, processInbox, runDailyBackfill } from '../src/ingest';
 import { insertTokenRow, resetTables, stubFetch, testEnv, withingsReply, type StubRoute } from './helpers';
 
 interface RawMeasure {
@@ -188,5 +190,109 @@ describe('parseWebhookPayload', () => {
     expect(parseWebhookPayload(params({ ...valid, enddate: '1735999999' }))).toBeNull(); // enddate < startdate
     const { enddate: _drop, ...rest } = valid;
     expect(parseWebhookPayload(params(rest))).toBeNull();
+  });
+});
+
+describe('ページング停滞と再試行（inbox）', () => {
+  beforeEach(async () => {
+    await resetTables();
+    await insertTokenRow({ expiresInSec: 3600 });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const seedInbox = (start: number, end: number): Promise<unknown> =>
+    testEnv.DB.prepare('INSERT INTO webhook_inbox (payload) VALUES (?1)')
+      .bind(JSON.stringify({ userid: '42', appli: 1, startdate: start, enddate: end }))
+      .run();
+
+  it('offsetが前進しない応答は失敗として未処理に残り、正常応答の再試行で回収される', async () => {
+    await seedInbox(START, END);
+    // 停滞応答: more=1 なのに offset が進まない
+    stubFetch().on({
+      host: 'wbsapi.withings.net', path: '/measure', method: 'POST', times: 1,
+      reply: () => withingsReply({ updatetime: 1736100000, measuregrps: [grp(3001, MEASURED, { weight: 64 })], more: 1, offset: 0 }),
+    });
+    const id = (await testEnv.DB.prepare('SELECT MAX(id) AS id FROM webhook_inbox').first<{ id: number }>())!.id;
+    const r1 = await processInbox(testEnv);
+    expect(r1).toEqual({ processed: 0, failed: 1 });
+    const row1 = await testEnv.DB.prepare('SELECT processed_at, attempts, last_error FROM webhook_inbox WHERE id = ?1')
+      .bind(id)
+      .first<{ processed_at: string | null; attempts: number; last_error: string | null }>();
+    expect(row1?.processed_at).toBeNull();
+    expect(row1?.attempts).toBe(1);
+    expect(row1?.last_error).toContain('offset did not advance');
+
+    vi.unstubAllGlobals();
+    stubFetch().on(measRoute([grp(3001, MEASURED, { weight: 64 })]));
+    const r2 = await processInbox(testEnv);
+    expect(r2).toEqual({ processed: 1, failed: 0 });
+    const row2 = await testEnv.DB.prepare('SELECT processed_at, last_error FROM webhook_inbox WHERE id = ?1')
+      .bind(id)
+      .first<{ processed_at: string | null; last_error: string | null }>();
+    expect(row2?.processed_at).not.toBeNull();
+    expect(row2?.last_error).toBeNull();
+    // 全範囲の即時反映・通知が回復している
+    expect(await count('measurements')).toBe(1);
+    expect(await count('notification_batch_items')).toBe(1);
+  });
+
+  it('claimは未処理かつattemptsが読み取り時のままの行にだけ成功する（楽観排他の契約）', async () => {
+    await seedInbox(START, END);
+    const id = (await testEnv.DB.prepare('SELECT MAX(id) AS id FROM webhook_inbox').first<{ id: number }>())!.id;
+    // consumer A が先に claim（attempts 0→1）
+    const a = await testEnv.DB.prepare(
+      'UPDATE webhook_inbox SET attempts = 1 WHERE id = ?1 AND processed_at IS NULL AND attempts = 0',
+    ).bind(id).run();
+    expect(a.meta.changes).toBe(1);
+    // 同じスナップショット（attempts=0）を読んだ consumer B の claim は敗北する
+    const b = await testEnv.DB.prepare(
+      'UPDATE webhook_inbox SET attempts = 1 WHERE id = ?1 AND processed_at IS NULL AND attempts = 0',
+    ).bind(id).run();
+    expect(b.meta.changes).toBe(0);
+    // 処理済み行への last_error 上書きも no-op
+    await testEnv.DB.prepare("UPDATE webhook_inbox SET processed_at = datetime('now') WHERE id = ?1").bind(id).run();
+    const c = await testEnv.DB.prepare(
+      "UPDATE webhook_inbox SET last_error = 'stale' WHERE id = ?1 AND processed_at IS NULL",
+    ).bind(id).run();
+    expect(c.meta.changes).toBe(0);
+  });
+});
+
+describe('webhookのchunk上限と残範囲', () => {
+  beforeEach(async () => {
+    await resetTables();
+    await insertTokenRow({ expiresInSec: 3600 });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('上限超過の残り範囲を破棄せず同型payloadでinboxへ入れる', async () => {
+    // waitUntil の processInbox が走るため、空ページ応答で無害化しておく
+    stubFetch().on({
+      host: 'wbsapi.withings.net', path: '/measure', method: 'POST',
+      reply: () => withingsReply({ updatetime: 1736100000, measuregrps: [], more: 0, offset: 0 }),
+    });
+    const env = { ...testEnv, WEBHOOK_PATH_SECRET: 'testhook' };
+    const startdate = 1700000000;
+    const enddate = startdate + 500 * 86_400; // 500日 > 12チャンク×31日
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request('http://localhost/webhook/withings-testhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ userid: '42', appli: '1', startdate: String(startdate), enddate: String(enddate) }).toString(),
+      }),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    await waitOnExecutionContext(ctx);
+
+    const rows = await testEnv.DB.prepare('SELECT payload FROM webhook_inbox ORDER BY id').all<{ payload: string }>();
+    expect(rows.results.length).toBe(13); // 12チャンク + 残範囲1行
+    const parsed = rows.results.map((r) => JSON.parse(r.payload) as { startdate: number; enddate: number });
+    expect(parsed[0].startdate).toBe(startdate);
+    expect(parsed[12].enddate).toBe(enddate); // 残範囲の終端は元payloadの終端
+    // 範囲全体が隙間なく連続している（各行の次のstartは前のend+1）
+    for (let i = 1; i < parsed.length; i++) expect(parsed[i].startdate).toBe(parsed[i - 1].enddate + 1);
   });
 });
