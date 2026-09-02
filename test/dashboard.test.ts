@@ -10,7 +10,7 @@ const slug = testEnv.DASHBOARD_SLUG;
 function request(path: string): Promise<Response> {
   const app = new Hono<{ Bindings: Env }>();
   app.route('/d', createDashboardRouter());
-  return app.request(path, {}, testEnv, createExecutionContext());
+  return Promise.resolve(app.request(path, {}, testEnv, createExecutionContext()));
 }
 
 describe('dashboard API', () => {

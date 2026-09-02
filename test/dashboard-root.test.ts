@@ -9,7 +9,7 @@ const rootEnv: Env = { ...testEnv, DASHBOARD_SLUG: '' };
 const app = new Hono<{ Bindings: Env }>().route('/', createRootDashboardRouter());
 
 function request(path: string, env: Env): Promise<Response> {
-  return app.request(path, {}, env, createExecutionContext());
+  return Promise.resolve(app.request(path, {}, env, createExecutionContext()));
 }
 
 describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {

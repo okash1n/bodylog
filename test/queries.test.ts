@@ -69,7 +69,7 @@ describe('getNotificationStats', () => {
   });
 
   const latest: LatestMeasurement = {
-    measured_at: new Date().toISOString(),
+    measured_at: `${localYmdDaysAgo(0)}T03:00:00Z`,
     weight: 64,
     fat_mass: null,
     fat_free_mass: null,

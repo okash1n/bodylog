@@ -8,7 +8,7 @@
     "dev": "npm run sync-vendor && wrangler dev",
     "deploy": "npm run sync-vendor && wrangler deploy",
     "test": "npm run sync-vendor && vitest run",
-    "typecheck": "npm run sync-vendor && tsc --noEmit && npm run check-dashboard"
+    "typecheck": "npm run sync-vendor && tsc --noEmit && tsc --noEmit -p test/tsconfig.json && npm run check-dashboard"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.10.3",

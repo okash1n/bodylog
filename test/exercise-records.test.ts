@@ -4,15 +4,15 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ExerciseMenu, ExerciseRecords } from '../src/types';
-import { createExerciseMenu, logExercise } from '../src/exercise';
+import { logExercise } from '../src/exercise';
 import {
   computeRecords, diffRecords, effectiveWeight, getExerciseRecords, type RecordSetRow,
 } from '../src/exercise-records';
-import { insertMeasurement, resetTables, testEnv } from './helpers';
+import { createExerciseMenuOk, insertMeasurement, resetTables, testEnv } from './helpers';
 
 const bench: ExerciseMenu = {
   id: 'm-bench', name: 'ベンチプレス', category: 'strength', mets: null, muscle_group: '胸',
-  is_bodyweight: false, bodyweight_factor: 1, note: null, archived: false,
+  is_bodyweight: false, bodyweight_factor: 1, circuit: null, note: null, archived: false,
   created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z',
 };
 const pullup: ExerciseMenu = { ...bench, id: 'm-pullup', name: '懸垂', muscle_group: '背中', is_bodyweight: true };
@@ -181,8 +181,8 @@ describe('getExerciseRecords（D1）', () => {
   });
 
   it('記録順に関係なく performed_at 順で集計し、他種目の記録は混ぜない', async () => {
-    const squat = await createExerciseMenu(testEnv, { name: 'スクワット', category: 'strength' });
-    const other = await createExerciseMenu(testEnv, { name: 'デッドリフト', category: 'strength' });
+    const squat = await createExerciseMenuOk(testEnv, { name: 'スクワット', category: 'strength' });
+    const other = await createExerciseMenuOk(testEnv, { name: 'デッドリフト', category: 'strength' });
     // 新しい日を先に記録してから古い日を追記する（過去日付の追記でも先勝ちが崩れないこと）
     const l2 = await logExercise(testEnv, { menu_id: squat.id, performed_at: '2026-08-10T03:00:00Z', sets: [{ reps: 5, weight_kg: 100 }] });
     const l1 = await logExercise(testEnv, { menu_id: squat.id, performed_at: '2026-08-03T03:00:00Z', sets: [{ reps: 5, weight_kg: 100 }, { reps: 8, weight_kg: 80 }] });
@@ -198,7 +198,7 @@ describe('getExerciseRecords（D1）', () => {
   });
 
   it('記録が無い種目は sessions=0 で各項目 null', async () => {
-    const menu = await createExerciseMenu(testEnv, { name: 'ローイング', category: 'strength' });
+    const menu = await createExerciseMenuOk(testEnv, { name: 'ローイング', category: 'strength' });
     const r = await getExerciseRecords(testEnv, menu);
     expect(r.sessions).toBe(0);
     expect(r.max_weight).toBeNull();
@@ -238,7 +238,7 @@ describe('レビュー所見の回帰: float 誤差 / performed_at の書式混�
 
   it('D1: performed_at に +09:00 と Z が混在しても時刻順で集計する（先勝ち・前回セッション）', async () => {
     await resetTables();
-    const bench2 = await createExerciseMenu(testEnv, { name: 'ベンチプレス', category: 'strength' });
+    const bench2 = await createExerciseMenuOk(testEnv, { name: 'ベンチプレス', category: 'strength' });
     // A = 21:00+09:00 = 12:00Z（先）、B = 13:00Z（後）。文字列順では B が先になってしまう
     const a = await logExercise(testEnv, { menu_id: bench2.id, performed_at: '2026-08-20T21:00:00+09:00', sets: [{ reps: 5, weight_kg: 100 }] });
     const b = await logExercise(testEnv, { menu_id: bench2.id, performed_at: '2026-08-20T13:00:00Z', sets: [{ reps: 5, weight_kg: 100 }] });

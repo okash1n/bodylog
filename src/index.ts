@@ -254,7 +254,8 @@ app.on(['GET', 'HEAD'], '/webhook/:token', (c) => {
 app.post('/webhook/:token', async (c) => {
   const env = c.env;
   if (!isWebhookToken(env, c.req.param('token'))) return c.notFound();
-  const params = new URLSearchParams(await c.req.text());
+  // .text() は urlencoded Content-Type に対して workerd が警告を出すため、バイト列経由でデコードする
+  const params = new URLSearchParams(new TextDecoder().decode(await c.req.arrayBuffer()));
   const payload = parseWebhookPayload(params);
   if (!payload || payload.appli !== 1) {
     // 不正payloadはWithingsの再送ループを防ぐため200で握る

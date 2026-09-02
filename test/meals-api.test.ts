@@ -10,7 +10,7 @@ const rootEnv: Env = { ...testEnv, DASHBOARD_SLUG: '' };
 const app = new Hono<{ Bindings: Env }>().route('/', createRootDashboardRouter());
 
 function request(path: string): Promise<Response> {
-  return app.request(path, {}, rootEnv, createExecutionContext());
+  return Promise.resolve(app.request(path, {}, rootEnv, createExecutionContext()));
 }
 
 describe('公開REST（食事）', () => {

@@ -1,10 +1,25 @@
 import { createExecutionContext, env } from 'cloudflare:test';
 import { vi } from 'vitest';
-import type { Env } from '../src/types';
+import type { Env, ExerciseMenu, ExerciseMenuInput } from '../src/types';
 import worker from '../src/index';
+import { createExerciseMenu } from '../src/exercise';
 import { offsetHours, ymdWithOffset } from '../src/util';
 
 export const testEnv = env as unknown as Env;
+
+/** createExerciseMenu / updateExerciseMenu の成功結果を取り出す（エラーはテスト失敗にする） */
+export function unwrapMenu<T>(result: T | { error: string } | null): T {
+  if (result === null) throw new Error('menu not found');
+  if (typeof result === 'object' && result !== null && 'error' in result) {
+    throw new Error((result as { error: string }).error);
+  }
+  return result as T;
+}
+
+/** 成功前提のテスト用: createExerciseMenu を呼び、エラー戻りは即テスト失敗にする */
+export async function createExerciseMenuOk(env: Env, input: ExerciseMenuInput): Promise<ExerciseMenu> {
+  return unwrapMenu(await createExerciseMenu(env, input));
+}
 
 /** ドメイン直下モードのEnv（DASHBOARD_SLUG=空文字）。大半のHTTPテストが使う */
 export const rootTestEnv: Env = { ...testEnv, DASHBOARD_SLUG: '' };
@@ -176,7 +191,11 @@ export function stubFetch(): FetchStub {
           ? new Request(input, init)
           : input;
     const url = new URL(req.url);
-    const body = req.method === 'GET' || req.method === 'HEAD' ? '' : await req.clone().text();
+    // .text() は urlencoded Content-Type で workerd が警告を出すため、バイト列経由でデコードする
+    const body =
+      req.method === 'GET' || req.method === 'HEAD'
+        ? ''
+        : new TextDecoder().decode(await req.clone().arrayBuffer());
     log.push({ method: req.method, url: req.url, body });
     const route = routes.find(
       (r) =>

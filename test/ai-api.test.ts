@@ -10,7 +10,7 @@ const app = new Hono<{ Bindings: Env }>().route('/', createRootDashboardRouter()
 const slugApp = new Hono<{ Bindings: Env }>().route('/d', createDashboardRouter());
 
 function request(path: string, env: Env = rootEnv): Promise<Response> {
-  return app.request(path, {}, env, createExecutionContext());
+  return Promise.resolve(app.request(path, {}, env, createExecutionContext()));
 }
 
 /** N日前のローカル日付のJST正午（03:00Z）。日付境界付近の実行でも安定する固定時刻seed */
