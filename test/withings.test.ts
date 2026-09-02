@@ -82,4 +82,37 @@ describe('withings', () => {
     expect(stub.requests({ path: REFRESH_PATH })).toHaveLength(1);
     expect((await tokenRow()).refresh_token).toBe('rt-new2');
   });
+
+  it('fencing: refresh応答が遅延してleaseを失った旧ownerは、新ownerのトークンを巻き戻さない', async () => {
+    await insertTokenRow({ accessToken: 'at-old', refreshToken: 'rt-old', expiresInSec: -3600 });
+    // 旧ownerのrefresh応答が返る「前」に、別ownerがleaseを奪取して新トークンを保存し終えた状況を
+    // reply callback内のDB操作で再現する（LEASE_SECONDS超の遅延に相当）
+    const stub = stubFetch().on({
+      host: 'wbsapi.withings.net',
+      path: REFRESH_PATH,
+      method: 'POST',
+      times: 1,
+      reply: async () => {
+        await testEnv.DB.prepare(
+          `UPDATE tokens SET refresh_lease_owner = 'thief', refresh_lease_until = datetime('now', '+30 seconds')
+           WHERE id = 1`,
+        ).run();
+        await testEnv.DB.prepare(
+          `UPDATE tokens SET access_token = 'at-thief', refresh_token = 'rt-thief',
+             expires_at = ?1, refresh_lease_owner = NULL, refresh_lease_until = NULL WHERE id = 1`,
+        )
+          .bind(new Date(Date.now() + 3600_000).toISOString())
+          .run();
+        // 遅延した旧チェーンの応答（これを保存してしまうと rt-thief が失われチェーン破損）
+        return withingsReply({ userid: '42', access_token: 'at-stale', refresh_token: 'rt-stale', expires_in: 10800 });
+      },
+    });
+
+    // 旧ownerは自分の取得トークンを破棄し、新ownerの有効トークンを返す
+    await expect(getValidAccessToken(testEnv)).resolves.toBe('at-thief');
+    expect(stub.requests({ path: REFRESH_PATH })).toHaveLength(1);
+    const row = await tokenRow();
+    expect(row.access_token).toBe('at-thief');
+    expect(row.refresh_token).toBe('rt-thief'); // 巻き戻っていない
+  });
 });

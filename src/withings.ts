@@ -9,6 +9,8 @@ const NOTIFY_URL = 'https://wbsapi.withings.net/notify';
 /** access_token失効判定の余裕（この秒数以内に切れるトークンは失効扱い） */
 const EXPIRY_MARGIN_MS = 60_000;
 const LEASE_POLL_MS = 500;
+/** 外部fetchのtimeout。LEASE_SECONDS(30秒)より短くし、lease保持中のrefreshを必ず決着させる */
+const FETCH_TIMEOUT_MS = 15_000;
 
 interface StoredTokens {
   userid: string;
@@ -34,7 +36,14 @@ async function withingsPost(
   if (accessToken !== undefined) headers['Authorization'] = `Bearer ${accessToken}`;
   let res: Response;
   try {
-    res = await fetch(url, { method: 'POST', headers, body: new URLSearchParams(params) });
+    // 全Withings API呼び出しはこの1箇所を通る。ハングするとrefresh leaseの保持中に
+    // LEASE_SECONDS(30秒)を超えて他ownerとの競合を増幅するため、それより短いtimeoutで必ず決着させる
+    res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: new URLSearchParams(params),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
   } catch (e) {
     console.error('[withings] network error', { url, action: params['action'], error: e });
     throw e;
@@ -181,8 +190,26 @@ async function refreshAsLeaseOwner(env: Env, owner: string): Promise<string> {
       return fresh;
     }
     const tokens = await requestToken(env, { grant_type: 'refresh_token', refresh_token: row.refresh_token });
-    // 新トークン保存とlease解放を同一トランザクションで原子的に行う
-    await env.DB.batch([persistStatement(env, tokens), releaseLeaseStatement(env, owner)]);
+    // fenced persist: 新トークン保存とlease解放を「自分がまだlease所有者である」条件付きの
+    // 単一UPDATEで行う。ownerは呼び出しごとにnewId()で一意なため、lease期限切れ後に別ownerが
+    // 奪取・保存していた場合はchanges=0となり、遅延したこの応答（旧refresh_tokenチェーン）で
+    // 新トークンを巻き戻さない（Withingsはローテーション制のため巻き戻り=チェーン破損）
+    const persisted = await env.DB.prepare(
+      `UPDATE tokens
+       SET userid = ?1, access_token = ?2, refresh_token = ?3, expires_at = ?4,
+           refresh_lease_owner = NULL, refresh_lease_until = NULL
+       WHERE id = 1 AND refresh_lease_owner = ?5`,
+    )
+      .bind(tokens.userid, tokens.access_token, tokens.refresh_token, tokens.expires_at, owner)
+      .run();
+    if ((persisted.meta.changes ?? 0) === 0) {
+      // lease喪失: 取得したトークンは破棄し、新ownerが保存した現在値を使う
+      console.warn('[withings] refresh lease lost before persist; discarding refreshed tokens');
+      const current = await getTokenRow(env);
+      const currentFresh = current ? freshAccessToken(current) : null;
+      if (currentFresh !== null) return currentFresh;
+      throw new Error('Withings token refresh lost its lease and no fresh token is available (retryable)');
+    }
     return tokens.access_token;
   } catch (e) {
     console.error('[withings] token refresh failed', e);
