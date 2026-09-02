@@ -282,23 +282,35 @@
     });
   }
 
-  /* private時: 未認証でログイン画面に落ちたら、SWが貯めたAPI応答を消す
-     （Cache APIはno-storeを無視して保存するため、放置するとオフライン時に旧データが無認証で見える） */
+  /* private時: 未認証でログイン画面に落ちたら、旧SWが貯めたAPI応答を消す
+     （現行SWはprivateではAPIを保存しないが、旧バージョンのSWが残した分への防御として維持）。
+     削除の完了を待てるようPromiseを返す */
   function purgeApiCaches() {
-    if (!('caches' in window)) return;
-    caches
+    if (!('caches' in window)) return Promise.resolve();
+    return caches
       .keys()
       .then(function (names) {
-        names.forEach(function (name) {
-          if (name.indexOf('weight-dash-') !== 0) return;
-          caches.open(name).then(function (cache) {
-            cache.keys().then(function (reqs) {
-              reqs.forEach(function (req) {
-                if (req.url.indexOf('/api/') !== -1) cache.delete(req);
+        return Promise.all(
+          names
+            .filter(function (name) {
+              return name.indexOf('weight-dash-') === 0;
+            })
+            .map(function (name) {
+              return caches.open(name).then(function (cache) {
+                return cache.keys().then(function (reqs) {
+                  return Promise.all(
+                    reqs
+                      .filter(function (req) {
+                        return req.url.indexOf('/api/') !== -1;
+                      })
+                      .map(function (req) {
+                        return cache.delete(req);
+                      })
+                  );
+                });
               });
-            });
-          });
-        });
+            })
+        );
       })
       .catch(function () {});
   }
@@ -425,8 +437,10 @@
             loadCoaching();
             return;
           }
-          purgeApiCaches();
-          showState('auth');
+          // キャッシュ削除の完了を待ってからログイン画面へ遷移する（削除中の離脱で残骸を残さない）
+          purgeApiCaches().then(function () {
+            showState('auth');
+          });
           return;
         }
         console.error('[dashboard] load failed', err);
