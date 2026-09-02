@@ -65,6 +65,12 @@
 
   <div id="state-empty" class="state-box hidden" role="status">
     <p id="empty-message">まだ表示できるデータがありません。</p>
+    <!-- 空期間からの復帰導線: contentごと隠れる期間コントロールの代替（行き止まり防止） -->
+    <div id="empty-period" class="segment" role="group" aria-label="表示期間を変更">
+      <button type="button" class="segment-btn" data-empty-period="1m">1M</button>
+      <button type="button" class="segment-btn" data-empty-period="3m">3M</button>
+      <button type="button" class="segment-btn" data-empty-period="1y">1Y</button>
+    </div>
     <button id="empty-reload" class="primary-btn" type="button">再読み込み</button>
   </div>
 
