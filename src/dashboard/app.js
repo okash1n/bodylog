@@ -78,8 +78,10 @@
   }
 
   function todayYmd() {
-    var d = new Date();
-    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    // サーバーの日付境界（TZ_OFFSET_HOURS、既定+9）に合わせる。端末ローカル日付を使うと
+    // JST以外の端末で「今日」がサーバーとずれ、当日の記録が表示期間から外れて見えなくなる
+    // （shared.js の todayJst と同じ規則。サーバー設定値への完全追従は time context 導入時に統一）
+    return new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
   }
 
   function fmt(v) {

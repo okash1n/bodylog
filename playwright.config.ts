@@ -11,6 +11,9 @@ export default defineConfig({
   timeout: 30_000,
   use: {
     baseURL: 'http://127.0.0.1:8787',
+    // 端末timezone非依存の検証: あえてJST以外に固定する（サーバーの日付境界は+9。
+    // 端末ローカル日付に依存する実装だと「今日」の記録が消える回帰をここで検知する）
+    timezoneId: 'UTC',
   },
   webServer: {
     command: 'npx wrangler dev --config wrangler.e2e.toml --port 8787 --persist-to .wrangler/e2e',
