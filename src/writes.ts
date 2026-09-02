@@ -170,7 +170,7 @@ export function registerWriteRoutes(
     const secret = c.env.COACHING_API_SECRET;
     if (!secret) return c.json({ error: 'not found' }, 404, headers());
     if (!coachingBearerOk(c, secret)) return c.json({ error: 'unauthorized' }, 401, headers());
-    const parsed = parseCoachingInput(await readJson(c));
+    const parsed = parseCoachingInput(await readJson(c), localToday(c.env));
     if (!parsed.ok) return c.json({ error: parsed.error }, 400, headers());
     // 保存のみ。Slackへは単独配信せず、日次ダイジェスト（23:55）が当日分を本文に差し込む
     const note = await upsertCoachingNote(c.env, parsed.value);

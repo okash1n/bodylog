@@ -258,13 +258,42 @@ export async function fetchMeasPage(
   if (q.lastupdate !== undefined) params['lastupdate'] = String(q.lastupdate);
   if (q.offset !== undefined) params['offset'] = String(q.offset);
   const body = await withingsPost(MEASURE_URL, params, accessToken);
-  const groups = Array.isArray(body['measuregrps']) ? (body['measuregrps'] as MeasureGroup[]) : [];
+  const raw = Array.isArray(body['measuregrps']) ? (body['measuregrps'] as unknown[]) : [];
+  // 外部応答は型を保証しないため、境界でguardして安定エラーへ変換する
+  // （不正な要素を素通しすると下流のgroupToUpsert/UPSERTで不定形の500になり、内容がログへ漏れうる）
+  const groups = raw.map((g, i) => {
+    if (!isMeasureGroup(g)) {
+      console.error('[withings] malformed measuregrps entry', { index: i });
+      throw new Error('Withings getmeas response has malformed measuregrps (retryable)');
+    }
+    return g;
+  });
   const rawOffset = Number(body['offset']);
   return {
     groups,
     more: Boolean(body['more']),
     offset: Number.isFinite(rawOffset) ? rawOffset : 0,
   };
+}
+
+/** getmeas応答のグループ境界guard。値そのものはログへ出さない */
+function isMeasureGroup(g: unknown): g is MeasureGroup {
+  if (typeof g !== 'object' || g === null) return false;
+  const o = g as Record<string, unknown>;
+  return (
+    typeof o.grpid === 'number' && Number.isFinite(o.grpid) &&
+    typeof o.date === 'number' && Number.isFinite(o.date) &&
+    typeof o.category === 'number' &&
+    typeof o.attrib === 'number' &&
+    Array.isArray(o.measures) &&
+    o.measures.every(
+      (m) =>
+        typeof m === 'object' && m !== null &&
+        typeof (m as Record<string, unknown>).value === 'number' &&
+        typeof (m as Record<string, unknown>).type === 'number' &&
+        typeof (m as Record<string, unknown>).unit === 'number',
+    )
+  );
 }
 
 export function groupToUpsert(g: MeasureGroup): MeasurementUpsert | null {
