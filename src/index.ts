@@ -271,10 +271,17 @@ app.post('/webhook/:token', async (c) => {
   let chunks = 0;
   for (let s = payload.startdate; s <= payload.enddate; s += spanSeconds + 1) {
     if (chunks >= WEBHOOK_MAX_CHUNKS) {
-      console.warn('[index] webhook range truncated at chunk cap', {
+      // 上限到達後の残り範囲は破棄せず、同型payloadの1行としてinboxへ入れる
+      // （成功応答で握るとWithingsは再送せず、残範囲が当該eventの再試行対象からも消えるため。
+      //   processInboxは WEBHOOK_MAX_RANGE_DAYS 超の範囲を再分割して取り込めるので受け口の変更は不要）
+      console.warn('[index] webhook range exceeds chunk cap; enqueuing remainder as one row', {
         startdate: payload.startdate,
         enddate: payload.enddate,
       });
+      await insertInbox(
+        env,
+        JSON.stringify({ userid: payload.userid, appli: payload.appli, startdate: s, enddate: payload.enddate }),
+      );
       break;
     }
     const e = Math.min(s + spanSeconds, payload.enddate);
