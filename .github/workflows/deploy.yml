@@ -73,6 +73,10 @@ jobs:
             | grep -E '^[A-Za-z0-9*][A-Za-z0-9.*-]+\.[A-Za-z0-9-]+$' | sort -u | while read -r domain; do
             echo "::add-mask::$domain"
           done
+      # 実値（カスタムドメイン・hex/UUID形状ID）の混入を fail-closed で検査（値は出力しない）。
+      # canonical では restore 済み wrangler.toml のドメインも対象になる
+      - name: Scan for real values
+        run: ./scripts/scan-real-values.sh
       - run: npm ci
       - run: npm run typecheck
       # npm test は sync-vendor を内包する（typecheck の副作用に依存しない）
