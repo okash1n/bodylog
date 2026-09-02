@@ -84,6 +84,17 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     expect(html).toContain('meals.js');
   });
 
+  it('sw.js は READ_ACCESS に応じた private フラグを注入し、private では API を横取り・保存しない', async () => {
+    const pub = await (await request('/sw.js', rootEnv)).text();
+    expect(pub).toContain("var PRIVATE = 'false' === 'true';");
+    const priv = await (await request('/sw.js', { ...rootEnv, READ_ACCESS: 'private' })).text();
+    expect(priv).toContain("var PRIVATE = 'true' === 'true';");
+    expect(priv).not.toContain('{{PRIVATE_READ}}');
+    // private時のAPIバイパス（fetchハンドラ）と、activate時の同名キャッシュ内API掃除のロジックが存在する
+    expect(priv).toContain('if (isApi && PRIVATE) return;');
+    expect(priv.indexOf("indexOf('/api/')")).toBeGreaterThan(-1);
+  });
+
   it('/exercise.js が配信され、HTMLに運動タブスクリプトが含まれる', async () => {
     const js = await request('/exercise.js', rootEnv);
     expect(js.status).toBe(200);

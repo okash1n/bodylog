@@ -1,8 +1,12 @@
-/* 体重ダッシュボード Service Worker。{{ASSET_VERSION}}はdashboard.tsが注入する */
+/* 体重ダッシュボード Service Worker。{{ASSET_VERSION}}と{{PRIVATE_READ}}はdashboard.tsが注入する */
 'use strict';
 
 var VERSION = '{{ASSET_VERSION}}';
 var CACHE_NAME = 'weight-dash-' + VERSION;
+/* READ_ACCESS=private のとき true。private では認証済みAPI応答をCache Storageへ保存しない
+   （Cache.put は no-store を尊重しないため、SW側で API を一切横取りしない）。
+   public のオフライン閲覧（network-first + cacheフォールバック）は従来どおり維持する */
+var PRIVATE = '{{PRIVATE_READ}}' === 'true';
 var SCOPE = self.registration.scope;
 var PRECACHE_URLS = [
   './',
@@ -30,7 +34,8 @@ self.addEventListener('install', function (event) {
   );
 });
 
-/* 旧バージョンのキャッシュを削除する */
+/* 旧バージョンのキャッシュを削除する。privateでは現行キャッシュ内のAPI応答も掃除する
+   （READ_ACCESS だけが変わって VERSION が同じ場合、旧SWが保存したAPI応答が同名キャッシュに残るため） */
 self.addEventListener('activate', function (event) {
   event.waitUntil(
     caches
@@ -45,6 +50,22 @@ self.addEventListener('activate', function (event) {
               return caches.delete(n);
             })
         );
+      })
+      .then(function () {
+        if (!PRIVATE) return;
+        return caches.open(CACHE_NAME).then(function (cache) {
+          return cache.keys().then(function (reqs) {
+            return Promise.all(
+              reqs
+                .filter(function (req) {
+                  return req.url.indexOf('/api/') !== -1;
+                })
+                .map(function (req) {
+                  return cache.delete(req);
+                })
+            );
+          });
+        });
       })
       .then(function () {
         return self.clients.claim();
@@ -96,6 +117,8 @@ self.addEventListener('fetch', function (event) {
   if (url.pathname.slice(-7) === '/og.png' || url.pathname.slice(-6) === '/sw.js') return;
   var isNavigate = req.mode === 'navigate';
   var isApi = url.pathname.indexOf('/api/') !== -1;
+  /* private: 認証必須のAPI応答はSWが横取り・保存しない（常にネットワーク直行） */
+  if (isApi && PRIVATE) return;
   if (isNavigate || isApi) {
     event.respondWith(networkFirst(req, isNavigate));
     return;

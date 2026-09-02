@@ -32,7 +32,7 @@ import chartVendorJs from './dashboard/vendor/chart.umd.js';
 import { appleTouchIconPng } from './dashboard/icon';
 
 /** 静的assetのキャッシュバスターとsw.jsのキャッシュ名に使うバージョン */
-export const ASSET_VERSION = '2026-09-01-41';
+export const ASSET_VERSION = '2026-09-02-42';
 
 /** バージョン無しURLで配信するasset用（manifest / apple-touch-icon）。immutableにしない */
 const STATIC_CACHE_CONTROL = 'public, max-age=3600';
@@ -119,10 +119,12 @@ const serveAppleTouchIcon: Handler = (c) =>
     noindexHeaders({ 'Content-Type': 'image/png', 'Cache-Control': STATIC_CACHE_CONTROL }),
   );
 
-// sw.jsは即時更新できるようno-cacheで配信する
+// sw.jsは即時更新できるようno-cacheで配信する。READ_ACCESSの反映もこの注入で即時に伝わる
 const serveSw: Handler = (c) =>
   c.body(
-    swJsTpl.replaceAll('{{ASSET_VERSION}}', ASSET_VERSION),
+    swJsTpl
+      .replaceAll('{{ASSET_VERSION}}', ASSET_VERSION)
+      .replaceAll('{{PRIVATE_READ}}', isPrivateRead(c.env) ? 'true' : 'false'),
     200,
     noindexHeaders({ 'Content-Type': JS_CONTENT_TYPE, 'Cache-Control': 'no-cache' }),
   );
