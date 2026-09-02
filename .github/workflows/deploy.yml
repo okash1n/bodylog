@@ -78,9 +78,71 @@ jobs:
       # npm test は sync-vendor を内包する（typecheck の副作用に依存しない）
       - run: npm test
 
+  # N-1 互換ハーネス: デプロイは「D1 migration 適用 → Worker 更新」の順のため、
+  # 新スキーマ上で直前リビジョンの Worker が動く時間帯（デプロイ窓）がある。
+  # 直前リビジョンのテスト一式に現行 migrations/ を重ねて実行し、この窓の互換性を検証する。
+  # Secrets 不要（wrangler.toml.example を使用するためドメインマスクも不要）。
+  # migrations に変更が無い場合と、直前リビジョンを特定できない場合（force-push・新ブランチ等）は skip 成功
+  n1-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: current
+      - name: 直前リビジョンを特定
+        id: n1
+        env:
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          SHA="$BEFORE"
+          if [ "$EVENT" = "pull_request" ]; then SHA="$BASE"; fi
+          if echo "$SHA" | grep -qE '^[0-9a-f]{40}$' && [ "$SHA" != "0000000000000000000000000000000000000000" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "直前リビジョンを特定できないため N-1 互換チェックをスキップします" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # 直前 SHA が履歴から消えている場合（force-push 等）は checkout 失敗を skip 扱いにする
+      - name: 直前リビジョンを checkout
+        if: steps.n1.outputs.run == 'true'
+        id: checkout-n1
+        continue-on-error: true
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.n1.outputs.sha }}
+          path: n1
+      - name: migrations の変更有無を確認
+        if: steps.n1.outputs.run == 'true' && steps.checkout-n1.outcome == 'success'
+        id: diffcheck
+        run: |
+          if diff -rq current/migrations n1/migrations > /dev/null 2>&1; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "migrations に変更が無いため N-1 互換チェックをスキップします" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v5
+        if: steps.diffcheck.outputs.changed == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: n1/package-lock.json
+      - name: 現行 migrations を直前リビジョンに重ねてテスト
+        if: steps.diffcheck.outputs.changed == 'true'
+        run: |
+          rm -rf n1/migrations
+          cp -R current/migrations n1/migrations
+          cp n1/wrangler.toml.example n1/wrangler.toml
+          cd n1
+          npm ci
+          npm test
+
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.precheck.outputs.deploy == 'true'
-    needs: [test, precheck]
+    needs: [test, precheck, n1-compat]
     runs-on: ubuntu-latest
     concurrency: deploy-production
     steps:
