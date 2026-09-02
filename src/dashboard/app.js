@@ -209,6 +209,8 @@
   var seriesMode = readSeriesMode(); // 'raw'（実測） | 'avg'（7日平均）
   var tableMode = 'daily'; // 'daily'（日次集計） | 'raw'（計測明細）
   var lastDays = [];
+  var lastFrom = null; // 表示期間（日次表の対象日クランプに使う）
+  var lastTo = null;
   var rawRows = null; // 明細のキャッシュ（期間が変わったらnullに戻す）
   var summaryCache = null; // /api/summary（期間非依存。手動記録の削除時に破棄）
   var metabolismCache = null; // /api/metabolism（同上）
@@ -1246,6 +1248,9 @@
 
   function renderAll(days, mealsDays, exDays, from, to) {
     lastDays = days;
+    // 日次表の対象日クランプ用（食事・運動の日次は7日平均のため期間の6日前から取得している）
+    lastFrom = from;
+    lastTo = to;
     var labels = buildDateLabels(from, to);
     var density = densityFor(labels.length);
     var sets = seriesFrom(days, labels);
@@ -1327,16 +1332,22 @@
     // 運動側は実際に記録がある日（件数>0）だけを対象にする
     var weightBy = Object.create(null);
     var dates = Object.create(null);
+    // 食事・運動の日次は7日平均計算のため表示期間の6日前から取得している。
+    // 期間外の行が混入しないよう、unionへ加えるキーは表示期間内に限定する
+    // （YYYY-MM-DDは辞書順比較で日付比較と一致。体重系列はAPI側でクランプ済み）
+    var inRange = function (k) {
+      return (lastFrom == null || k >= lastFrom) && (lastTo == null || k <= lastTo);
+    };
     days.forEach(function (d) {
       weightBy[d.d] = d;
       dates[d.d] = true;
     });
     Object.keys(byDate).forEach(function (k) {
-      dates[k] = true;
+      if (inRange(k)) dates[k] = true;
     });
     Object.keys(exBy).forEach(function (k) {
       var r = exBy[k];
-      if (r && ((r.cardio_count || 0) > 0 || (r.strength_count || 0) > 0)) dates[k] = true;
+      if (inRange(k) && r && ((r.cardio_count || 0) > 0 || (r.strength_count || 0) > 0)) dates[k] = true;
     });
     var sorted = Object.keys(dates).sort();
     var frag = document.createDocumentFragment();

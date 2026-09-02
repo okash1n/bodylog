@@ -104,7 +104,11 @@ describe('REST応答とOpenAPIスキーマの契約', () => {
     { path: '/api/exercise/daily?days=5', wrap: 'days' },
   ];
 
-  it('一覧系: トップレベルのキーが一致し、要素の実キーが文書化済みの範囲に収まる', async () => {
+  // スキーマに残っているが実応答に決して現れないキー（削除漏れ）の検知から除外する、
+  // 「条件付きでのみ現れる」文書化済みキー。追加するときは現れる条件をコメントで書くこと
+  const CONDITIONAL_DOC_KEYS: Record<string, string[]> = {};
+
+  it('一覧系: トップレベルのキーが一致し、要素キーは双方向（実↔スキーマ）で整合する', async () => {
     for (const { path, wrap } of LIST_CASES) {
       const specPath = path.split('?')[0];
       const schema = spec.paths[specPath]?.get?.responses['200'].content['application/json'].schema;
@@ -117,9 +121,15 @@ describe('REST応答とOpenAPIスキーマの契約', () => {
       const itemSchema = resolve(spec, schema!).properties![wrap].items!;
       const documented = new Set(schemaProps(spec, itemSchema));
       const actualUnion = [...new Set(items.flatMap((i) => Object.keys(i)))].sort();
+      // 実→スキーマ: 文書化されていないフィールドの露出を検知
       for (const key of actualUnion) {
         expect(documented.has(key), `${specPath} item key "${key}" should be documented`).toBe(true);
       }
+      // スキーマ→実: 実装から消えたのにスキーマへ残り続けるフィールド（削除漏れ）を検知。
+      // seedは条件付きキー（サーキットのrounds等）も実応答に出るよう構成している
+      const allowed = new Set(CONDITIONAL_DOC_KEYS[specPath] ?? []);
+      const stale = [...documented].filter((k) => !actualUnion.includes(k) && !allowed.has(k));
+      expect(stale, `${specPath} schema keys never present in seeded responses (stale?)`).toEqual([]);
     }
   });
 
