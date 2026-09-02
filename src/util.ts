@@ -1,7 +1,11 @@
 import type { Context } from 'hono';
 import type { Env } from './types';
 
-/** 処理量の上限。D1無料枠（50クエリ/invocation）とwaitUntil 30秒に収める予算 */
+/**
+ * 処理量の上限。Workers Free プランのサブリクエスト上限（50/invocation。D1 は DB 呼び出し
+ * 1回 = 1消費で、DB.batch() は複数SQL文でも1呼び出し）と waitUntil 30秒に収める予算。
+ * 「50 = SQL文数の上限」ではない点に注意（文数の実測・予算化は基準計測で行う）
+ */
 export const LIMITS = {
   INBOX_PER_RUN: 3,
   IMPORT_PAGES_PER_RUN: 5,

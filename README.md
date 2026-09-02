@@ -5,7 +5,7 @@
 Fork/clone して設定値を差し替えるだけで動く（コード変更不要）。Cloudflare 無料枠内で動作する。
 
 - 対象データ: 体重・体脂肪率・除脂肪体重、食事記録（登録済みメニューからのカロリー・PFC記録）、運動記録（種目マスタは有酸素=METs / 筋トレ=セット明細 reps×weight、自重種目は記録時の体重 × 係数 `bodyweight_factor`（0〜1、既定1.0）を負荷に算入。コア系など体の一部しか動かさない種目は係数を下げて補正する）
-- エネルギー収支: 消費 = 基礎代謝（BMR。Katch-McArdle: 370 + 21.6 × 実測除脂肪体重。その日以前で最新の実測FFMを carry-forward し、実測が一度も無い期間は算出しない。**基礎代謝を体重や年齢・性別ではなく実測の除脂肪体重から算定する**ため、同じ体重でも体組成の違いがそのまま反映され、一般式（Harris-Benedict 等）より個人差を反映した推定になる。ただし推定値であり、精度は除脂肪体重の実測値の精度に左右される） + 運動消費（有酸素のみ、METs×体重×時間×1.05。筋トレはkcalではなく総ボリュームで追跡し、ダッシュボードで除脂肪体重の推移と重ねて見られる）。カロリー収支 = 摂取 − 総消費（日常活動・食事誘発性熱産生は含まない推定値）
+- エネルギー収支: 消費 = 基礎代謝（BMR。Katch-McArdle: 370 + 21.6 × 実測除脂肪体重。その日以前で最新の実測FFMを carry-forward し、実測が一度も無い期間は算出しない。**基礎代謝を体重や年齢・性別ではなく実測の除脂肪体重から算定する**ため、同じ体重でも体組成の違いがそのまま反映され、一般式（Harris-Benedict 等）より個人差を反映した推定になる。ただし推定値であり、精度は除脂肪体重の実測値の精度に左右される） + 運動消費（METs×体重×時間×1.05。有酸素は常に算出し、筋トレ・サーキットも種目に METs を設定して時間を記録した場合は同式で算出する。筋トレは総ボリュームでも追跡し、ダッシュボードで除脂肪体重の推移と重ねて見られる）。カロリー収支 = 摂取 − 総消費（日常活動・食事誘発性熱産生は含まない推定値）
 - 通知: Slack Incoming Webhook（複数送信先対応）。最新計測値・7日間平均（前ターム比）・基準日からの変化に加え、**直近30日のグラフ画像を通知に直接埋め込む**
 - ダッシュボード: PWA 対応・noindex。実測⇔7日平均のワンクリック切替、期間プリセット（1M/3M/1Y/カスタム）、日次集計⇔計測明細の表、ライト/ダークテーマ、OGP 画像を Worker 内で生成。食事・運動タブから記録の閲覧・入力、体重タブから体重の手動記録もでき、体重グラフには摂取/消費（基礎代謝＋運動）/カロリー収支を重ねられる
 - 食事記録: 登録済みメニュー（マスタ）からのみ記録する方式（自由入力ではない）。PFC比率はP×4/F×9/C×4kcal換算による3者内正規化で算出する（登録kcalでは割らない）。閲覧は既定（`READ_ACCESS=public`）では認証不要、記録・メニュー登録はオーナーの Google アカウントによる OAuth 2.1 認可が必要
@@ -247,8 +247,10 @@ npx wrangler d1 execute bodylog --remote \
    ```
 
 2. `DASHBOARD_SLUG = ""` にするとダッシュボードがドメイン直下（`https://weight.example.com/`）で配信される
-3. （Withings 連携時のみ）Withings アプリの REGISTERED URLS を新ドメインに更新する
-4. （Withings 連携時のみ）notify 購読の付け替えは日次 cron が自動で行う（`settings.public_origin` は認可時・通知時のリクエスト origin から更新される。即時に切り替えたい場合は再認可する）
+3. （Google OAuth 利用時＝書き込み・MCP・`READ_ACCESS=private` を使う場合）Google Cloud Console の「承認済みのリダイレクト URI」に `https://<新ドメイン>/authorize/callback` を追加する（手順9参照。未更新だと Google ログインが redirect_uri_mismatch で失敗する）
+4. （Withings 連携時のみ）Withings アプリの REGISTERED URLS を新ドメインに更新する
+5. （Withings 連携時のみ）notify 購読の付け替えは日次 cron が自動で行う。`settings.public_origin` は Withings 認可の開始（`/auth/start`）時にリクエスト origin で上書きされ、認証済み書き込みの到着時は未設定の場合のみ初期化される（通知処理は保存値を参照するだけで更新しない）。即時に切り替えたい場合は再認可する
+6. （Withings 無し運用のみ）`public_origin` を上書きするリクエスト経路が無いため、ドメイン変更後は `npx wrangler d1 execute DB --remote --command "UPDATE settings SET value='https://<新ドメイン>' WHERE key='public_origin'"` で手動更新する（Slack 通知内の画像 URL がこの値を使う）
 
 ## アクセス制御（READ_ACCESS）
 
@@ -306,7 +308,11 @@ npx wrangler d1 execute bodylog --remote \
 | `GET {base}/llms.txt` | AI向けのAPI案内（プレーンテキスト） |
 | `GET {base}/openapi.json` | OpenAPI 3.1 定義（ChatGPT カスタムGPTの Actions 登録用） |
 | `GET {base}/og.png` | OGP 画像（直近30日の体重グラフを PNG 生成。依存ライブラリなしの自前エンコーダ）。`READ_ACCESS=private` では `?key={OG_ACCESS_TOKEN}` でも取得可（Slack 埋め込み用の例外） |
-| 上記以外 | 404（全レスポンスに `X-Robots-Tag: noindex` 付与） |
+| `GET /authorize/callback` | Google ログインのコールバック（`/authorize` から遷移。Google Cloud Console にはこの URL を登録する） |
+| `GET /.well-known/oauth-authorization-server` / `GET /.well-known/oauth-protected-resource{,/mcp}` | OAuth 2.1 のメタデータ（MCP クライアントの自動検出用。`@cloudflare/workers-oauth-provider` が配信） |
+| `GET {base}/styles.css` `{base}/app.js` `{base}/shared.js` `{base}/meals.js` `{base}/exercise.js` `{base}/vendor/chart.umd.js` `{base}/sw.js` `{base}/manifest.webmanifest` `{base}/apple-touch-icon.png` | ダッシュボードの静的アセット（PWA。`?v=` 付きは長期キャッシュ） |
+| `GET /d/{slug}` | 末尾スラッシュ付き正規 URL（`/d/{slug}/`）へ 301 リダイレクト（`DASHBOARD_SLUG` 設定時のみ） |
+| 上記以外 | 404（全レスポンスに `X-Robots-Tag: noindex` 付与。`/mcp` への POST 以外のメソッドは 405） |
 
 cron トリガー:
 
@@ -341,7 +347,7 @@ ChatGPT・Claude などのAIクライアントから体重推移・食事記録�
   - **編集・削除**: AI が誤登録したメニューや記録は、ウェブアプリを開かずに MCP から直せる（編集・削除はユーザーの明示的な依頼があるときだけ使い、実行前に対象を確認するよう instructions で指示している。運動記録の編集は無いので削除→再記録）。**前提**: サーバー側に確認ステップは無く、記録の削除は物理削除（メニュー・種目はアーカイブで復元可）。誤操作やプロンプトインジェクションへの最後の砦は各 AI クライアントのツール実行承認 UI なので、削除系ツール（`destructiveHint` 付き）は自動承認しない設定を推奨する
   - **自己ベスト**: 筋トレの自己ベスト（最大重量＝追加重量基準、REP数ごとの最大重量、推定1RM＝Epley 式で reps≤12 のセットから・自重種目は対象外、最大REP、最大セットボリューム／セッションボリューム＝実効重量基準）と前回のセット内容は `get_exercise_records` で 1 回で引ける（DB には持たず都度集計。同値は最初に達成した日を採る）。`log_exercise` の応答には更新した自己ベスト（`records_broken`）が入る
 
-単位は kg（`fat_ratio` のみ %）、日付境界は `TZ_OFFSET_HOURS` のローカル日付。`fat_mass` は `weight - fat_free_mass` の導出値。食事記録の `calories` は kcal、`protein_g`/`fat_g`/`carbs_g` は g。日次の栄養素合計（`/api/meals/daily`）のうち `protein_g`/`fat_g`/`carbs_g` は栄養素が入力済みの記録のみの部分合計（未入力の記録は含まない）。`calories` は全記録の合計。PFC比率を出す場合は P×4 / F×9 / C×4 kcal に換算し3者の合計を100%として正規化すること（登録カロリーで割ると食物繊維等の差で100%を超えうるため不可）。運動記録の消費kcal（`/api/exercise/logs` の `calories`）は有酸素のみ算出（METs×体重×時間×1.05）。`/api/exercise/daily` の `bmr` は Katch-McArdle推定の基礎代謝（実測除脂肪体重が一度も無い期間は null）で、総消費は `bmr + calories_burned`。
+単位は kg（`fat_ratio` のみ %）、日付境界は `TZ_OFFSET_HOURS` のローカル日付。`fat_mass` は `weight - fat_free_mass` の導出値。食事記録の `calories` は kcal、`protein_g`/`fat_g`/`carbs_g` は g。日次の栄養素合計（`/api/meals/daily`）のうち `protein_g`/`fat_g`/`carbs_g` は栄養素が入力済みの記録のみの部分合計（未入力の記録は含まない）。`calories` は全記録の合計。PFC比率を出す場合は P×4 / F×9 / C×4 kcal に換算し3者の合計を100%として正規化すること（登録カロリーで割ると食物繊維等の差で100%を超えうるため不可）。運動記録の消費kcal（`/api/exercise/logs` の `calories`）は METs×体重×時間×1.05 で、有酸素は常に算出、筋トレ・サーキットは種目に METs があり `duration_min` を記録した場合のみ算出（材料が無い記録は null）。体重は実施日以前の実測をスナップショットとして使う。`/api/exercise/daily` の `bmr` は Katch-McArdle推定の基礎代謝（実測除脂肪体重が一度も無い期間は null）で、`calories_burned` は kcal を持つ全運動の合計（内訳は `cardio_calories` / `strength_calories`）、総消費は `bmr + calories_burned`。
 
 ## AIコーチング（定期講評）
 
