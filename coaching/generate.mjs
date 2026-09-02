@@ -53,7 +53,7 @@ const base = requiredEnv('BODYLOG_BASE_URL').replace(/\/+$/, '');
 const secret = requiredEnv('COACHING_API_SECRET');
 requiredEnv('CLAUDE_CODE_OAUTH_TOKEN'); // SDKが読む。早期に未設定を検出するためだけに確認
 const model = process.env.COACHING_MODEL || 'opus';
-const tzOffsetHours = Number.isFinite(Number(process.env.COACHING_TZ_OFFSET_HOURS))
+const envTzOffsetHours = Number.isFinite(Number(process.env.COACHING_TZ_OFFSET_HOURS))
   ? Number(process.env.COACHING_TZ_OFFSET_HOURS)
   : 9;
 
@@ -238,6 +238,23 @@ async function save(kind, date, content, usedModel) {
 }
 
 const kind = 'daily'; // 週次の別枠は廃止（週間視点は毎日の総括に常に含める）
+
+// 日付境界のオフセットはサーバー（/api/status の timezone_offset_hours）を正本とする。
+// Worker と runner が別々の既定値を持つと、片方だけの変更で対象日がずれるため。
+// 取得できない場合（旧Worker・一時障害）だけ従来の env 既定へフォールバックする
+const tzOffsetHours = await (async () => {
+  try {
+    const status = await getJson('/api/status');
+    if (Number.isFinite(Number(status?.timezone_offset_hours))) {
+      return Number(status.timezone_offset_hours);
+    }
+  } catch (err) {
+    console.warn(`failed to fetch server timezone offset: ${err instanceof Error ? err.message : err}`);
+  }
+  console.warn(`falling back to env timezone offset (${envTzOffsetHours})`);
+  return envTzOffsetHours;
+})();
+
 const today = localYmd(Date.now(), tzOffsetHours);
 // schedule 実行（date 入力なし）は「直近の予定スロットが属する日」を対象にする。GitHub の schedule が
 // 遅延して日付をまたいだ場合に、当日扱いでほぼ空の翌日分を作って本来の対象日が欠けるのを防ぐ
@@ -251,7 +268,7 @@ if (!target.ok) {
   process.exit(1);
 }
 const date = target.date;
-console.log(`kind=${kind} date=${date} today=${today} model=${model}`);
+console.log(`kind=${kind} date=${date} today=${today} model=${model} tz=${tzOffsetHours}`);
 
 if (isScheduleRun) {
   // schedule 実行は Worker からの workflow_dispatch 起動（対象日を明示）や手動実行のフォールバック。
@@ -265,6 +282,45 @@ if (isScheduleRun) {
   }
 }
 
+/**
+ * 生成の排他claim。schedule と workflow_dispatch が同時に走ったとき、同一対象日の
+ * SDK実行コストと外部送信を1回に抑える（lease 15分、失敗runは best-effort で解放）。
+ * 旧Worker（endpoint未実装=404）の期間は claim なしで従来どおり動く
+ */
+async function claimGeneration(d) {
+  const res = await fetch(`${base}/api/coaching/claim`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: d }),
+    signal: AbortSignal.timeout(15_000),
+  }).catch((err) => {
+    console.warn(`claim request failed; continuing without claim: ${err instanceof Error ? err.message : err}`);
+    return null;
+  });
+  if (res === null || res.status === 404) return 'unavailable';
+  if (res.status === 409) return 'held';
+  if (!res.ok) {
+    console.warn(`claim -> HTTP ${res.status}; continuing without claim`);
+    return 'unavailable';
+  }
+  return 'claimed';
+}
+
+async function releaseGeneration(d) {
+  await fetch(`${base}/api/coaching/claim`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: d }),
+    signal: AbortSignal.timeout(15_000),
+  }).catch(() => {});
+}
+
+const claim = await claimGeneration(date);
+if (claim === 'held') {
+  console.log(`another run holds the generation claim for ${date}; skipping`);
+  process.exit(0);
+}
+
 try {
   const data = await collectData(date, today);
   console.log(
@@ -276,5 +332,6 @@ try {
   console.log(`saved: id=${saved.id}`);
 } catch (err) {
   console.error('coaching job failed:', err instanceof Error ? err.message : err);
+  if (claim === 'claimed') await releaseGeneration(date);
   process.exit(1);
 }

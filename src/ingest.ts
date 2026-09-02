@@ -396,6 +396,10 @@ export async function cleanupOldRows(env: Env): Promise<void> {
     env.DB.prepare(
       'DELETE FROM notification_batch_items WHERE batch_id NOT IN (SELECT batch_id FROM notification_batches)',
     ),
+    // coaching生成の排他claim（settingsの日付付きkey）。leaseは15分で失効するため、古い行は掃除するだけでよい
+    env.DB.prepare(
+      "DELETE FROM settings WHERE key LIKE 'coaching_claim_%' AND value < datetime('now', ?1)",
+    ).bind(retention),
   ]);
 
   const raw = await getSetting(env, 'oauth_state');

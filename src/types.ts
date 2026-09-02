@@ -142,6 +142,7 @@ export interface ImportStatus {
   import_error: string | null;
   last_sync_at: string | null;
   latest_measured_at: string | null;
+  timezone_offset_hours: number; // サーバーの日付境界オフセット。外部ジョブ（coaching runner）が独自既定値を持たないための正本
 }
 
 export type IngestContext = 'webhook' | 'import' | 'backfill';

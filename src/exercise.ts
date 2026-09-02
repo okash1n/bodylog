@@ -492,7 +492,17 @@ VALUES (?1, ?2, ?3, 'strength', ?4, NULL, ?5, ?6, NULL, NULL, ?7, NULL, ?8, ?9)`
   };
 }
 
-export async function deleteExerciseLog(env: Env, id: string): Promise<boolean> {
+export async function deleteExerciseLog(env: Env, id: string): Promise<boolean | { error: string }> {
+  // サーキット子ログの単独削除は拒否する（グループの一部だけ消えるとラウンド数・ボリュームの
+  // 整合が壊れる。親ログの削除でグループ全体を消す。D-06決定）
+  const row = await env.DB.prepare('SELECT group_id FROM exercise_logs WHERE id = ?1')
+    .bind(id)
+    .first<{ group_id: string | null }>();
+  if (row?.group_id != null && row.group_id !== id) {
+    return {
+      error: `this log is part of a circuit session — delete the parent log ${row.group_id} to remove the whole session`,
+    };
+  }
   // 外部キーのCASCADEに依存せず、セット→ログの順で明示削除（D1のFK有効可否に左右されない）。
   // サーキットの親id指定時は group_id 一致の全ログ（親+子）をまとめて削除する
   const [, logRes] = await env.DB.batch([
