@@ -3,3 +3,5 @@ node_modules/
 wrangler.toml
 .dev.vars
 src/dashboard/vendor/
+test-results/
+playwright-report/

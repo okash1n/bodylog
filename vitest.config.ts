@@ -34,6 +34,9 @@ export default defineConfig({
     }),
   ],
   test: {
+    // e2e/ は Playwright 専用（npm run test:e2e）。vitest が *.spec.ts を拾うと
+    // Playwright ランナー前提の import で失敗・ハングするため除外する
+    exclude: ['**/node_modules/**', 'e2e/**'],
     setupFiles: ['./test/apply-migrations.ts', './test/setup-cleanup.ts'],
     // vitest-pool-workers はファイルごとに独立した worker/ストレージで実行するため並列可
     // （resetTables は各ファイル内の直列実行にのみ必要）

@@ -1,0 +1,26 @@
+# E2Eスモークテスト専用のローカル実行設定（実値なし・コミット対象）。
+# wrangler dev --local でのみ使用し、デプロイには使わない。
+# 本番設定（gitignore済み wrangler.toml）とは独立に、ドメイン直下・public固定で検証する。
+name = "bodylog-e2e"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bodylog-e2e"
+database_id = "bodylog-e2e-local" # ローカル実行専用の識別子（実IDではない）
+
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "bodylog-e2e-local-kv" # 同上
+
+[vars]
+WEBHOOK_PATH_SECRET = "e2e-webhook"
+DASHBOARD_SLUG = ""
+TZ_OFFSET_HOURS = "9"
+READ_ACCESS = "public"
+
+[[rules]]
+type = "Text"
+globs = ["**/*.html", "**/*.css", "**/*.webmanifest", "dashboard/*.js", "dashboard/**/*.js", "**/dashboard/*.js", "**/dashboard/**/*.js"]
+fallthrough = false

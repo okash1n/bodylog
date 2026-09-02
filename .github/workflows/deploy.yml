@@ -144,9 +144,25 @@ jobs:
           npm ci
           npm test
 
+  # browser E2E スモーク: wrangler dev（ローカルD1、実値なしの wrangler.e2e.toml）に対して
+  # read-only の主要 journey・空期間からの復帰・320px の本文 overflow 0 を検証する。
+  # Secrets 不要（fork でも動く）
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.precheck.outputs.deploy == 'true'
-    needs: [test, precheck, n1-compat]
+    needs: [test, precheck, n1-compat, e2e]
     runs-on: ubuntu-latest
     concurrency: deploy-production
     steps:
