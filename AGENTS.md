@@ -20,7 +20,7 @@ AIコーディングエージェント向けのリポジトリ固有ルール（
 
 ## 開発の基本
 
-- 検証: `npm run typecheck` と `npm test`（vitest + workers pool。テストはローカル `wrangler.toml` を参照する）
+- 検証: `npm run verify`（実値スキャン → typecheck（test の型検査込み） → npm test を一括実行。個別には `npm run typecheck` / `npm test`。vitest + workers pool。テストはローカル `wrangler.toml` を参照する）
 - デプロイ: main への push で GitHub Actions がテスト → D1マイグレーション → `wrangler deploy` を実行する（push = 本番デプロイ）
 - テストで日付に依存する計測を seed するときは、日付境界のフレークを避けるため固定時刻 `${ymd}T03:00:00Z`（= JST 正午）を使う
 - コミットは Conventional Commits 形式。`Co-Authored-By` は入れない
