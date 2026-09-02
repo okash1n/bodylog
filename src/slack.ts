@@ -651,6 +651,16 @@ export async function processNotificationBatches(
   origin: string,
 ): Promise<{ sent: number; deferred: number; dead: number }> {
   const destinations = new Map(parseDestinations(env).map((d) => [d.id, d] as const));
+  // 中断した 'sending' の回収: claim後にWorkerが強制終了・D1更新失敗すると行が sending のまま
+  // 永久滞留し、その通知は無警告で失われる。正常送信は数秒（waitUntil上限30秒）で終わるため、
+  // claim時に更新されない next_attempt_at が15分以上前の sending は中断とみなして pending へ戻す。
+  // attempts+1 により毒行は既存の MAX_NOTIFY_ATTEMPTS 経路で最終的に dead 化する
+  await env.DB.prepare(
+    `UPDATE notification_batches
+     SET status = 'pending', attempts = attempts + 1, next_attempt_at = datetime('now'),
+         last_error = 'reclaimed stuck sending'
+     WHERE status = 'sending' AND next_attempt_at <= datetime('now', '-15 minutes')`,
+  ).run();
   const { results: rows } = await env.DB.prepare(
     `SELECT batch_id, destination_id, attempts FROM notification_batches
      WHERE status = 'pending' AND next_attempt_at <= datetime('now')
