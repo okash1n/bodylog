@@ -42,9 +42,14 @@ export function newId(): string {
   return crypto.randomUUID();
 }
 
-/** READ_ACCESS=private（データ系読み取りをオーナー認証必須にするモード）か */
+/**
+ * READ_ACCESS=private（データ系読み取りをオーナー認証必須にするモード）か。
+ * public 側を明示列挙し、タイポ等の未知値は安全側（private）に倒す（fail-closed）。
+ * 未設定・空文字は既定 public のまま（既存デプロイとの後方互換）
+ */
 export function isPrivateRead(env: Env): boolean {
-  return env.READ_ACCESS === 'private';
+  const v = env.READ_ACCESS ?? 'public';
+  return v !== 'public' && v !== '';
 }
 
 /**

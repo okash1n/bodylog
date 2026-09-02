@@ -145,6 +145,26 @@ describe('READ_ACCESS 既定（public）は挙動不変', () => {
     expect((await get(rootTestEnv, '/api/summary')).status).toBe(200);
     expect((await get(rootTestEnv, '/llms.txt')).status).toBe(200);
   });
+
+  it('未設定・空文字は既定どおり public（既存デプロイとの後方互換）', async () => {
+    expect((await get({ ...rootTestEnv, READ_ACCESS: undefined }, '/api/summary')).status).toBe(200);
+    expect((await get({ ...rootTestEnv, READ_ACCESS: '' }, '/api/summary')).status).toBe(200);
+  });
+});
+
+describe('READ_ACCESS の未知値は fail-closed（private 扱い）', () => {
+  beforeEach(async () => {
+    await resetTables();
+    await insertMeasurement({
+      grpid: 7102,
+      measured_at: `${localYmdDaysAgo(1)}T03:00:00Z`,
+      weight: 82.5,
+    });
+  });
+
+  it.each(['privte', 'Private', 'PUBLIC', 'true'])('READ_ACCESS=%s は読み取りが401になる', async (v) => {
+    expect((await get({ ...rootTestEnv, READ_ACCESS: v }, '/api/summary')).status).toBe(401);
+  });
 });
 
 describe('private時のSlack画像URL', () => {

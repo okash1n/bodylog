@@ -48,6 +48,7 @@ DASHBOARD_SLUG = "CHANGE_ME_RANDOM_SLUG"
 # 集計・表示のタイムゾーンオフセット（時間）。固定オフセットでDST非対応。既定 9 = JST
 TZ_OFFSET_HOURS = "9"
 # 読み取りアクセス制御: "public"（既定）= 誰でも閲覧可 / "private" = データの閲覧もオーナーのGoogleログイン必須
+# 有効値は public / private のみ。それ以外の値（タイポ等）は安全側（private）に倒れる。未設定・空は public
 # private時の注意はREADMEの「アクセス制御」参照（Slack画像用のOG_ACCESS_TOKEN、ChatGPT Actions不可 等）
 READ_ACCESS = "public"
 # 任意: AIコーチング生成（GitHub Actions）をWorkerの23:30 JST cronから起動する場合、対象リポジトリを指定する。
