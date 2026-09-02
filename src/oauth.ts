@@ -151,8 +151,13 @@ export function registerOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     const userinfo = (await userinfoRes.json().catch(() => null)) as
       | { email?: unknown; email_verified?: unknown }
       | null;
-    const email = typeof userinfo?.email === 'string' ? userinfo.email.toLowerCase() : '';
-    if (userinfo?.email_verified !== true || email === '' || !ownerEmails(env).includes(email)) {
+    // 応答不正（JSON解析失敗）は上流障害であり、非オーナーの認可拒否（403）と混同しない
+    if (userinfo === null) {
+      console.error('[oauth] google userinfo response is malformed');
+      return c.text('google login failed', 502, noindexHeaders());
+    }
+    const email = typeof userinfo.email === 'string' ? userinfo.email.toLowerCase() : '';
+    if (userinfo.email_verified !== true || email === '' || !ownerEmails(env).includes(email)) {
       console.warn('[oauth] rejected non-owner login');
       return c.text('forbidden: not the owner', 403, noindexHeaders());
     }
