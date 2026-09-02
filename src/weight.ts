@@ -111,9 +111,11 @@ export async function deleteManualMeasurement(env: Env, id: number): Promise<boo
       'DELETE FROM notification_batch_items WHERE measurement_id = ?1 ' +
         'AND NOT EXISTS (SELECT 1 FROM measurements WHERE id = ?1)',
     ).bind(id),
-    // itemが空になったbatchの未送信行を取り消す
+    // itemが空になったbatchの未送信行を取り消す。日次ダイジェスト（batch_id='daily-…'）は
+    // 設計上itemを持たない（本文は送信時に当日データから構築する）ため対象外にする
+    // （含めるとpending中のダイジェストが無関係な削除で巻き添え消滅する）
     env.DB.prepare(
-      `DELETE FROM notification_batches WHERE status = 'pending'
+      `DELETE FROM notification_batches WHERE status = 'pending' AND batch_id NOT LIKE 'daily-%'
        AND NOT EXISTS (SELECT 1 FROM notification_batch_items WHERE batch_id = notification_batches.batch_id)`,
     ),
   ]);

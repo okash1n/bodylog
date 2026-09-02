@@ -202,6 +202,35 @@ describe('processNotificationBatches', () => {
     expect(stub.requests({ host: SLACK_HOST })).toHaveLength(2);
   });
 
+  it('claimが回収時計をリセットする: 長く滞留したpendingをclaim直後に回収へ奪われない', async () => {
+    // 解禁から20分滞留したpending行（バックログ相当）
+    await seedBatch('b-backlog', 506, { nextOffsetSec: -1200 });
+    // 実装と同じclaim（next_attempt_atをnowへ更新）を実行 → 送信中の状態を再現
+    await testEnv.DB.prepare(
+      `UPDATE notification_batches SET status = 'sending', next_attempt_at = datetime('now')
+       WHERE batch_id = 'b-backlog' AND status = 'pending'`,
+    ).run();
+    // 並行invocationの冒頭sweep相当を実行しても、claim直後の行は回収されない
+    stubFetch();
+    const result = await processNotificationBatches(testEnv, ORIGIN);
+    expect(result).toEqual({ sent: 0, deferred: 0, dead: 0 });
+    expect((await batchRow('b-backlog')).status).toBe('sending');
+  });
+
+  it('送信結果を一度も観測できない毒行は、attempts上限で回収せずdead化する', async () => {
+    await seedBatch('b-poison', 507, { attempts: LIMITS.MAX_NOTIFY_ATTEMPTS - 1 });
+    await testEnv.DB.prepare(
+      `UPDATE notification_batches SET status = 'sending', next_attempt_at = datetime('now', '-20 minutes')
+       WHERE batch_id = 'b-poison'`,
+    ).run();
+    stubFetch(); // 再送は発生しない（fetchが呼ばれればthrowで検知）
+    const result = await processNotificationBatches(testEnv, ORIGIN);
+    expect(result).toEqual({ sent: 0, deferred: 0, dead: 0 });
+    const row = await batchRow('b-poison');
+    expect(row.status).toBe('dead'); // 永久15分周期の再claimループにしない
+    expect(row.attempts).toBe(LIMITS.MAX_NOTIFY_ATTEMPTS);
+  });
+
   it('中断した sending は15分経過後に回収され再送される（新しい sending は触らない）', async () => {
     // 中断行: claim後にWorkerが落ちた想定（sendingのままnext_attempt_atが20分前）
     await seedBatch('b-stuck', 504);
@@ -246,6 +275,22 @@ describe('手動記録の削除と未送信通知の取消し', () => {
     stubFetch();
     const result = await processNotificationBatches(testEnv, ORIGIN);
     expect(result).toEqual({ sent: 0, deferred: 0, dead: 0 });
+  });
+
+  it('itemを持たない日次ダイジェスト（daily-）のpending行は削除に巻き込まれない', async () => {
+    // 日次ダイジェストbatchは設計上itemを持たない（本文は送信時に当日データから構築する）
+    await testEnv.DB.prepare(
+      `INSERT INTO notification_batches (batch_id, destination_id, status, attempts, next_attempt_at)
+       VALUES ('daily-2026-01-05', 'main', 'pending', 1, datetime('now', '+300 seconds'))`,
+    ).run();
+    // 存在しないidの削除要求でも、実在する手動記録の削除でも、daily- 行は残る
+    expect(await deleteManualMeasurement(testEnv, 999_999)).toBe(false);
+    const saved = await logWeight(testEnv, { measured_at: '2026-01-05T15:00:00Z', weight: 65.2, fat_ratio: null });
+    expect(await deleteManualMeasurement(testEnv, saved.id)).toBe(true);
+    const daily = await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS n FROM notification_batches WHERE batch_id = 'daily-2026-01-05' AND status = 'pending'",
+    ).first<{ n: number }>();
+    expect(daily?.n).toBe(1);
   });
 
   it('複数計測を含むbatchでは、削除した計測のitemだけが消えbatchは残る', async () => {

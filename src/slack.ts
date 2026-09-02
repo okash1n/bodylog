@@ -653,8 +653,17 @@ export async function processNotificationBatches(
   const destinations = new Map(parseDestinations(env).map((d) => [d.id, d] as const));
   // 中断した 'sending' の回収: claim後にWorkerが強制終了・D1更新失敗すると行が sending のまま
   // 永久滞留し、その通知は無警告で失われる。正常送信は数秒（waitUntil上限30秒）で終わるため、
-  // claim時に更新されない next_attempt_at が15分以上前の sending は中断とみなして pending へ戻す。
-  // attempts+1 により毒行は既存の MAX_NOTIFY_ATTEMPTS 経路で最終的に dead 化する
+  // claim から15分以上経過した sending は中断とみなす（claim時に next_attempt_at を now に
+  // 更新するので「claimからの経過時間」を正しく測れる）。attempts+1 により実質リトライとして数え、
+  // 上限に達した毒行（送信結果を一度も観測できない行）は pending に戻さず dead 化して周回を止める
+  await env.DB.prepare(
+    `UPDATE notification_batches
+     SET status = 'dead', attempts = attempts + 1, last_error = 'stuck sending exceeded attempts'
+     WHERE status = 'sending' AND next_attempt_at <= datetime('now', '-15 minutes')
+       AND attempts + 1 >= ?1`,
+  )
+    .bind(LIMITS.MAX_NOTIFY_ATTEMPTS)
+    .run();
   await env.DB.prepare(
     `UPDATE notification_batches
      SET status = 'pending', attempts = attempts + 1, next_attempt_at = datetime('now'),
@@ -675,9 +684,12 @@ export async function processNotificationBatches(
   const messages = new Map<string, BuiltMessage>();
 
   for (const row of rows) {
-    // status='pending'条件付き更新で行を占有（並行実行での二重送信防止）
+    // status='pending'条件付き更新で行を占有（並行実行での二重送信防止）。
+    // next_attempt_at を claim 時刻に更新する: 回収sweepは next_attempt_at 基準の15分で
+    // 中断を判定するため、解禁から長く滞留した行を claim した直後に並行実行の回収へ
+    // 奪われて二重送信になるのを防ぐ（= claim が回収時計をリセットする）
     const claimed = await env.DB.prepare(
-      `UPDATE notification_batches SET status = 'sending'
+      `UPDATE notification_batches SET status = 'sending', next_attempt_at = datetime('now')
        WHERE batch_id = ?1 AND destination_id = ?2 AND status = 'pending'`,
     )
       .bind(row.batch_id, row.destination_id)
