@@ -14,6 +14,7 @@ permissions:
   contents: read
 
 jobs:
+  # canonical（okash1n/bodylog）の main push で Secrets が欠落していたら明示的に失敗させ、
   # デプロイ用Secrets未設定のFork/clone環境では、mainへのpushでも失敗ではなくスキップにする
   # （secretsコンテキストはjobレベルのifで参照できないため、判定ジョブを挟んでneedsで渡す）
   precheck:
@@ -29,6 +30,11 @@ jobs:
         run: |
           if [ -n "$WRANGLER_TOML" ] && [ -n "$CF_TOKEN" ]; then
             echo "deploy=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.repository }}" = "okash1n/bodylog" ]; then
+            # canonical main の push が本番へ配備されないのに workflow が緑のままだと、
+            # 修正・migration の反映漏れに気付けない（静かな未配備）。ここは失敗にする
+            echo "::error::canonical main への push ですが WRANGLER_TOML / CLOUDFLARE_API_TOKEN が未設定です。デプロイ資格を確認してください"
+            exit 1
           else
             echo "WRANGLER_TOML / CLOUDFLARE_API_TOKEN が未設定のためデプロイをスキップします（READMEの「自動デプロイ」参照）" >> "$GITHUB_STEP_SUMMARY"
             echo "deploy=false" >> "$GITHUB_OUTPUT"
