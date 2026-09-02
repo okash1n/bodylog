@@ -6,7 +6,7 @@
  */
 import type { Context } from 'hono';
 import type { Env } from './types';
-import { isValidYmd, newId, noindexHeaders, withRange } from './util';
+import { isValidYmd, localToday, newId, noindexHeaders, withRange } from './util';
 
 export type CoachingKind = 'daily' | 'weekly';
 
@@ -30,6 +30,7 @@ const MAX_CONTENT_LENGTH = 4000;
 
 export function parseCoachingInput(
   body: Record<string, unknown> | null,
+  today: string,
 ): { ok: true; value: CoachingInput } | { ok: false; error: string } {
   if (!body) return { ok: false, error: 'invalid JSON body' };
   const { kind, date, content, model } = body;
@@ -38,6 +39,10 @@ export function parseCoachingInput(
   }
   if (typeof date !== 'string' || !isValidYmd(date)) {
     return { ok: false, error: 'date must be a valid YYYY-MM-DD' };
+  }
+  // 将来日の講評を保存させない（latest が現在より先の日付を返し、鮮度判定・表示を狂わせるため）
+  if (date > today) {
+    return { ok: false, error: 'date must not be a future date' };
   }
   if (typeof content !== 'string' || content.trim().length === 0) {
     return { ok: false, error: 'content is required' };
@@ -87,11 +92,12 @@ export interface LatestCoaching {
 }
 
 async function latestOfKind(env: Env, kind: CoachingKind): Promise<CoachingNote | null> {
+  // 保存境界でも将来日を拒否するが、別経路で入った既存不正行があっても latest は現在日以前に限定する
   const row = await env.DB.prepare(
     `SELECT id, kind, date, content, model, created_at FROM coaching_notes
-     WHERE kind = ?1 ORDER BY date DESC LIMIT 1`,
+     WHERE kind = ?1 AND date <= ?2 ORDER BY date DESC LIMIT 1`,
   )
-    .bind(kind)
+    .bind(kind, localToday(env))
     .first<CoachingNote>();
   return row ?? null;
 }

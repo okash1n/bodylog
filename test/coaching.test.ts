@@ -145,15 +145,33 @@ describe('GET /api/coaching/latest', () => {
     expect(latest.daily?.content).toBe('新しい日次');
     expect(latest.weekly?.date).toBe('2026-08-11');
   });
+
+  it('将来日はPOSTで拒否され、別経路で入った既存不正行もlatestに出ない', async () => {
+    // POST境界での拒否
+    const future = await postCoaching(coachingEnv, { kind: 'daily', date: '2100-01-01', content: '未来' });
+    expect(future.status).toBe(400);
+    // 別経路（直接SQL）で将来日の行が入っていても latest は現在日以前に限定する
+    await postCoaching(coachingEnv, { kind: 'daily', date: '2026-08-13', content: '現在の講評' });
+    await rootTestEnv.DB.prepare(
+      "INSERT INTO coaching_notes (id, kind, date, content, model, created_at) VALUES ('f1', 'daily', '2100-01-01', '未来の講評', NULL, datetime('now'))",
+    ).run();
+    const latest = (await (await getLatest(coachingEnv)).json()) as { daily: CoachingNote | null };
+    expect(latest.daily?.date).toBe('2026-08-13');
+  });
 });
 
 describe('coaching ユニット', () => {
   it('parseCoachingInput: contentをtrimし、model省略はnull', () => {
-    const r = parseCoachingInput({ kind: 'weekly', date: '2026-08-10', content: '  本文  ' });
+    const r = parseCoachingInput({ kind: 'weekly', date: '2026-08-10', content: '  本文  ' }, '2026-08-10');
     expect(r).toEqual({
       ok: true,
       value: { kind: 'weekly', date: '2026-08-10', content: '本文', model: null },
     });
+  });
+
+  it('parseCoachingInput: 将来日は拒否する（latestの鮮度判定を狂わせないため）', () => {
+    const r = parseCoachingInput({ kind: 'daily', date: '2026-08-11', content: 'x' }, '2026-08-10');
+    expect(r).toEqual({ ok: false, error: 'date must not be a future date' });
   });
 
   it('coachingDigestBlocks: 見出し＋本文で、長文はSlackのsection上限内に分割される', () => {

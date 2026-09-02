@@ -136,15 +136,23 @@ export function registerOauthRoutes(app: Hono<{ Bindings: Env }>): void {
       console.error('[oauth] google token exchange failed', tokenRes.status);
       return c.text('google login failed', 502, noindexHeaders());
     }
-    const { access_token } = (await tokenRes.json()) as { access_token?: string };
-    if (!access_token) return c.text('google login failed', 502, noindexHeaders());
+    // 外部応答は型を保証しないため境界でguardする（非文字列のtokenやemailを素通しすると
+    // 後段で不定形の例外＝500になる。値そのものはログへ出さない）
+    const tokenBody = (await tokenRes.json().catch(() => null)) as { access_token?: unknown } | null;
+    const access_token = tokenBody?.access_token;
+    if (typeof access_token !== 'string' || access_token === '') {
+      console.error('[oauth] google token response is malformed');
+      return c.text('google login failed', 502, noindexHeaders());
+    }
     const userinfoRes = await fetch(GOOGLE_USERINFO_URL, {
       headers: { Authorization: `Bearer ${access_token}` },
     });
     if (!userinfoRes.ok) return c.text('google login failed', 502, noindexHeaders());
-    const userinfo = (await userinfoRes.json()) as { email?: string; email_verified?: boolean };
-    const email = (userinfo.email ?? '').toLowerCase();
-    if (!userinfo.email_verified || !ownerEmails(env).includes(email)) {
+    const userinfo = (await userinfoRes.json().catch(() => null)) as
+      | { email?: unknown; email_verified?: unknown }
+      | null;
+    const email = typeof userinfo?.email === 'string' ? userinfo.email.toLowerCase() : '';
+    if (userinfo?.email_verified !== true || email === '' || !ownerEmails(env).includes(email)) {
       console.warn('[oauth] rejected non-owner login');
       return c.text('forbidden: not the owner', 403, noindexHeaders());
     }
