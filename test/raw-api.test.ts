@@ -10,7 +10,7 @@ const slug = testEnv.DASHBOARD_SLUG;
 const app = new Hono<{ Bindings: Env }>().route('/d', createDashboardRouter());
 
 function request(path: string): Promise<Response> {
-  return app.request(path, {}, testEnv, createExecutionContext());
+  return Promise.resolve(app.request(path, {}, testEnv, createExecutionContext()));
 }
 
 describe('api/raw（計測明細）', () => {

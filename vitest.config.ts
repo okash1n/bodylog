@@ -9,7 +9,7 @@ export default defineConfig({
     // インストール済み @cloudflare/vitest-pool-workers 0.20.x（vitest 4 対応）には
     // 旧 defineWorkersConfig / poolOptions.workers API が無いため、plugin 形式で指定する。
     cloudflareTest(async () => {
-      const migrations = await readD1Migrations(path.join(__dirname, 'migrations'));
+      const migrations = await readD1Migrations(path.join(import.meta.dirname, 'migrations'));
       return {
         wrangler: { configPath: './wrangler.toml' },
         miniflare: {
@@ -34,9 +34,10 @@ export default defineConfig({
     }),
   ],
   test: {
-    setupFiles: ['./test/apply-migrations.ts'],
-    // 全テストが同一 D1 を共有しても干渉しないようファイル並列を無効化
-    fileParallelism: false,
+    setupFiles: ['./test/apply-migrations.ts', './test/setup-cleanup.ts'],
+    // vitest-pool-workers はファイルごとに独立した worker/ストレージで実行するため並列可
+    // （resetTables は各ファイル内の直列実行にのみ必要）
+    fileParallelism: true,
     // lease 待ち（最大 LIMITS.LEASE_WAIT_MS）を含むテストの余裕を確保
     testTimeout: 15_000,
   },

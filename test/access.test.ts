@@ -177,7 +177,7 @@ describe('private時のSlack画像URL', () => {
   async function seedToday(): Promise<void> {
     await insertMeasurement({
       grpid: 7201,
-      measured_at: new Date().toISOString(),
+      measured_at: `${localYmdDaysAgo(0)}T03:00:00Z`,
       weight: 82.9,
       fat_free_mass: 62.0,
     });

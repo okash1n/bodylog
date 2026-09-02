@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  createExerciseMenu, deleteExerciseLog, getBodyWeightAt, getDailyExercise, getExerciseForDay,
+  deleteExerciseLog, getBodyWeightAt, getDailyExercise, getExerciseForDay,
   getExerciseMenu, listExerciseLogs, listExerciseMenus, logExercise, parseExerciseLogFields,
   parseExerciseMenuInput, setExerciseMenuArchived, updateExerciseMenu,
 } from '../src/exercise';
-import { insertMeasurement, localYmdDaysAgo, resetTables, testEnv } from './helpers';
+import { createExerciseMenuOk, insertMeasurement, localYmdDaysAgo, resetTables, testEnv, unwrapMenu } from './helpers';
 
 // 体重スナップショット取得のため、テスト日の朝(JST正午=03:00Z)に体重を1件seedする
 async function seedWeight(ymd: string, weight: number): Promise<void> {
@@ -17,12 +17,12 @@ describe('運動種目マスタ', () => {
   });
 
   it('有酸素種目はMETsを、筋トレ種目は部位/自重を保持する', async () => {
-    const cardio = await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    const cardio = await createExerciseMenuOk(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
     expect(cardio.category).toBe('cardio');
     expect(cardio.mets).toBe(8);
     expect(cardio.is_bodyweight).toBe(false);
 
-    const strength = await createExerciseMenu(testEnv, {
+    const strength = await createExerciseMenuOk(testEnv, {
       name: '懸垂', category: 'strength', muscle_group: '背中', is_bodyweight: true,
     });
     expect(strength.mets).toBeNull();
@@ -31,9 +31,9 @@ describe('運動種目マスタ', () => {
   });
 
   it('listExerciseMenusはcategory絞り込み・部分一致・archived除外ができる', async () => {
-    await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
-    const bench = await createExerciseMenu(testEnv, { name: 'ベンチプレス', category: 'strength' });
-    await createExerciseMenu(testEnv, { name: 'スクワット', category: 'strength' });
+    await createExerciseMenuOk(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    const bench = await createExerciseMenuOk(testEnv, { name: 'ベンチプレス', category: 'strength' });
+    await createExerciseMenuOk(testEnv, { name: 'スクワット', category: 'strength' });
     await setExerciseMenuArchived(testEnv, bench.id, true);
 
     expect((await listExerciseMenus(testEnv, { category: 'cardio' })).map((m) => m.name)).toEqual(['ランニング']);
@@ -43,8 +43,8 @@ describe('運動種目マスタ', () => {
   });
 
   it('自重係数: 実効重量=追加重量+体重×係数でボリュームが補正される', async () => {
-    await insertMeasurement({ grpid: 40001, measured_at: new Date().toISOString(), weight: 83.4 });
-    const circuit = await createExerciseMenu(testEnv, {
+    await insertMeasurement({ grpid: 40001, measured_at: `${localYmdDaysAgo(0)}T03:00:00Z`, weight: 83.4 });
+    const circuit = await createExerciseMenuOk(testEnv, {
       name: 'コアサーキット', category: 'strength', is_bodyweight: true, bodyweight_factor: 0.1,
     });
     expect(circuit.bodyweight_factor).toBe(0.1);
@@ -59,7 +59,7 @@ describe('運動種目マスタ', () => {
     expect(daily[0].strength_volume).toBeCloseTo(625.5, 3);
 
     // 係数未指定の自重種目は従来どおり全体重（既定1.0）
-    const pullup = await createExerciseMenu(testEnv, {
+    const pullup = await createExerciseMenuOk(testEnv, {
       name: '懸垂', category: 'strength', is_bodyweight: true,
     });
     expect(pullup.bodyweight_factor).toBe(1);
@@ -83,10 +83,10 @@ describe('運動種目マスタ', () => {
 
   it('種目一覧は利用頻度順（直近90日の記録回数→最終使用→名前）で返す', async () => {
     // 有酸素の記録は消費kcal算出用の体重スナップショットが必須
-    await insertMeasurement({ grpid: 30001, measured_at: new Date().toISOString(), weight: 80 });
-    await createExerciseMenu(testEnv, { name: 'やらない種目', category: 'strength' });
-    const run = await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
-    const squat = await createExerciseMenu(testEnv, { name: 'スクワット', category: 'strength' });
+    await insertMeasurement({ grpid: 30001, measured_at: `${localYmdDaysAgo(0)}T03:00:00Z`, weight: 80 });
+    await createExerciseMenuOk(testEnv, { name: 'やらない種目', category: 'strength' });
+    const run = await createExerciseMenuOk(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    const squat = await createExerciseMenuOk(testEnv, { name: 'スクワット', category: 'strength' });
     expect('error' in (await logExercise(testEnv, { menu_id: run.id, duration_min: 30 }))).toBe(false);
     expect('error' in (await logExercise(testEnv, { menu_id: run.id, duration_min: 20 }))).toBe(false);
     expect('error' in (await logExercise(testEnv, { menu_id: squat.id, sets: [{ reps: 10 }] }))).toBe(false);
@@ -98,10 +98,10 @@ describe('運動種目マスタ', () => {
   });
 
   it('種目のPATCHは部分更新、archive切替できる', async () => {
-    const menu = await createExerciseMenu(testEnv, { name: 'ベンチ', category: 'strength', muscle_group: '胸' });
-    const updated = await updateExerciseMenu(testEnv, menu.id, { name: 'ベンチプレス' });
-    expect(updated?.name).toBe('ベンチプレス');
-    expect(updated?.muscle_group).toBe('胸'); // 未指定は保持
+    const menu = await createExerciseMenuOk(testEnv, { name: 'ベンチ', category: 'strength', muscle_group: '胸' });
+    const updated = unwrapMenu(await updateExerciseMenu(testEnv, menu.id, { name: 'ベンチプレス' }));
+    expect(updated.name).toBe('ベンチプレス');
+    expect(updated.muscle_group).toBe('胸'); // 未指定は保持
     expect(await setExerciseMenuArchived(testEnv, menu.id, true)).toBe(true);
     expect(await setExerciseMenuArchived(testEnv, 'nope', true)).toBe(false);
   });
@@ -141,7 +141,7 @@ describe('有酸素の記録', () => {
   it('消費kcal = METs × 体重 × 時間 × 1.05 を凍結して記録する', async () => {
     const today = localYmdDaysAgo(0);
     await seedWeight(today, 70);
-    const menu = await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    const menu = await createExerciseMenuOk(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
     const log = await logExercise(testEnv, { menu_id: menu.id, performed_at: `${today}T03:00:00Z`, duration_min: 30 });
     if ('error' in log) throw new Error(log.error);
     expect(log.category).toBe('cardio');
@@ -152,7 +152,7 @@ describe('有酸素の記録', () => {
   });
 
   it('体重の実測が無い日はcardioを記録できない', async () => {
-    const menu = await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    const menu = await createExerciseMenuOk(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
     const res = await logExercise(testEnv, { menu_id: menu.id, duration_min: 30 });
     expect(res).toHaveProperty('error');
   });
@@ -160,7 +160,7 @@ describe('有酸素の記録', () => {
   it('duration_min無しのcardioはエラー', async () => {
     const today = localYmdDaysAgo(0);
     await seedWeight(today, 70);
-    const menu = await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    const menu = await createExerciseMenuOk(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
     expect(await logExercise(testEnv, { menu_id: menu.id })).toHaveProperty('error');
   });
 });
@@ -172,7 +172,7 @@ describe('筋トレの記録', () => {
 
   it('セット明細のボリューム = レップ × 重量。総ボリュームは合計', async () => {
     const today = localYmdDaysAgo(0);
-    const menu = await createExerciseMenu(testEnv, { name: 'ベンチプレス', category: 'strength', muscle_group: '胸' });
+    const menu = await createExerciseMenuOk(testEnv, { name: 'ベンチプレス', category: 'strength', muscle_group: '胸' });
     const log = await logExercise(testEnv, {
       menu_id: menu.id, performed_at: `${today}T03:00:00Z`,
       sets: [{ reps: 10, weight_kg: 40 }, { reps: 8, weight_kg: 42.5 }],
@@ -187,7 +187,7 @@ describe('筋トレの記録', () => {
   it('自重種目は記録時の体重を実効重量に算入する', async () => {
     const today = localYmdDaysAgo(0);
     await seedWeight(today, 70);
-    const menu = await createExerciseMenu(testEnv, { name: '懸垂', category: 'strength', is_bodyweight: true });
+    const menu = await createExerciseMenuOk(testEnv, { name: '懸垂', category: 'strength', is_bodyweight: true });
     const log = await logExercise(testEnv, {
       menu_id: menu.id, performed_at: `${today}T03:00:00Z`,
       sets: [{ reps: 10 }, { reps: 8, weight_kg: 5 }], // 2set目は加重懸垂
@@ -201,18 +201,18 @@ describe('筋トレの記録', () => {
   });
 
   it('自重種目で体重の実測が無ければエラー', async () => {
-    const menu = await createExerciseMenu(testEnv, { name: '腕立て', category: 'strength', is_bodyweight: true });
+    const menu = await createExerciseMenuOk(testEnv, { name: '腕立て', category: 'strength', is_bodyweight: true });
     expect(await logExercise(testEnv, { menu_id: menu.id, sets: [{ reps: 20 }] })).toHaveProperty('error');
   });
 
   it('sets無しのstrengthはエラー', async () => {
-    const menu = await createExerciseMenu(testEnv, { name: 'ベンチ', category: 'strength' });
+    const menu = await createExerciseMenuOk(testEnv, { name: 'ベンチ', category: 'strength' });
     expect(await logExercise(testEnv, { menu_id: menu.id })).toHaveProperty('error');
   });
 
   it('記録削除はセット明細も消す', async () => {
     const today = localYmdDaysAgo(0);
-    const menu = await createExerciseMenu(testEnv, { name: 'デッドリフト', category: 'strength' });
+    const menu = await createExerciseMenuOk(testEnv, { name: 'デッドリフト', category: 'strength' });
     const log = await logExercise(testEnv, {
       menu_id: menu.id, performed_at: `${today}T03:00:00Z`, sets: [{ reps: 5, weight_kg: 100 }],
     });
@@ -226,7 +226,7 @@ describe('筋トレの記録', () => {
 
   it('メニューを後から編集しても過去の記録は変わらない（スナップショット保全）', async () => {
     const today = localYmdDaysAgo(0);
-    const menu = await createExerciseMenu(testEnv, { name: 'スクワット', category: 'strength' });
+    const menu = await createExerciseMenuOk(testEnv, { name: 'スクワット', category: 'strength' });
     await logExercise(testEnv, { menu_id: menu.id, performed_at: `${today}T03:00:00Z`, sets: [{ reps: 10, weight_kg: 60 }] });
     await updateExerciseMenu(testEnv, menu.id, { name: 'スクワット改' });
     const logs = await listExerciseLogs(testEnv, today, today);
@@ -242,8 +242,8 @@ describe('運動の日次集計', () => {
   it('有酸素の消費kcalと筋トレの総ボリュームを日ごとに集計する', async () => {
     const today = localYmdDaysAgo(0);
     await seedWeight(today, 70);
-    const run = await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
-    const bench = await createExerciseMenu(testEnv, { name: 'ベンチ', category: 'strength' });
+    const run = await createExerciseMenuOk(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    const bench = await createExerciseMenuOk(testEnv, { name: 'ベンチ', category: 'strength' });
     await logExercise(testEnv, { menu_id: run.id, performed_at: `${today}T03:00:00Z`, duration_min: 30 });
     await logExercise(testEnv, { menu_id: bench.id, performed_at: `${today}T04:00:00Z`, sets: [{ reps: 10, weight_kg: 40 }] });
 
@@ -259,7 +259,7 @@ describe('運動の日次集計', () => {
 
   it('該当カテゴリが無い日はnull（0の棒を描かせない）。FFM実測が無ければbmrもnull', async () => {
     const today = localYmdDaysAgo(0);
-    const bench = await createExerciseMenu(testEnv, { name: 'ベンチ', category: 'strength' });
+    const bench = await createExerciseMenuOk(testEnv, { name: 'ベンチ', category: 'strength' });
     await logExercise(testEnv, { menu_id: bench.id, performed_at: `${today}T03:00:00Z`, sets: [{ reps: 10, weight_kg: 40 }] });
     const day = await getExerciseForDay(testEnv, today);
     expect(day?.calories_burned).toBeNull();
@@ -315,7 +315,7 @@ describe('自己ベスト更新フラグ（records_broken）', () => {
   });
 
   it('logExercise は自己ベスト更新を records_broken で返す（初回=全項目、更新なし=空、有酸素=空）', async () => {
-    const bench = await createExerciseMenu(testEnv, { name: 'ベンチプレス', category: 'strength' });
+    const bench = await createExerciseMenuOk(testEnv, { name: 'ベンチプレス', category: 'strength' });
     const first = await logExercise(testEnv, { menu_id: bench.id, performed_at: '2026-08-01T03:00:00Z', sets: [{ reps: 5, weight_kg: 80 }] });
     if ('error' in first) throw new Error(first.error);
     expect(first.records_broken?.map((b) => b.kind)).toEqual([
@@ -338,7 +338,7 @@ describe('自己ベスト更新フラグ（records_broken）', () => {
     expect(third.records_broken).toEqual([{ kind: 'rep_max', reps: 3, previous: null, current: 60 }]);
 
     await seedWeight(localYmdDaysAgo(1), 80);
-    const run = await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    const run = await createExerciseMenuOk(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
     const cardio = await logExercise(testEnv, { menu_id: run.id, duration_min: 30 });
     if ('error' in cardio) throw new Error(cardio.error);
     expect(cardio.records_broken).toEqual([]);

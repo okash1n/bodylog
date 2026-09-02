@@ -13,10 +13,10 @@ import {
 } from '../src/slack';
 import type { DailyExercise, DailyIntake } from '../src/types';
 import { createMenu, logMeal } from '../src/meals';
-import { createExerciseMenu, logExercise } from '../src/exercise';
+import { logExercise } from '../src/exercise';
 import { coachingSlotMs, upsertCoachingNote } from '../src/coaching';
 import { offsetHours, ymdWithOffset } from '../src/util';
-import { insertMeasurement, resetTables, setSetting, stubFetch, testEnv } from './helpers';
+import { createExerciseMenuOk, insertMeasurement, localYmdDaysAgo, resetTables, setSetting, stubFetch, testEnv } from './helpers';
 
 const SLACK_HOST = 'hooks.slack.com';
 const SLACK_PATH = '/services/T0/B0/X';
@@ -66,7 +66,7 @@ describe('runDailyDigest', () => {
   it('当日の計測があればダイジェストを1通送り、再実行しても二重送信しない', async () => {
     await insertMeasurement({
       grpid: 9001,
-      measured_at: new Date().toISOString(),
+      measured_at: `${localYmdDaysAgo(0)}T03:00:00Z`,
       weight: 82.9,
       fat_free_mass: 62.0,
     });
@@ -98,13 +98,13 @@ describe('runDailyDigest', () => {
     // FFM 62 → BMR = 370 + 21.6×62 = 1709.2
     await insertMeasurement({
       grpid: 9301,
-      measured_at: new Date().toISOString(),
+      measured_at: `${localYmdDaysAgo(0)}T03:00:00Z`,
       weight: 80,
       fat_free_mass: 62.0,
     });
     const menu = await createMenu(testEnv, { name: 'テスト定食', calories: 700 });
     await logMeal(testEnv, { menu_id: menu.id });
-    const ex = await createExerciseMenu(testEnv, { name: 'ラン', category: 'cardio', mets: 8 });
+    const ex = await createExerciseMenuOk(testEnv, { name: 'ラン', category: 'cardio', mets: 8 });
     await logExercise(testEnv, { menu_id: ex.id, duration_min: 30 }); // 8×80×0.5×1.05 = 336
     const stub = stubFetch().on({
       host: SLACK_HOST,
@@ -124,7 +124,7 @@ describe('runDailyDigest', () => {
   it('当日のAI講評が保存済みならダイジェスト本文に差し込まれる', async () => {
     await insertMeasurement({
       grpid: 9401,
-      measured_at: new Date().toISOString(),
+      measured_at: `${localYmdDaysAgo(0)}T03:00:00Z`,
       weight: 82.0,
       fat_free_mass: 62.0,
     });
@@ -153,7 +153,7 @@ describe('runDailyDigest', () => {
   it('スロット前に作られた古い講評（未明の遅延実行の残り等）はダイジェストに差し込まない', async () => {
     await insertMeasurement({
       grpid: 9402,
-      measured_at: new Date().toISOString(),
+      measured_at: `${localYmdDaysAgo(0)}T03:00:00Z`,
       weight: 82.0,
     });
     const noteDate = ymdWithOffset(new Date().toISOString(), offsetHours(testEnv));
@@ -184,7 +184,7 @@ describe('runDailyDigest', () => {
   });
 
   it('daily/both の通知先がなければ何もしない', async () => {
-    await insertMeasurement({ grpid: 9002, measured_at: new Date().toISOString(), weight: 80 });
+    await insertMeasurement({ grpid: 9002, measured_at: `${localYmdDaysAgo(0)}T03:00:00Z`, weight: 80 });
     stubFetch();
     const result = await runDailyDigest(testEnv, ORIGIN); // mode省略=immediateのみ
     expect(result.queued).toBe(0);
@@ -228,7 +228,7 @@ describe('digest_time（送信時刻設定）', () => {
 
   it('runDailyDigestIfDue: digest_time=00:00 なら常に送信対象', async () => {
     await setSetting('digest_time', '00:00');
-    await insertMeasurement({ grpid: 9101, measured_at: new Date().toISOString(), weight: 81 });
+    await insertMeasurement({ grpid: 9101, measured_at: `${localYmdDaysAgo(0)}T03:00:00Z`, weight: 81 });
     const stub = stubFetch().on({
       host: SLACK_HOST,
       path: SLACK_PATH,

@@ -1,10 +1,10 @@
 import { createExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import worker from '../src/index';
-import { createExerciseMenu, logExercise } from '../src/exercise';
+import { logExercise } from '../src/exercise';
 import {
-  insertMeasurement, localYmdDaysAgo, mcpRpc, obtainAccessToken, parseToolJson,
-  resetTables, rootTestEnv as rootEnv,
+  createExerciseMenuOk, insertMeasurement, localYmdDaysAgo, mcpRpc, obtainAccessToken,
+  parseToolJson, resetTables, rootTestEnv as rootEnv,
 } from './helpers';
 
 // MCPは OAuth 必須の /mcp のみ（旧 /rw/mcp は廃止）。
@@ -135,9 +135,9 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
   });
 
   it('get_exercise_records は menu_name で解決し自己ベストを返す。曖昧・未知・有酸素はエラー', async () => {
-    const bench = await createExerciseMenu(rootEnv, { name: 'ベンチプレス', category: 'strength' });
-    await createExerciseMenu(rootEnv, { name: 'インクラインベンチプレス', category: 'strength' });
-    await createExerciseMenu(rootEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    const bench = await createExerciseMenuOk(rootEnv, { name: 'ベンチプレス', category: 'strength' });
+    await createExerciseMenuOk(rootEnv, { name: 'インクラインベンチプレス', category: 'strength' });
+    await createExerciseMenuOk(rootEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
     await logExercise(rootEnv, {
       menu_id: bench.id, performed_at: '2026-08-01T03:00:00Z', sets: [{ reps: 5, weight_kg: 80 }, { reps: 8, weight_kg: 70 }],
     });
@@ -162,10 +162,10 @@ describe('MCPサーバー（/mcp・OAuth必須）', () => {
   });
 
   it('circuit: menu_name解決で登録し、roundsだけで記録できる（導出値付き・自己ベスト対象外）', async () => {
-    await createExerciseMenu(rootEnv, {
+    await createExerciseMenuOk(rootEnv, {
       name: 'アシスト懸垂', category: 'strength', is_bodyweight: true, bodyweight_factor: 0.75,
     });
-    await createExerciseMenu(rootEnv, {
+    await createExerciseMenuOk(rootEnv, {
       name: '腕立て伏せ', category: 'strength', is_bodyweight: true, bodyweight_factor: 0.65,
     });
     const created = (await (await rwRpc(token, 'tools/call', {
@@ -360,7 +360,7 @@ describe('/mcp 編集・削除ツール（運動・体重）', () => {
   const isError = (r: RpcResponse): boolean => (r.result as { isError?: boolean }).isError === true;
 
   it('update_exercise_menu は指定項目だけ更新し、未知IDや項目なしはエラー', async () => {
-    const menu = await createExerciseMenu(rootEnv, { name: 'ベンチプレス', category: 'strength', muscle_group: '胸' });
+    const menu = await createExerciseMenuOk(rootEnv, { name: 'ベンチプレス', category: 'strength', muscle_group: '胸' });
     const ok = await call('update_exercise_menu', { menu_id: menu.id, name: 'ベンチプレス（バーベル）', muscle_group: null });
     const updated = parseToolJson<{ name: string; muscle_group: string | null; category: string }>(ok.result as Record<string, unknown>);
     expect(updated.name).toBe('ベンチプレス（バーベル）');
@@ -371,7 +371,7 @@ describe('/mcp 編集・削除ツール（運動・体重）', () => {
   });
 
   it('archive_exercise_menu で検索から消え、archived:false で戻る', async () => {
-    const menu = await createExerciseMenu(rootEnv, { name: 'スクワット', category: 'strength' });
+    const menu = await createExerciseMenuOk(rootEnv, { name: 'スクワット', category: 'strength' });
     expect(isError(await call('archive_exercise_menu', { menu_id: menu.id }))).toBe(false);
     const hidden = parseToolJson<{ menus: unknown[] }>((await call('search_exercise_menus', { q: 'スクワット' })).result as Record<string, unknown>);
     expect(hidden.menus).toHaveLength(0);
@@ -382,7 +382,7 @@ describe('/mcp 編集・削除ツール（運動・体重）', () => {
   });
 
   it('delete_exercise_log は記録をセットごと消し、未知IDはエラー', async () => {
-    const menu = await createExerciseMenu(rootEnv, { name: 'デッドリフト', category: 'strength' });
+    const menu = await createExerciseMenuOk(rootEnv, { name: 'デッドリフト', category: 'strength' });
     const log = await logExercise(rootEnv, { menu_id: menu.id, sets: [{ reps: 5, weight_kg: 100 }] });
     if ('error' in log) throw new Error(log.error);
     expect(isError(await call('delete_exercise_log', { log_id: log.id }))).toBe(false);

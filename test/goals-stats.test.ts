@@ -130,7 +130,11 @@ function syntheticInputs(): {
       d,
       bmr: 370 + 21.6 * 60, // 1666
       calories_burned: null,
+      cardio_calories: null,
+      strength_calories: null,
       strength_volume: null,
+      weighted_volume: null,
+      bodyweight_volume: null,
       cardio_count: 0,
       strength_count: 0,
     });

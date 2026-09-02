@@ -3,16 +3,16 @@ import { Hono } from 'hono';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../src/types';
 import { createRootDashboardRouter } from '../src/dashboard';
-import { createExerciseMenu, logExercise } from '../src/exercise';
+import { logExercise } from '../src/exercise';
 import {
-  apiFetch, insertMeasurement, localYmdDaysAgo, mcpRpc, obtainAccessToken, parseToolJson,
-  resetTables, rootTestEnv as rootEnv, testEnv,
+  apiFetch, createExerciseMenuOk, insertMeasurement, localYmdDaysAgo, mcpRpc, obtainAccessToken,
+  parseToolJson, resetTables, rootTestEnv as rootEnv, testEnv,
 } from './helpers';
 
 const app = new Hono<{ Bindings: Env }>().route('/', createRootDashboardRouter());
 
 function request(path: string): Promise<Response> {
-  return app.request(path, {}, rootEnv, createExecutionContext());
+  return Promise.resolve(app.request(path, {}, rootEnv, createExecutionContext()));
 }
 
 const rw = (path: string, token: string | null, method: string, body?: unknown): Promise<Response> =>
@@ -28,8 +28,8 @@ describe('公開REST（運動）', () => {
   beforeEach(async () => {
     await resetTables();
     await seedWeight(70);
-    const run = await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
-    const bench = await createExerciseMenu(testEnv, { name: 'ベンチプレス', category: 'strength', muscle_group: '胸' });
+    const run = await createExerciseMenuOk(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    const bench = await createExerciseMenuOk(testEnv, { name: 'ベンチプレス', category: 'strength', muscle_group: '胸' });
     await logExercise(testEnv, { menu_id: run.id, performed_at: `${localYmdDaysAgo(0)}T03:00:00Z`, duration_min: 30 });
     await logExercise(testEnv, {
       menu_id: bench.id, performed_at: `${localYmdDaysAgo(0)}T04:00:00Z`,
@@ -188,8 +188,8 @@ describe('MCP 運動ツール（/mcp）', () => {
   });
 
   it('search_exercise_menus がcategoryで絞れる', async () => {
-    await createExerciseMenu(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
-    await createExerciseMenu(testEnv, { name: 'ベンチ', category: 'strength' });
+    await createExerciseMenuOk(testEnv, { name: 'ランニング', category: 'cardio', mets: 8 });
+    await createExerciseMenuOk(testEnv, { name: 'ベンチ', category: 'strength' });
     const res = await rpc('tools/call', { name: 'search_exercise_menus', arguments: { category: 'strength' } });
     const body = (await res.json()) as { result: Record<string, unknown> };
     const found = toolJson<{ menus: { name: string }[] }>(body.result);
@@ -205,10 +205,10 @@ describe('GET /api/exercise/records', () => {
   it('menu_id 必須・未知は404・有酸素は400・筋トレは自己ベストを返す', async () => {
     expect((await request('/api/exercise/records')).status).toBe(400);
     expect((await request('/api/exercise/records?menu_id=nope')).status).toBe(404);
-    const run = await createExerciseMenu(testEnv, { name: 'ラン', category: 'cardio', mets: 8 });
+    const run = await createExerciseMenuOk(testEnv, { name: 'ラン', category: 'cardio', mets: 8 });
     expect((await request(`/api/exercise/records?menu_id=${run.id}`)).status).toBe(400);
 
-    const bench = await createExerciseMenu(testEnv, { name: 'ベンチプレス', category: 'strength' });
+    const bench = await createExerciseMenuOk(testEnv, { name: 'ベンチプレス', category: 'strength' });
     await logExercise(testEnv, { menu_id: bench.id, performed_at: '2026-08-01T03:00:00Z', sets: [{ reps: 5, weight_kg: 80 }] });
     const res = await request(`/api/exercise/records?menu_id=${bench.id}`);
     expect(res.status).toBe(200);
