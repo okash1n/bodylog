@@ -520,6 +520,9 @@
       importPollTimer = setTimeout(loadData, 15000);
     } else if (status && status.import_status === 'error') {
       msg = 'データ取り込みでエラーが発生しています。時間をおいて再度お試しください。';
+    } else if (period !== '1m') {
+      // 既定以外の期間で空 = 期間起因の可能性が高い。復帰導線があることを文言でも示す
+      msg = '選択中の期間に表示できるデータがありません。下のボタンで期間を変更できます。';
     }
     els.emptyMessage.textContent = msg;
     showState('empty');
@@ -1318,11 +1321,30 @@
     els.tableWrap.classList.remove('hide-kcal');
     var byDate = (lastCals && lastCals.raw) || Object.create(null);
     var exBy = (lastCals && lastCals.exRaw) || Object.create(null);
+    // 対象日 = 体重計測日 ∪ 食事記録日 ∪ 運動記録日。
+    // 体重の無い日でも食事・運動の記録があれば行を出す（従来は体重計測日だけが行になり、
+    // 食事・運動だけの日が表から消えていた）。運動の日次APIは期間内の全日を返すため、
+    // 運動側は実際に記録がある日（件数>0）だけを対象にする
+    var weightBy = Object.create(null);
+    var dates = Object.create(null);
+    days.forEach(function (d) {
+      weightBy[d.d] = d;
+      dates[d.d] = true;
+    });
+    Object.keys(byDate).forEach(function (k) {
+      dates[k] = true;
+    });
+    Object.keys(exBy).forEach(function (k) {
+      var r = exBy[k];
+      if (r && ((r.cardio_count || 0) > 0 || (r.strength_count || 0) > 0)) dates[k] = true;
+    });
+    var sorted = Object.keys(dates).sort();
     var frag = document.createDocumentFragment();
-    for (var i = days.length - 1; i >= 0; i--) {
-      var d = days[i];
-      var mealRow = byDate[d.d];
-      var exRow = exBy[d.d];
+    for (var i = sorted.length - 1; i >= 0; i--) {
+      var key = sorted[i];
+      var d = weightBy[key] || { d: key, weight: null, fat_mass: null, fat_free_mass: null };
+      var mealRow = byDate[key];
+      var exRow = exBy[key];
       var intake = mealRow && mealRow.calories != null ? mealRow.calories : null;
       // 消費 = 基礎代謝(推定) + 運動。どちらも無い日はnull
       var burn = null;
@@ -1612,6 +1634,19 @@
         loadData();
       });
     });
+
+    // 空状態からの期間変更（contentごと隠れる本来のコントロールの代替。行き止まり防止）
+    Array.prototype.slice
+      .call(document.querySelectorAll('[data-empty-period]'))
+      .forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var p = btn.getAttribute('data-empty-period');
+          setActivePeriod(p);
+          els.customRange.classList.add('hidden');
+          period = p;
+          loadData();
+        });
+      });
 
     modeButtons.forEach(function (btn) {
       btn.addEventListener('click', function () {

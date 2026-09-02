@@ -54,6 +54,9 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     expect(html).toContain('id="exercise-circuit-duration"');
     expect(html).toContain('id="exercise-circuit-items"');
     expect(html).toContain('id="exercise-menu-circuit"');
+    // 空状態からの期間復帰導線（空期間の行き止まり防止）
+    expect(html).toContain('id="empty-period"');
+    expect(html).toContain('data-empty-period="1y"');
   });
 
   it('manifestの start_url / scope が / になる', async () => {
