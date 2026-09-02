@@ -146,6 +146,42 @@ describe('GET /api/coaching/latest', () => {
     expect(latest.weekly?.date).toBe('2026-08-11');
   });
 
+  it('生成claimは1runだけが取得でき、lease期限切れは奪取でき、releaseで解放される', async () => {
+    const claim = (env: Env, method = 'POST'): Promise<Response> =>
+      worker.fetch(
+        new Request('http://localhost/api/coaching/claim', {
+          method,
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SECRET}` },
+          body: JSON.stringify({ date: '2026-08-13' }),
+        }),
+        env,
+        createExecutionContext(),
+      );
+    // 1回目は取得、2回目（並走run相当）は409
+    expect((await claim(coachingEnv)).status).toBe(200);
+    expect((await claim(coachingEnv)).status).toBe(409);
+    // lease期限切れ（15分超）は奪取できる
+    await rootTestEnv.DB.prepare(
+      "UPDATE settings SET value = datetime('now', '-20 minutes') WHERE key = 'coaching_claim_2026-08-13'",
+    ).run();
+    expect((await claim(coachingEnv)).status).toBe(200);
+    // releaseで解放 → 再claim可能
+    expect((await claim(coachingEnv, 'DELETE')).status).toBe(200);
+    expect((await claim(coachingEnv)).status).toBe(200);
+    // secret未設定は404、token不一致は401
+    expect((await claim({ ...rootTestEnv, COACHING_API_SECRET: undefined })).status).toBe(404);
+    const bad = await worker.fetch(
+      new Request('http://localhost/api/coaching/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer wrong' },
+        body: JSON.stringify({ date: '2026-08-13' }),
+      }),
+      coachingEnv,
+      createExecutionContext(),
+    );
+    expect(bad.status).toBe(401);
+  });
+
   it('将来日はPOSTで拒否され、別経路で入った既存不正行もlatestに出ない', async () => {
     // POST境界での拒否
     const future = await postCoaching(coachingEnv, { kind: 'daily', date: '2100-01-01', content: '未来' });

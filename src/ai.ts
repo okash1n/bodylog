@@ -246,6 +246,10 @@ export function openapiSpec(
                       import_error: { type: ['string', 'null'] },
                       last_sync_at: { type: ['string', 'null'], format: 'date-time' },
                       latest_measured_at: { type: ['string', 'null'], format: 'date-time' },
+                      timezone_offset_hours: {
+                        type: 'number',
+                        description: '日付境界のオフセット（サーバーの正本。外部ジョブはこれを使う）',
+                      },
                     },
                   },
                 },

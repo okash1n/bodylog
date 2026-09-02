@@ -331,7 +331,7 @@ describe('Phase 2: circuit記録の展開', () => {
     expect(total).toBeCloseTo(before, 3);
   });
 
-  it('親id削除でグループ全体が消え、子id削除は子だけ消える', async () => {
+  it('親id削除でグループ全体が消え、子id単独の削除は拒否される（D-06）', async () => {
     const { cindy } = await seedCircuitMenus();
     const today = localYmdDaysAgo(0);
     const log = await logExercise(testEnv, { menu_id: cindy.id, rounds: 5 });
@@ -339,9 +339,13 @@ describe('Phase 2: circuit記録の展開', () => {
 
     let logs = await listExerciseLogs(testEnv, today, today);
     const child = logs.find((l) => l.group_id === log.id && l.id !== log.id)!;
-    expect(await deleteExerciseLog(testEnv, child.id)).toBe(true);
+    // 子ログの単独削除はグループ整合が壊れるため拒否（親id削除を案内するエラー）
+    const rejected = await deleteExerciseLog(testEnv, child.id);
+    expect(rejected).toEqual({
+      error: `this log is part of a circuit session — delete the parent log ${log.id} to remove the whole session`,
+    });
     logs = await listExerciseLogs(testEnv, today, today);
-    expect(logs.length).toBe(3); // 親1 + 子2
+    expect(logs.length).toBe(4); // 何も消えていない
 
     expect(await deleteExerciseLog(testEnv, log.id)).toBe(true);
     logs = await listExerciseLogs(testEnv, today, today);

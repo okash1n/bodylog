@@ -67,10 +67,13 @@ describe('ドメイン直下モード（DASHBOARD_SLUG=空文字）', () => {
     expect(manifest.scope).toBe('/');
   });
 
-  it('/api/status が200を返す', async () => {
+  it('/api/status が200を返し、サーバーの日付境界オフセットを載せる', async () => {
     const res = await request('/api/status', rootEnv);
     expect(res.status).toBe(200);
     expect(res.headers.get('X-Robots-Tag')).toContain('noindex');
+    // coaching runner等の外部ジョブが独自既定値を持たないための正本（H-09の一部）
+    const body = (await res.json()) as { timezone_offset_hours: number };
+    expect(body.timezone_offset_hours).toBe(9);
   });
 
   it('DASHBOARD_SLUGが非空のときはドメイン直下では配信しない', async () => {

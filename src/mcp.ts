@@ -555,14 +555,15 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       'delete_exercise_log',
       {
         description:
-          '運動記録を1件削除する（セット明細ごと）。サーキットの親ログID（group_idが自身のidと一致する行）を指定するとグループ全体（構成種目の子ログ含む）が削除される。運動記録は編集できないので、直したいときは削除して log_exercise し直す。ユーザーが明示的に依頼したときだけ使い、実行前に対象（種目名・日時）を確認すること',
+          '運動記録を1件削除する（セット明細ごと）。サーキットは親ログID（group_idが自身のidと一致する行）を指定してグループ全体（構成種目の子ログ含む）を削除する。子ログの単独削除はグループ整合が壊れるため拒否される。運動記録は編集できないので、直したいときは削除して log_exercise し直す。ユーザーが明示的に依頼したときだけ使い、実行前に対象（種目名・日時）を確認すること',
         inputSchema: { log_id: z.string().describe('運動記録ID（get_exercise_logsで取得）') },
         annotations: { destructiveHint: true },
       },
-      (args) => guarded('delete_exercise_log', async () =>
-        (await deleteExerciseLog(env, args.log_id))
-          ? jsonResult({ ok: true, log_id: args.log_id })
-          : errorResult('exercise log not found')),
+      (args) => guarded('delete_exercise_log', async () => {
+        const result = await deleteExerciseLog(env, args.log_id);
+        if (typeof result === 'object') return errorResult(result.error);
+        return result ? jsonResult({ ok: true, log_id: args.log_id }) : errorResult('exercise log not found');
+      }),
     );
     server.registerTool(
       'delete_weight',

@@ -182,8 +182,9 @@
           action: {
             label: '元に戻す',
             onClick: async () => {
-              await rw(`menus/${id}/unarchive`, 'POST');
-              toast('元に戻しました');
+              // 結果を確認してから成功表示する（未確認の「元に戻しました」を出さない）
+              const undo = await rw(`menus/${id}/unarchive`, 'POST');
+              toast(undo.ok ? '元に戻しました' : '元に戻せませんでした。種目管理から復元してください', undo.ok ? {} : { tone: 'error' });
               refresh();
             },
           },

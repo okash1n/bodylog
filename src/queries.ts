@@ -305,8 +305,13 @@ SELECT
   (SELECT value FROM settings WHERE key = 'import_error') AS import_error,
   (SELECT value FROM settings WHERE key = 'last_sync_at') AS last_sync_at,
   (SELECT MAX(measured_at) FROM measurements) AS latest_measured_at`,
-  ).first<ImportStatus>();
-  return (
-    row ?? { import_status: null, import_error: null, last_sync_at: null, latest_measured_at: null }
-  );
+  ).first<Omit<ImportStatus, 'timezone_offset_hours'>>();
+  const base = row ?? {
+    import_status: null,
+    import_error: null,
+    last_sync_at: null,
+    latest_measured_at: null,
+  };
+  // 日付境界のオフセットをサーバーの正本として載せる（coaching runner等の外部ジョブが独自既定値を持たないため）
+  return { ...base, timezone_offset_hours: offsetHours(env) };
 }

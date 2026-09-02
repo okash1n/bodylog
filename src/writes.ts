@@ -143,10 +143,13 @@ export function registerWriteRoutes(
     if ('error' in log) return c.json({ error: log.error }, 400, headers());
     return c.json(log, 201, headers());
   }));
-  app.delete(p('/api/exercise/logs/:id'), w(async (c) =>
-    (await deleteExerciseLog(c.env, pid(c)))
+  app.delete(p('/api/exercise/logs/:id'), w(async (c) => {
+    const result = await deleteExerciseLog(c.env, pid(c));
+    if (typeof result === 'object') return c.json({ error: result.error }, 400, headers());
+    return result
       ? c.json({ ok: true }, 200, headers())
-      : c.json({ error: 'exercise log not found' }, 404, headers())));
+      : c.json({ error: 'exercise log not found' }, 404, headers());
+  }));
 
   // ---- 体重（手動記録。Withings由来の行はここでは触れない） ----
   app.post(p('/api/weight'), w(async (c) => {
@@ -166,6 +169,43 @@ export function registerWriteRoutes(
   // ---- AIコーチング講評 ----
   // GitHub Actions からのサーバー間書き込みのため、OAuth（withAuth）ではなく
   // COACHING_API_SECRET とのBearer照合で保護する。secret未設定の環境では404（機能無効）
+
+  // 生成の排他claim: schedule と workflow_dispatch が同時に走ったとき、同一対象日の生成
+  // （SDK実行コストと外部送信）を1回に抑える。settings の条件付きupsertをleaseに使い、
+  // migration不要。lease（15分）を過ぎたclaimは奪取できる（中断したrunの回収）
+  app.post(p('/api/coaching/claim'), guarded(guardedErrors(async (c) => {
+    const secret = c.env.COACHING_API_SECRET;
+    if (!secret) return c.json({ error: 'not found' }, 404, headers());
+    if (!coachingBearerOk(c, secret)) return c.json({ error: 'unauthorized' }, 401, headers());
+    const date = (await readJson(c))?.date;
+    if (typeof date !== 'string' || !isValidYmd(date)) {
+      return c.json({ error: 'date must be a valid YYYY-MM-DD' }, 400, headers());
+    }
+    const res = await c.env.DB.prepare(
+      `INSERT INTO settings (key, value) VALUES (?1, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = datetime('now')
+       WHERE settings.value <= datetime('now', '-15 minutes')`,
+    )
+      .bind(`coaching_claim_${date}`)
+      .run();
+    if ((res.meta.changes ?? 0) === 0) {
+      return c.json({ claimed: false, error: 'another run holds the claim for this date' }, 409, headers());
+    }
+    return c.json({ claimed: true, date }, 200, headers());
+  })));
+  // claimの解放（失敗したrunのbest-effort後始末。leaseは15分で自然失効するため必須ではない）
+  app.delete(p('/api/coaching/claim'), guarded(guardedErrors(async (c) => {
+    const secret = c.env.COACHING_API_SECRET;
+    if (!secret) return c.json({ error: 'not found' }, 404, headers());
+    if (!coachingBearerOk(c, secret)) return c.json({ error: 'unauthorized' }, 401, headers());
+    const date = (await readJson(c))?.date;
+    if (typeof date !== 'string' || !isValidYmd(date)) {
+      return c.json({ error: 'date must be a valid YYYY-MM-DD' }, 400, headers());
+    }
+    await c.env.DB.prepare('DELETE FROM settings WHERE key = ?1').bind(`coaching_claim_${date}`).run();
+    return c.json({ ok: true }, 200, headers());
+  })));
+
   app.post(p('/api/coaching'), guarded(guardedErrors(async (c) => {
     const secret = c.env.COACHING_API_SECRET;
     if (!secret) return c.json({ error: 'not found' }, 404, headers());
