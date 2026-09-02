@@ -265,6 +265,15 @@ body {
 @media (max-width: 359px) {
   .segment-btn { padding: 4px 5px; font-size: 0.72rem; }
   .view-toggle { padding: 4px 7px; font-size: 0.72rem; }
+  /* 320px級: 1行に収まらない場合は折り返す（要素は隠さない=情報・操作の欠落なし） */
+  .controls-row { flex-wrap: wrap; }
+  .container { padding-left: 10px; padding-right: 10px; }
+  .cards { gap: 6px; }
+  .card { padding: 8px 6px; }
+  .card h3 { font-size: 0.62rem; }
+  .card-value { font-size: 1rem; }
+  .card-sub { font-size: 0.58rem; letter-spacing: -0.01em; }
+  .card .unit { margin-left: 1px; }
 }
 .segment-btn {
   white-space: nowrap;
@@ -308,7 +317,9 @@ body {
 /* 3指標は常に横1行（狭い画面では文字を縮小して収める）。グラフの上に置く */
 .cards {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* minmax(0,1fr): 1fr 単独だと min-content（nowrap の指標テキスト）がトラック幅を押し広げ、
+     320px 幅で本文が横スクロールする（grid の auto 最小幅を無効化する定石） */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 12px;
 }

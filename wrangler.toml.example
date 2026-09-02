@@ -54,8 +54,7 @@ READ_ACCESS = "public"
 # 任意: AIコーチング生成（GitHub Actions）をWorkerの23:30 JST cronから起動する場合、対象リポジトリを指定する。
 # GITHUB_DISPATCH_TOKEN（Secret）とセットで有効になる。未設定ならGitHub側のscheduleのみで生成される。
 # ここ（[vars]）に書く代わりに `wrangler secret put GITHUB_DISPATCH_REPO` でSecretとして登録してもよい。
-# TZ_OFFSET_HOURSを既定（9）から変える場合は、生成ジョブ側のCOACHING_TZ_OFFSET_HOURSも同じ値にすること
-# （対象日の計算がずれると、起動された生成ジョブが日付を未来日として拒否する）
+# TZ_OFFSET_HOURSは生成ジョブ側が /api/status から自動取得する（COACHING_TZ_OFFSET_HOURSは取得不能時のフォールバック）
 # GITHUB_DISPATCH_REPO = "your-github-username/bodylog"
 
 [triggers]

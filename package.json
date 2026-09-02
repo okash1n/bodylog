@@ -9,7 +9,8 @@
     "deploy": "npm run sync-vendor && wrangler deploy",
     "test": "npm run sync-vendor && vitest run",
     "typecheck": "npm run sync-vendor && tsc --noEmit && tsc --noEmit -p test/tsconfig.json && npm run check-dashboard",
-    "verify": "./scripts/scan-real-values.sh && npm run typecheck && npm test"
+    "verify": "./scripts/scan-real-values.sh && npm run typecheck && npm test",
+    "test:e2e": "node e2e/setup-db.mjs && playwright test"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.10.3",
@@ -22,6 +23,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.20.1",
     "@cloudflare/workers-types": "^5.20260730.1",
+    "@playwright/test": "^1.62.1",
     "typescript": "^5.7.0",
     "vitest": "^4.1.0",
     "wrangler": "4.122.0"
