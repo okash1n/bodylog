@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env, LatestMeasurement, NotificationStats } from '../src/types';
 import { LIMITS } from '../src/util';
 import { buildMessageBlocks, parseDestinations, processNotificationBatches } from '../src/slack';
+import { deleteManualMeasurement, logWeight } from '../src/weight';
 import { insertMeasurement, resetTables, stubFetch, testEnv } from './helpers';
 
 const SLACK_HOST = 'hooks.slack.com';
@@ -200,4 +201,75 @@ describe('processNotificationBatches', () => {
     expect((await batchRow('b-dead')).status).toBe('dead');
     expect(stub.requests({ host: SLACK_HOST })).toHaveLength(2);
   });
+
+  it('中断した sending は15分経過後に回収され再送される（新しい sending は触らない）', async () => {
+    // 中断行: claim後にWorkerが落ちた想定（sendingのままnext_attempt_atが20分前）
+    await seedBatch('b-stuck', 504);
+    await testEnv.DB.prepare(
+      `UPDATE notification_batches SET status = 'sending', next_attempt_at = datetime('now', '-20 minutes')
+       WHERE batch_id = 'b-stuck'`,
+    ).run();
+    // 進行中の行: 直近にclaimされたばかり（回収してはいけない）
+    await seedBatch('b-active', 505);
+    await testEnv.DB.prepare(
+      `UPDATE notification_batches SET status = 'sending', next_attempt_at = datetime('now', '-5 seconds')
+       WHERE batch_id = 'b-active'`,
+    ).run();
+    const stub = stubFetch().on({ host: SLACK_HOST, path: SLACK_PATH, method: 'POST', times: 1, reply: () => new Response('ok') });
+
+    const result = await processNotificationBatches(testEnv, ORIGIN);
+    expect(result).toEqual({ sent: 1, deferred: 0, dead: 0 });
+    const stuck = await batchRow('b-stuck');
+    expect(stuck.status).toBe('sent'); // 回収 → 同一runで再送された
+    expect(stuck.attempts).toBe(1); // 回収時にattempts+1（毒行は既存上限でdead化する）
+    expect((await batchRow('b-active')).status).toBe('sending'); // 進行中は無傷
+    expect(stub.requests({ host: SLACK_HOST })).toHaveLength(1);
+  });
 });
+
+describe('手動記録の削除と未送信通知の取消し', () => {
+  beforeEach(async () => {
+    await resetTables();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('削除で未送信のitem/batchが消え、以後のcronで送信されない', async () => {
+    const saved = await logWeight(testEnv, { measured_at: '2026-01-05T15:00:00Z', weight: 65.2, fat_ratio: null });
+    expect(await countRows('notification_batch_items')).toBe(1);
+    expect(await countRows('notification_batches')).toBe(1);
+
+    expect(await deleteManualMeasurement(testEnv, saved.id)).toBe(true);
+    expect(await countRows('notification_batch_items')).toBe(0);
+    expect(await countRows('notification_batches')).toBe(0);
+
+    // 送信は発生しない（stubは未登録のまま=fetchが呼ばれればthrowで検知される）
+    stubFetch();
+    const result = await processNotificationBatches(testEnv, ORIGIN);
+    expect(result).toEqual({ sent: 0, deferred: 0, dead: 0 });
+  });
+
+  it('複数計測を含むbatchでは、削除した計測のitemだけが消えbatchは残る', async () => {
+    const a = await logWeight(testEnv, { measured_at: '2026-01-05T15:00:00Z', weight: 65.2, fat_ratio: null });
+    // 2件目を同じbatchに寄せる（手動でitemを付け替え）
+    const b = await logWeight(testEnv, { measured_at: '2026-01-05T16:00:00Z', weight: 65.4, fat_ratio: null });
+    const batchOfA = await testEnv.DB.prepare(
+      'SELECT batch_id FROM notification_batch_items WHERE measurement_id = ?1',
+    ).bind(a.id).first<{ batch_id: string }>();
+    await testEnv.DB.prepare('UPDATE notification_batch_items SET batch_id = ?1 WHERE measurement_id = ?2')
+      .bind(batchOfA!.batch_id, b.id)
+      .run();
+
+    expect(await deleteManualMeasurement(testEnv, b.id)).toBe(true);
+    // aのitemとそのbatchは残る
+    expect(await countRows('notification_batch_items')).toBe(1);
+    const remaining = await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS n FROM notification_batches WHERE batch_id = ?1 AND status = 'pending'",
+    ).bind(batchOfA!.batch_id).first<{ n: number }>();
+    expect(remaining?.n).toBe(1);
+  });
+});
+
+async function countRows(table: string): Promise<number> {
+  const row = await testEnv.DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>();
+  return row?.n ?? 0;
+}

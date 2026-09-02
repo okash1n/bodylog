@@ -101,8 +101,21 @@ export async function logWeight(env: Env, input: WeightInput): Promise<ManualMea
 }
 
 export async function deleteManualMeasurement(env: Env, id: number): Promise<boolean> {
-  const res = await env.DB.prepare("DELETE FROM measurements WHERE id = ?1 AND source = 'manual'")
-    .bind(id)
-    .run();
-  return res.meta.changes > 0;
+  // 計測本体と未送信（pending）の通知をひとつのbatch（=1トランザクション）で取り消す。
+  // 取り消さないと、削除済み計測のbatchが送信時にdead化して管理者アラート（誤報）が飛ぶ。
+  // sent は履歴として残し、claim済み（sending）は送信直前のJOINが本文送信を防ぐ
+  const [del] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM measurements WHERE id = ?1 AND source = 'manual'").bind(id),
+    // 削除が成立した場合のみ item を消す（manual以外のidを指定してもno-op）
+    env.DB.prepare(
+      'DELETE FROM notification_batch_items WHERE measurement_id = ?1 ' +
+        'AND NOT EXISTS (SELECT 1 FROM measurements WHERE id = ?1)',
+    ).bind(id),
+    // itemが空になったbatchの未送信行を取り消す
+    env.DB.prepare(
+      `DELETE FROM notification_batches WHERE status = 'pending'
+       AND NOT EXISTS (SELECT 1 FROM notification_batch_items WHERE batch_id = notification_batches.batch_id)`,
+    ),
+  ]);
+  return del.meta.changes > 0;
 }
