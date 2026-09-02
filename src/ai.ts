@@ -46,7 +46,7 @@ ${accessLine}
 - GET ${root}/api/coaching?days=30 — AIコーチ講評の履歴（新しい順、最大200件）
 - GET ${root}/api/metabolism — 直近28日の実測データからの実効消費カロリー推定（摂取記録が8割未満の期間はinsufficient_data）
 - GET ${root}/openapi.json — このAPIのOpenAPI 3.1定義（読み取りのみ。ChatGPTカスタムGPTのActionsにはこれを登録する）
-- POST ${root}/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール（体重の手動記録は log_weight）
+- POST ${origin}/mcp — MCP（Model Context Protocol）エンドポイント。OAuth 2.1（Streamable HTTP）。読み取り＋書き込みツール（体重の手動記録は log_weight）。DASHBOARD_SLUG の設定にかかわらずドメイン直下固定
 - POST ${root}/api/weight — 体重の手動記録（OAuth必須）。weight_kg必須20-300 / fat_ratio任意3-75% / measured_at任意ISO8601。fat_ratioがあれば除脂肪体重を導出保存。応答は {id, measured_at, weight, fat_ratio, fat_free_mass, source:'manual'}
 - DELETE ${root}/api/weight/{id} — 手動記録の削除（OAuth必須。source='manual'の行のみ。Withings由来は削除不可）
 
@@ -147,7 +147,7 @@ export function openapiSpec(
                       units: { type: 'object' },
                       timezone_offset_hours: { type: 'number' },
                       latest: {
-                        oneOf: [{ $ref: '#/components/schemas/Measurement' }, { type: 'null' }],
+                        oneOf: [{ $ref: '#/components/schemas/LatestMeasurement' }, { type: 'null' }],
                       },
                       recent7_avg: { $ref: '#/components/schemas/MetricTriple' },
                       diff_vs_prev7: { $ref: '#/components/schemas/MetricTriple' },
@@ -566,6 +566,18 @@ export function openapiSpec(
           properties: {
             id: { type: 'integer', description: 'サーバ内部の計測ID' },
             source: { type: 'string', enum: ['withings', 'manual'] },
+            measured_at: { type: 'string', format: 'date-time' },
+            weight: { type: ['number', 'null'] },
+            fat_mass: { type: ['number', 'null'] },
+            fat_free_mass: { type: ['number', 'null'] },
+            fat_ratio: { type: ['number', 'null'] },
+          },
+        },
+        LatestMeasurement: {
+          type: 'object',
+          description:
+            'summaryのlatest（最新計測の値のみ）。id・source は /api/raw の Measurement にだけ存在する',
+          properties: {
             measured_at: { type: 'string', format: 'date-time' },
             weight: { type: ['number', 'null'] },
             fat_mass: { type: ['number', 'null'] },

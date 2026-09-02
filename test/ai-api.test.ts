@@ -213,10 +213,26 @@ describe('AI向けREST拡張', () => {
       expect(actualKeys).toEqual(schemaKeys);
     });
 
+    it('summaryのlatestはLatestMeasurementスキーマと一致し、id/sourceを露出しない（drift検知）', async () => {
+      await insertMeasurement({ grpid: 9301, measured_at: `${localYmdDaysAgo(1)}T03:00:00Z`, weight: 82.0, fat_free_mass: 60.0 });
+      const spec = (await (await request('/openapi.json')).json()) as {
+        components: { schemas: { LatestMeasurement: { properties: Record<string, unknown> } } };
+      };
+      const schemaKeys = Object.keys(spec.components.schemas.LatestMeasurement.properties).sort();
+      const summary = (await (await request('/api/summary')).json()) as { latest: Record<string, unknown> };
+      expect(Object.keys(summary.latest).sort()).toEqual(schemaKeys);
+      expect(schemaKeys).not.toContain('id');
+      expect(schemaKeys).not.toContain('source');
+    });
+
     it('slugモードでは /d/{slug}/ 配下で配信され、ドメイン直下は404', async () => {
       const res = await slugApp.request('/d/testslug/llms.txt', {}, testEnv, createExecutionContext());
       expect(res.status).toBe(200);
-      expect(await res.text()).toContain('http://localhost/d/testslug/api/summary');
+      const slugText = await res.text();
+      expect(slugText).toContain('http://localhost/d/testslug/api/summary');
+      // MCPはDASHBOARD_SLUGにかかわらずドメイン直下固定（/d/{slug}/mcp は存在しない）
+      expect(slugText).toContain('POST http://localhost/mcp');
+      expect(slugText).not.toContain('/d/testslug/mcp');
 
       const spec = await slugApp.request('/d/testslug/openapi.json', {}, testEnv, createExecutionContext());
       const parsed = (await spec.json()) as { servers: { url: string }[] };
