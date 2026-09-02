@@ -115,4 +115,30 @@ describe('withings', () => {
     expect(row.access_token).toBe('at-thief');
     expect(row.refresh_token).toBe('rt-thief'); // 巻き戻っていない
   });
+
+  it('fencing: leaseを失っても、他の誰も新チェーンを保存していなければ自分の後継を保存する', async () => {
+    // 旧owner Aのrefresh応答が遅延している間に、奪取側Bがleaseを奪ったがrefreshに失敗して
+    // 解放だけして終了したケース。Aの持つ新チェーンが唯一の有効な後継であり、
+    // owner条件のfenceだとここで破棄して同期不能（要再認可）に陥る。
+    // refresh_tokenのCASなら値が変わっていないので正しく保存できる
+    await insertTokenRow({ accessToken: 'at-old', refreshToken: 'rt-old', expiresInSec: -3600 });
+    const stub = stubFetch().on({
+      host: 'wbsapi.withings.net',
+      path: REFRESH_PATH,
+      method: 'POST',
+      times: 1,
+      reply: async () => {
+        // Bの奪取と失敗解放（トークンは変えない）
+        await testEnv.DB.prepare(
+          'UPDATE tokens SET refresh_lease_owner = NULL, refresh_lease_until = NULL WHERE id = 1',
+        ).run();
+        return withingsReply({ userid: '42', access_token: 'at-heir', refresh_token: 'rt-heir', expires_in: 10800 });
+      },
+    });
+
+    await expect(getValidAccessToken(testEnv)).resolves.toBe('at-heir');
+    expect(stub.requests({ path: REFRESH_PATH })).toHaveLength(1);
+    const row = await tokenRow();
+    expect(row.refresh_token).toBe('rt-heir'); // 唯一の有効チェーンが保存されている
+  });
 });

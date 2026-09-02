@@ -157,13 +157,26 @@ export async function processInbox(env: Env): Promise<{ processed: number; faile
     if ((claim.meta.changes ?? 0) === 0) continue; // 他のconsumerがclaim済み/処理済み
     try {
       const payload = parseInboxPayload(row.payload);
-      // WEBHOOK_MAX_RANGE_DAYS 超の期間は拒否せず分割して取り込む
+      // WEBHOOK_MAX_RANGE_DAYS 超の期間は拒否せず分割して取り込む。
+      // ただし1行あたりのchunk数を制限し、残りは新しい行としてre-enqueueしてから当該行を
+      // processedにする（進捗のチェックポイント化）。上限なしで回すと、極端に広い残範囲行が
+      // 毎attempt先頭から再取得してサブリクエスト予算切れで失敗し続ける毒行になり、
+      // 予算切れはlast_error更新すら失敗させてattempts上限アラートも出せない
       const maxSpanSeconds = LIMITS.WEBHOOK_MAX_RANGE_DAYS * 86_400;
       let chunkStart = payload.startdate;
+      let chunksDone = 0;
       while (chunkStart <= payload.enddate) {
+        if (chunksDone >= LIMITS.INBOX_CHUNKS_PER_ROW) {
+          await insertInbox(
+            env,
+            JSON.stringify({ userid: payload.userid, appli: payload.appli, startdate: chunkStart, enddate: payload.enddate }),
+          );
+          break;
+        }
         const chunkEnd = Math.min(chunkStart + maxSpanSeconds, payload.enddate);
         await ingestRange(env, chunkStart, chunkEnd, 'webhook');
         chunkStart = chunkEnd + 1;
+        chunksDone++;
       }
       await env.DB.prepare(
         "UPDATE webhook_inbox SET processed_at = datetime('now'), last_error = NULL WHERE id = ?1",

@@ -258,6 +258,47 @@ describe('ページング停滞と再試行（inbox）', () => {
   });
 });
 
+describe('processInboxのchunk上限とre-enqueue', () => {
+  beforeEach(async () => {
+    await resetTables();
+    await insertTokenRow({ expiresInSec: 3600 });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('広い範囲の行は上限chunkで打ち切り、残りを新しい行へre-enqueueして完了できる', async () => {
+    const spanSeconds = 31 * 86_400;
+    const start = 1700000000;
+    const end = start + 6 * (spanSeconds + 1); // 7chunk相当（上限4を超える）
+    await testEnv.DB.prepare('INSERT INTO webhook_inbox (payload) VALUES (?1)')
+      .bind(JSON.stringify({ userid: '42', appli: 1, startdate: start, enddate: end }))
+      .run();
+    const stub = stubFetch().on({
+      host: 'wbsapi.withings.net', path: '/measure', method: 'POST',
+      reply: () => withingsReply({ updatetime: 1736100000, measuregrps: [], more: 0, offset: 0 }),
+    });
+
+    const r1 = await processInbox(testEnv);
+    expect(r1.processed).toBe(1); // 元の行は上限分を取り込んでprocessedになる
+    expect(stub.requests({ path: '/measure' })).toHaveLength(4); // INBOX_CHUNKS_PER_ROW
+    const tail = await testEnv.DB.prepare(
+      'SELECT payload FROM webhook_inbox WHERE processed_at IS NULL',
+    ).all<{ payload: string }>();
+    expect(tail.results).toHaveLength(1); // 残り範囲が1行re-enqueueされている
+    const parsed = JSON.parse(tail.results[0].payload) as { startdate: number; enddate: number };
+    expect(parsed.startdate).toBe(start + 4 * (spanSeconds + 1)); // 進捗のチェックポイント
+    expect(parsed.enddate).toBe(end);
+
+    // 2回目で尻尾（残り3chunk）も完了する
+    const r2 = await processInbox(testEnv);
+    expect(r2.processed).toBe(1);
+    const remaining = await testEnv.DB.prepare(
+      'SELECT COUNT(*) AS n FROM webhook_inbox WHERE processed_at IS NULL',
+    ).first<{ n: number }>();
+    expect(remaining?.n).toBe(0);
+    expect(stub.requests({ path: '/measure' })).toHaveLength(7); // 4 + 3
+  });
+});
+
 describe('webhookのchunk上限と残範囲', () => {
   beforeEach(async () => {
     await resetTables();

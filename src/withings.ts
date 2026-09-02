@@ -190,25 +190,27 @@ async function refreshAsLeaseOwner(env: Env, owner: string): Promise<string> {
       return fresh;
     }
     const tokens = await requestToken(env, { grant_type: 'refresh_token', refresh_token: row.refresh_token });
-    // fenced persist: 新トークン保存とlease解放を「自分がまだlease所有者である」条件付きの
-    // 単一UPDATEで行う。ownerは呼び出しごとにnewId()で一意なため、lease期限切れ後に別ownerが
-    // 奪取・保存していた場合はchanges=0となり、遅延したこの応答（旧refresh_tokenチェーン）で
-    // 新トークンを巻き戻さない（Withingsはローテーション制のため巻き戻り=チェーン破損）
+    // fenced persist: 「自分が消費した refresh_token が読み取り時のまま」を条件（CAS）にした
+    // 単一UPDATEで保存する。Withingsのrefresh_tokenはローテーション制のため、旧値から新チェーンを
+    // 作れるのは1人だけ — 値が変わっていれば別経路（他ownerの保存や再認可）が正当な後継であり、
+    // 遅延したこの応答で巻き戻してはいけない。逆に値が変わっていなければ（lease期限切れ後に
+    // 別ownerが奪取したがrefreshに失敗したケースを含め）自分のチェーンが唯一の有効な後継なので
+    // 保存する。lease owner を条件にすると後者で唯一の有効チェーンを破棄してしまう
     const persisted = await env.DB.prepare(
       `UPDATE tokens
        SET userid = ?1, access_token = ?2, refresh_token = ?3, expires_at = ?4,
            refresh_lease_owner = NULL, refresh_lease_until = NULL
-       WHERE id = 1 AND refresh_lease_owner = ?5`,
+       WHERE id = 1 AND refresh_token = ?5`,
     )
-      .bind(tokens.userid, tokens.access_token, tokens.refresh_token, tokens.expires_at, owner)
+      .bind(tokens.userid, tokens.access_token, tokens.refresh_token, tokens.expires_at, row.refresh_token)
       .run();
     if ((persisted.meta.changes ?? 0) === 0) {
-      // lease喪失: 取得したトークンは破棄し、新ownerが保存した現在値を使う
-      console.warn('[withings] refresh lease lost before persist; discarding refreshed tokens');
+      // 別経路が新チェーンを保存済み: 取得したトークンは破棄し、現在値を使う
+      console.warn('[withings] refresh_token changed before persist; discarding refreshed tokens');
       const current = await getTokenRow(env);
       const currentFresh = current ? freshAccessToken(current) : null;
       if (currentFresh !== null) return currentFresh;
-      throw new Error('Withings token refresh lost its lease and no fresh token is available (retryable)');
+      throw new Error('Withings token refresh was superseded and no fresh token is available (retryable)');
     }
     return tokens.access_token;
   } catch (e) {

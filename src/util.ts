@@ -8,6 +8,9 @@ import type { Env } from './types';
  */
 export const LIMITS = {
   INBOX_PER_RUN: 3,
+  // inbox 1行の1回の処理で取り込むchunk（31日区間）数の上限。超過分は新しい行へre-enqueueする。
+  // 3行×4chunk×約3サブリクエストがwebhook/cronの他の処理と合わせて50/invocationに収まる値
+  INBOX_CHUNKS_PER_ROW: 4,
   IMPORT_PAGES_PER_RUN: 5,
   NOTIFY_PER_RUN: 6,
   MAX_NOTIFY_ATTEMPTS: 8,
