@@ -5,3 +5,5 @@ wrangler.toml
 src/dashboard/vendor/
 test-results/
 playwright-report/
+# AIコーチングの dry-run / 再現評価の出力（講評本文・健康データを含む）
+coaching/out/

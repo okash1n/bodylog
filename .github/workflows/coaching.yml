@@ -90,3 +90,6 @@ jobs:
           # 遅延で日付をまたいだ場合は前日）を generate.mjs が対象にする
           COACHING_DATE: ${{ inputs.date }}
           COACHING_SCHEDULED: ${{ github.event_name == 'schedule' }}
+          # 任意: 本人の方針・ルーチン・固定メニュー・タンパク質目標などの自由記述（または JSON）。
+          # 個人情報なのでリポジトリには書かず Secret で渡す。未設定なら policy の既定で評価する
+          COACHING_PROFILE: ${{ secrets.COACHING_PROFILE }}
