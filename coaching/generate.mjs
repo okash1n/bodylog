@@ -1,7 +1,7 @@
 /**
  * AIコーチング講評の生成ジョブ。GitHub Actions のスケジュール実行から呼ばれる。
  *
- * 1. bodylog 公開APIから直近データを取得（体重・食事・運動・目標・代謝推定＋前日までの講評7日分）
+ * 1. bodylog 公開APIから直近データを取得（体重・食事・運動・目標・代謝推定＋前日までの講評7日分＋直近7日の運動ログ）
  * 2. Claude Agent SDK（CLAUDE_CODE_OAUTH_TOKEN = サブスク認証）で講評テキストを生成
  * 3. POST /api/coaching（Bearer: COACHING_API_SECRET）で保存 → WorkerがSlack配信・表示
  *
@@ -9,9 +9,13 @@
  *   BODYLOG_BASE_URL        必須。ダッシュボード基点までのURL（末尾スラッシュ不要）。
  *                           DASHBOARD_SLUG設定時は https://weight.example.com/d/{slug}、空文字運用時は https://weight.example.com
  *   COACHING_API_SECRET     必須。POST /api/coaching のBearerトークン
- *   CLAUDE_CODE_OAUTH_TOKEN 必須（SDKが参照）。`claude setup-token` で発行
+ *   CLAUDE_CODE_OAUTH_TOKEN 必須（SDKが参照。COACHING_PROMPT_ONLY のときだけ不要）。`claude setup-token` で発行
  *   COACHING_MODEL          任意。既定 'opus'（Claude Codeの既定Opusに追従する別名）
  *   COACHING_TZ_OFFSET_HOURS 任意。既定 9（JST）
+ *   COACHING_PROFILE        任意。本人の方針・ルーチン・固定メニュー・タンパク質目標などの自由記述、または
+ *                           {"text": "...", "max_hard_streak": 6, "min_kcal": ..., "min_protein_g": ...} 形式の JSON。
+ *                           個人情報なのでリポジトリには書かず Secret で渡す。プロンプトの評価軸・運動方針・食事方針は
+ *                           これを最優先で参照する（解釈は prompt.mjs parseProfile）
  *   COACHING_DATE           任意。生成対象日 YYYY-MM-DD（ローカル日付、当日以前）。未設定なら実行時点の当日。
  *                           記録を後から足した日の講評を作り直す手動実行用（workflow_dispatch の date 入力）。
  *                           対象日を末尾とする直近 FETCH_DAYS 日を取得して生成する。直近7日平均・前週比は
@@ -23,9 +27,17 @@
  *                           さらに「その夜のスロット以降に生成された講評」が既にあればスキップする
  *                           （schedule は Worker からの workflow_dispatch 起動のフォールバックのため。
  *                           古い講評＝未明の遅延実行や日中の手動再生成の残りは上書きする）
+ *   COACHING_DRY_RUN        任意。'1' で再現評価モード: 排他claim・スキップ判定・保存を行わず、生成した本文を
+ *                           COACHING_OUTPUT_FILE に書く（標準出力には出さない。Actions のログは公開されるため）
+ *   COACHING_OUTPUT_FILE    DRY_RUN のとき必須。本文（PROMPT_ONLY ならプロンプト）の書き出し先。
+ *                           リポジトリ内なら gitignore 済みの場所（coaching/out/ 等）でなければ拒否する
+ *   COACHING_PROMPT_ONLY    任意。'1' で SDK を呼ばずプロンプトだけを COACHING_OUTPUT_FILE に書く（DRY_RUN 前提）
+ *   COACHING_PREVIOUS_NOTES_FILE 任意（DRY_RUN 前提）。previous_notes を API の代わりにこのファイル
+ *                           （{notes:[...]} または配列）から読む。再現評価で前日の再生成結果を連鎖させるため（replay.mjs が使う）
  *
  * 注意: パブリックリポのActionsログは公開されるため、講評本文や取得データはログに出さない。
  */
+import fs from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import {
   addDaysYmd,
@@ -35,42 +47,61 @@ import {
   resolveTargetDate,
   scheduleTargetDate,
 } from './dates.mjs';
-import { deriveTerms, selectPreviousNotes } from './derive.mjs';
+import {
+  DEFAULT_TREND_WINDOW_DAYS,
+  PREVIOUS_NOTE_DAYS,
+  SESSION_DAYS,
+  deriveExerciseContext,
+  deriveIntakeAvg,
+  deriveTerms,
+  deriveTrend,
+  roundTo,
+  selectPreviousNotes,
+  summarizeSessions,
+} from './derive.mjs';
+import { assertSafeOutputPath, isOn, makeGetJson, requiredEnv } from './env.mjs';
+import { POLICY, SYSTEM_PROMPT, buildPrompt, parseProfile } from './prompt.mjs';
 
-const FETCH_DAYS = 15; // 前日分＋14日トレンドを賄う取得幅
-const PREVIOUS_NOTE_DAYS = 7; // 前日までの講評を何日分プロンプトに渡すか（矛盾防止用）
+const FETCH_DAYS = DEFAULT_TREND_WINDOW_DAYS + 1; // 前日分＋21日回帰（trend）を賄う取得幅
 
-function requiredEnv(name) {
-  const v = process.env[name];
-  if (!v) {
-    console.error(`missing required env: ${name}`);
-    process.exit(1);
-  }
-  return v;
-}
+const dryRun = isOn(process.env.COACHING_DRY_RUN);
+const promptOnly = isOn(process.env.COACHING_PROMPT_ONLY);
+const outputFile = (process.env.COACHING_OUTPUT_FILE ?? '').trim();
+const previousNotesFile = (process.env.COACHING_PREVIOUS_NOTES_FILE ?? '').trim();
 
 const base = requiredEnv('BODYLOG_BASE_URL').replace(/\/+$/, '');
 const secret = requiredEnv('COACHING_API_SECRET');
-requiredEnv('CLAUDE_CODE_OAUTH_TOKEN'); // SDKが読む。早期に未設定を検出するためだけに確認
+if (!promptOnly) requiredEnv('CLAUDE_CODE_OAUTH_TOKEN'); // SDKが読む。早期に未設定を検出するためだけに確認
+if (dryRun && !outputFile) {
+  console.error('COACHING_DRY_RUN requires COACHING_OUTPUT_FILE');
+  process.exit(1);
+}
+if (promptOnly && !dryRun) {
+  console.error('COACHING_PROMPT_ONLY requires COACHING_DRY_RUN=1');
+  process.exit(1);
+}
+if (previousNotesFile && !dryRun) {
+  console.error('COACHING_PREVIOUS_NOTES_FILE requires COACHING_DRY_RUN=1');
+  process.exit(1);
+}
+// 書き出し先は講評本文・健康データ・profile を含むため、追跡対象になりうる場所を早期に拒否する
+let outputPath = null;
+if (dryRun) {
+  try {
+    outputPath = assertSafeOutputPath(outputFile);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
 const model = process.env.COACHING_MODEL || 'opus';
 const envTzOffsetHours = Number.isFinite(Number(process.env.COACHING_TZ_OFFSET_HOURS))
   ? Number(process.env.COACHING_TZ_OFFSET_HOURS)
   : 9;
+const profile = parseProfile(process.env.COACHING_PROFILE);
+const getJson = makeGetJson(base, secret);
 
-async function getJson(path) {
-  // READ_ACCESS=private のWorkerでも読めるよう常にBearerを付ける（publicモードでは無視される）
-  const res = await fetch(`${base}${path}`, {
-    headers: { Authorization: `Bearer ${secret}` },
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) throw new Error(`GET ${path} -> HTTP ${res.status}`);
-  return res.json();
-}
-
-/** 数値をトークン節約のため丸める（null維持） */
-function round1(v) {
-  return v == null ? null : Math.round(v * 10) / 10;
-}
+const round1 = (v) => roundTo(v, 1);
 
 function roundTriple(t) {
   return { weight: round1(t?.weight), fat_mass: round1(t?.fat_mass), fat_free_mass: round1(t?.fat_free_mass) };
@@ -78,18 +109,36 @@ function roundTriple(t) {
 
 const NULL_TRIPLE = { weight: null, fat_mass: null, fat_free_mass: null };
 
+function readPreviousNotesFile(path) {
+  const parsed = JSON.parse(fs.readFileSync(path, 'utf8'));
+  const notes = Array.isArray(parsed) ? parsed : parsed?.notes;
+  if (!Array.isArray(notes)) throw new Error('COACHING_PREVIOUS_NOTES_FILE must contain {notes: [...]} or an array');
+  return { notes };
+}
+
+/** ログには固定の分類と先頭1行だけを出す（SDK の例外は CLI の stderr 末尾を連結するため、そのまま流さない） */
+function briefError(err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.split('\n')[0].split('. stderr:')[0].slice(0, 200);
+}
+
 /**
  * 対象日 date を末尾とする直近 FETCH_DAYS 日のデータを集める（date より後の日は含めない）。
  * /api/summary の直近7日平均・前週比・基準日差と /api/metabolism は Worker が実行時点基準でしか計算しないため、
  * 過去日（date !== today）では 7日平均・前週比を取得済みの日次系列から対象日時点で導出し、
  * 基準日差と実効消費推定は使わない（対象日より後のデータを講評の根拠にしないため）。
  */
-async function collectData(date, today) {
+async function collectData(date, today, tzOffsetHours) {
   const isPast = date !== today;
   const { from, to } = fetchRange(date, FETCH_DAYS);
   const range = `from=${from}&to=${to}`;
   const noteRange = `from=${addDaysYmd(date, -PREVIOUS_NOTE_DAYS)}&to=${addDaysYmd(date, -1)}`;
-  const [summary, measurements, meals, exercise, metabolism, coaching] = await Promise.all([
+  const sessionRange = `from=${addDaysYmd(date, -(SESSION_DAYS - 1))}&to=${date}`;
+  const warnUnavailable = (what, fallback) => (err) => {
+    console.warn(`${what} unavailable, generating without it: ${briefError(err)}`);
+    return fallback;
+  };
+  const [summary, measurements, meals, exercise, metabolism, coaching, logs, menus] = await Promise.all([
     getJson('/api/summary'),
     getJson(`/api/measurements?${range}`),
     getJson(`/api/meals/daily?${range}`),
@@ -97,30 +146,40 @@ async function collectData(date, today) {
     // 実効代謝は補助情報。取得失敗しても講評生成は続ける
     isPast ? Promise.resolve(null) : getJson('/api/metabolism').catch(() => null),
     // 直近の講評（前日まで）。取得できなくても生成は続けるが、無音にはしない（本文は出さない）
-    getJson(`/api/coaching?${noteRange}`).catch((err) => {
-      console.warn(`previous notes unavailable, generating without them: ${err instanceof Error ? err.message : err}`);
-      return { notes: [] };
-    }),
+    previousNotesFile
+      ? Promise.resolve(readPreviousNotesFile(previousNotesFile))
+      : getJson(`/api/coaching?${noteRange}`).catch(warnUnavailable('previous notes', { notes: [] })),
+    // 運動ログ（種目名・部位・メモ）と種目一覧（部位。アーカイブ済みも含めて引く）。無くても生成は続ける
+    getJson(`/api/exercise/logs?${sessionRange}`).catch(warnUnavailable('exercise logs', { logs: [] })),
+    getJson('/api/exercise/menus?archived=1').catch(warnUnavailable('exercise menus', { menus: [] })),
   ]);
   const days = measurements.days || [];
-  const terms = isPast
-    ? deriveTerms(days, date)
-    : { recent7_avg: summary.recent7_avg, diff_vs_prev7: summary.diff_vs_prev7 };
+  const derived = deriveTerms(days, date);
+  const terms = isPast ? derived : { recent7_avg: summary.recent7_avg, diff_vs_prev7: summary.diff_vs_prev7 };
+  const exerciseDays = exercise.days || [];
+  const intakeDays = meals.days || [];
+  const muscleGroups = new Map((menus.menus || []).map((m) => [m.id, m.muscle_group ?? null]));
   return {
-    policy: '体組成改善（脂肪量を減らし、除脂肪体重を維持・増加させる）',
-    // 数値目標（kg）。未設定の指標はnull。設定されていれば講評の評価軸に使う
+    policy: POLICY,
+    // 本人の方針・ルーチン・固定メニュー・目標量・下限（COACHING_PROFILE）。未設定なら null
+    profile,
+    // 数値目標（kg）。未設定の指標はnull。到達点の目安であり、日々の評価軸には使わない（プロンプト側の規則）
     goal: summary.goal ?? { weight_kg: null, fat_mass_kg: null },
-    // 直近28日の実測からの実効消費推定。status==='ok'のときだけ使う
+    // 直近28日の実測からの実効消費推定。status==='ok'のときだけ使う（過去日は null）
     metabolism: metabolism && metabolism.status === 'ok' ? metabolism : null,
     units: { mass: 'kg', energy: 'kcal', pfc: 'g' },
     // as_of=集計基準日。recent7_avg=直近7暦日の日平均の平均、diff_vs_prev7=その前7暦日との差、
-    // baseline.diff=基準日との差（過去日の再生成では算出できないので null）
+    // recent7_n/prev7_n=各窓の実測日数、baseline.diff=基準日との差（過去日の再生成では算出できないので null）
     summary: {
       as_of: date,
       recent7_avg: roundTriple(terms.recent7_avg),
       diff_vs_prev7: roundTriple(terms.diff_vs_prev7),
+      recent7_n: derived.recent7_n,
+      prev7_n: derived.prev7_n,
       baseline: isPast ? { date: summary.baseline?.date ?? null, diff: NULL_TRIPLE } : summary.baseline,
     },
+    // 直近21日の日次回帰（kg/週）。label は declining / rising / flat / uncertain
+    trend: deriveTrend(days, date),
     // d=日付, weight=体重, fat=脂肪量, ffm=除脂肪体重（*_7dは7日移動平均）
     body: days.map((d) => ({
       d: d.d,
@@ -132,66 +191,41 @@ async function collectData(date, today) {
       ffm_7d: round1(d.fat_free_mass_7d_avg),
     })),
     // kcal=摂取, p/f/c=PFCグラム（部分合計）。PFC比はP4/F9/C4換算で3者内正規化すること
-    intake: (meals.days || []).map((d) => ({
+    intake: intakeDays.map((d) => ({
       d: d.d,
       kcal: Math.round(d.calories),
       p: round1(d.protein_g),
       f: round1(d.fat_g),
       c: round1(d.carbs_g),
     })),
-    // 直近の講評（対象日より前、日付昇順、各800字まで）。前日と矛盾しない評価・方針を書かせるため
+    // 直近7日（記録のある日）の平均摂取kcal。当日生成では対象日を含めない（夕食が未記録の可能性があるため）
+    intake_7d_avg_kcal: deriveIntakeAvg(intakeDays, date, { excludeDate: !isPast }),
+    // 直近の講評（対象日より前・PREVIOUS_NOTE_DAYS 日以内、日付昇順、各800字まで）。前日と矛盾しない評価・方針を書かせるため
     previous_notes: selectPreviousNotes(coaching?.notes, date),
-    // bmr=基礎代謝推定, burn=運動消費kcal（有酸素+時間・METs付き筋トレ）, volume=筋トレ総ボリューム。総消費= bmr + burn
-    exercise: (exercise.days || []).map((d) => ({
+    // bmr=基礎代謝推定, burn=運動消費kcal（内訳 cardio_kcal / strength_kcal）, volume=筋トレ総挙上（自重換算込み）,
+    // weighted_volume=実荷重分, bodyweight_volume=自重換算分, cardio/strength=件数。総消費= bmr + burn
+    exercise: exerciseDays.map((d) => ({
       d: d.d,
       bmr: d.bmr == null ? null : Math.round(d.bmr),
       burn: d.calories_burned == null ? null : Math.round(d.calories_burned),
+      cardio_kcal: d.cardio_calories == null ? null : Math.round(d.cardio_calories),
+      strength_kcal: d.strength_calories == null ? null : Math.round(d.strength_calories),
       volume: d.strength_volume == null ? null : Math.round(d.strength_volume),
+      weighted_volume: d.weighted_volume == null ? null : Math.round(d.weighted_volume),
+      bodyweight_volume: d.bodyweight_volume == null ? null : Math.round(d.bodyweight_volume),
       cardio: d.cardio_count,
       strength: d.strength_count,
     })),
+    // 連続トレ日数など、回復提案の客観条件に使う導出値
+    exercise_context: deriveExerciseContext(exerciseDays, date),
+    // 直近7日の運動記録（種目名・時刻・分数・消費kcal・実荷重/自重ボリューム・部位・メモ）。サーキットは親1行
+    sessions: summarizeSessions(logs.logs || [], tzOffsetHours, { muscleGroups }),
   };
 }
 
-const COMMON_RULES = `
-出力ルール:
-- 講評本文のみを出力する（前置き・後書き・引用符・コードブロックは書かない）
-- プレーンテキストのみ。マークダウン記法（* # \` など）や絵文字は使わない。箇条書きは「・」を使う
-- 日本語。数値はデータから引用し概数でよい
-- カロリー収支 = 摂取kcal − (bmr + burn)。日常活動・食事誘発熱産生は含まれない前提で断定しすぎない
-- 2026-09-01以降、burnには筋トレ（時間・METs付き）の消費kcalも含まれる。それ以前のburnは有酸素のみなので、跨いだ比較で消費が増えたと断定しない
-- goalに数値目標（体重・脂肪量）が設定されていれば、目標との差を講評の評価軸に使う（未設定ならpolicyの方針で評価する）
-- metabolismがあれば、実効消費（estimated_tdee_kcal）をモデル値より優先して摂取量の提案に使う。ただし7700kcal/kg換算の参考値なので断定はしない
-- データが欠けている日は無理に言及しない`;
-
-/**
- * 毎晩23:30 JSTに当日分を生成し、日次ダイジェスト（23:55）の本文に差し込まれる。
- * ダイジェストには当日の数値まとめ（体重・摂取・消費・カロリー収支・運動内訳）が固定フォーマットで
- * 別途表示されるため、AIが書くのは「総括」だけ（記録数値の再掲はしない）
- */
-function buildPrompt(data, date) {
-  const dataJson = JSON.stringify(data);
-  return `あなたは体組成改善（脂肪を減らし除脂肪体重を維持・増加）を支援するコーチです。
-今日（${date}）の総括を書いてください。
-
-前提: 読者には今日の記録数値（体重・摂取kcal・PFC・消費・カロリー収支・運動内訳）が
-固定フォーマットで別途表示されている。数値のまとめ直し・網羅的な再掲はせず、
-評価と方針だけを書く（判断根拠として数値を1〜2個引用する程度は可）。
-
-構成（全体で2〜4行）:
-- 今日の評価: 収支・食事の質・運動内容を、直近7〜14日のトレンドと目標との位置関係を踏まえて講評
-- 明日の行動方針: 食事・運動で具体的に1〜2個
-
-連続性: previous_notes は直近の講評（日付昇順）。評価と方針はこれと連続させ、前日と結論が変わる場合は
-理由を一言添える。同じ助言の言い回しの繰り返しは避け、継続中の方針は「継続」と明示する。
-previous_notes が空なら（初回、または取得できなかった場合）過去の講評には触れずに書く。
-${COMMON_RULES}
-
-データ（直近${FETCH_DAYS}日）: ${dataJson}`;
-}
-
 async function generate(data, date) {
-  const prompt = buildPrompt(data, date);
+  const prompt = buildPrompt(data, date, { fetchDays: FETCH_DAYS });
+  if (promptOnly) return { content: prompt, usedModel: 'prompt-only' };
   let result = null;
   for await (const message of query({
     prompt,
@@ -199,7 +233,7 @@ async function generate(data, date) {
       model,
       maxTurns: 1,
       tools: [], // ツール不要の純テキスト生成
-      systemPrompt: 'あなたは簡潔で実践的なボディメイクコーチです。指示された書式を厳守してください。',
+      systemPrompt: SYSTEM_PROMPT,
     },
   })) {
     if (message.type === 'result') result = message;
@@ -249,7 +283,7 @@ const tzOffsetHours = await (async () => {
       return Number(status.timezone_offset_hours);
     }
   } catch (err) {
-    console.warn(`failed to fetch server timezone offset: ${err instanceof Error ? err.message : err}`);
+    console.warn(`failed to fetch server timezone offset: ${briefError(err)}`);
   }
   console.warn(`falling back to env timezone offset (${envTzOffsetHours})`);
   return envTzOffsetHours;
@@ -259,7 +293,7 @@ const today = localYmd(Date.now(), tzOffsetHours);
 // schedule 実行（date 入力なし）は「直近の予定スロットが属する日」を対象にする。GitHub の schedule が
 // 遅延して日付をまたいだ場合に、当日扱いでほぼ空の翌日分を作って本来の対象日が欠けるのを防ぐ
 const isScheduleRun =
-  process.env.COACHING_SCHEDULED === 'true' && (process.env.COACHING_DATE ?? '').trim() === '';
+  !dryRun && process.env.COACHING_SCHEDULED === 'true' && (process.env.COACHING_DATE ?? '').trim() === '';
 const target = isScheduleRun
   ? { ok: true, date: scheduleTargetDate(Date.now(), tzOffsetHours) }
   : resolveTargetDate(process.env.COACHING_DATE, today);
@@ -268,7 +302,9 @@ if (!target.ok) {
   process.exit(1);
 }
 const date = target.date;
-console.log(`kind=${kind} date=${date} today=${today} model=${model} tz=${tzOffsetHours}`);
+console.log(
+  `kind=${kind} date=${date} today=${today} model=${model} tz=${tzOffsetHours} profile=${profile ? 'set' : 'none'}${dryRun ? ' dry-run' : ''}${promptOnly ? ' prompt-only' : ''}`,
+);
 
 if (isScheduleRun) {
   // schedule 実行は Worker からの workflow_dispatch 起動（対象日を明示）や手動実行のフォールバック。
@@ -294,7 +330,7 @@ async function claimGeneration(d) {
     body: JSON.stringify({ date: d }),
     signal: AbortSignal.timeout(15_000),
   }).catch((err) => {
-    console.warn(`claim request failed; continuing without claim: ${err instanceof Error ? err.message : err}`);
+    console.warn(`claim request failed; continuing without claim: ${briefError(err)}`);
     return null;
   });
   if (res === null || res.status === 404) return 'unavailable';
@@ -315,23 +351,29 @@ async function releaseGeneration(d) {
   }).catch(() => {});
 }
 
-const claim = await claimGeneration(date);
+// dry-run は保存も外部送信もしないので claim を取らない（本番の生成と競合させない）
+const claim = dryRun ? 'unavailable' : await claimGeneration(date);
 if (claim === 'held') {
   console.log(`another run holds the generation claim for ${date}; skipping`);
   process.exit(0);
 }
 
 try {
-  const data = await collectData(date, today);
+  const data = await collectData(date, today, tzOffsetHours);
   console.log(
-    `data: body=${data.body.length}d intake=${data.intake.length}d exercise=${data.exercise.length}d`,
+    `data: body=${data.body.length}d intake=${data.intake.length}d exercise=${data.exercise.length}d sessions=${data.sessions.length} previous_notes=${data.previous_notes.length}`,
   );
   const { content, usedModel } = await generate(data, date);
   console.log(`generated: ${content.length} chars (model=${usedModel})`);
-  const saved = await save(kind, date, content, usedModel);
-  console.log(`saved: id=${saved.id}`);
+  if (dryRun) {
+    fs.writeFileSync(outputPath, content);
+    console.log(`dry-run: written to ${outputPath} (not saved)`);
+  } else {
+    const saved = await save(kind, date, content, usedModel);
+    console.log(`saved: id=${saved.id}`);
+  }
 } catch (err) {
-  console.error('coaching job failed:', err instanceof Error ? err.message : err);
+  console.error('coaching job failed:', briefError(err));
   if (claim === 'claimed') await releaseGeneration(date);
   process.exit(1);
 }
