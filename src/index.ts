@@ -23,7 +23,7 @@ import {
 import { processNotificationBatches, runDailyDigestIfDue } from './slack';
 import { dispatchCoachingIfDue } from './coaching-dispatch';
 import { createDashboardRouter, createRootDashboardRouter } from './dashboard';
-import { registerOauthRoutes } from './oauth';
+import { OAUTH_LIFETIMES, logOauthError, registerOauthRoutes } from './oauth';
 
 interface OauthStateEntry {
   state: string;
@@ -383,6 +383,9 @@ const provider = new OAuthProvider<Env>({
   tokenEndpoint: '/token',
   clientRegistrationEndpoint: '/register',
   scopesSupported: ['meals'],
+  // 既定（refresh 30日・クライアント 90日）だとMCPクライアントが月次で再認可になる（src/oauth.ts 参照）
+  ...OAUTH_LIFETIMES,
+  onError: logOauthError,
 });
 
 export default {

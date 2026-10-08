@@ -14,6 +14,37 @@ import type { AuthRequest, OAuthHelpers } from '@cloudflare/workers-oauth-provid
 import type { Env } from './types';
 import { assertSecret, noindexHeaders } from './util';
 
+/**
+ * OAuthProvider に渡すトークン寿命（秒）。ライブラリ既定は refresh 30日・DCRクライアント 90日。
+ * どちらも発行時点からの絶対期限で、refresh しても再認可しても延びない（KV の expiration に固定され、
+ * grant キーは refresh 時に同じ期限で書き戻される。client キーは /register 時にしか書かれない）。
+ * MCP クライアント（ChatGPT 等）は観測上、refresh が invalid_grant になっても再認可の導線を出さず、
+ * コネクタの削除・再作成でしか復旧できないため、単一オーナー用途として長めに取る。
+ * クライアント寿命 < refresh 寿命だと先に invalid_client で死ぬので、クライアント側を長くしておく
+ * （クライアント期限は再認可では直らず、コネクタ再作成＝再登録が必要。つまり最長でもこの間隔で作り直しになる）。
+ * 設定変更前に登録済みのクライアント・認可は旧寿命のまま
+ */
+export const OAUTH_LIFETIMES = {
+  refreshTokenTTL: 365 * 86_400,
+  clientRegistrationTTL: 730 * 86_400,
+} as const;
+
+const OAUTH_LOG_DESCRIPTION_MAX = 200;
+
+/**
+ * OAuthProvider の onError。既定の console.warn と同じ内容を [oauth] タグ付きで残し、Workers Logs で
+ * エラーコード（invalid_grant: refresh 失効・ローテーション競合 / invalid_client: クライアント失効）を追えるようにする。
+ * ライブラリが返す全エラー応答で呼ばれるため、/mcp のアクセストークン期限切れ（401 invalid_token）や
+ * /register の検証エラーも同じタグで出る（コードで絞り込むこと）。
+ * ライブラリが description にトークン値を入れることはないが、/register や /token の未認証リクエストが送った
+ * 文字列がそのまま入る経路はあるので、改行を潰して長さを抑える（ログ汚染対策）。code / status / description 以外は出さない。
+ * 戻り値なし＝応答はライブラリ既定のまま
+ */
+export function logOauthError(error: { code: string; description: string; status: number }): void {
+  const description = error.description.replace(/[\r\n\t]+/g, ' ').slice(0, OAUTH_LOG_DESCRIPTION_MAX);
+  console.warn(`[oauth] error response ${error.status} ${error.code}: ${description}`);
+}
+
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo';

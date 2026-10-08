@@ -255,6 +255,17 @@ function extractCookieValue(res: Response, name: string): string {
  * /authorize が発行するoauth_txn Cookie（login CSRF対策）をcallbackへ引き継ぐ点に注意。
  */
 export async function obtainAccessToken(env: Env): Promise<string> {
+  return (await obtainTokens(env)).access_token;
+}
+
+export interface IssuedTokens {
+  access_token: string;
+  refresh_token: string;
+  client_id: string;
+}
+
+/** obtainAccessToken と同じフローで、refresh_token と client_id も返す（/token の refresh 検証用） */
+export async function obtainTokens(env: Env): Promise<IssuedTokens> {
   const ctx = () => createExecutionContext();
   const reg = await worker.fetch(
     new Request('http://localhost/register', {
@@ -317,5 +328,6 @@ export async function obtainAccessToken(env: Env): Promise<string> {
     env,
     ctx(),
   );
-  return ((await token.json()) as { access_token: string }).access_token;
+  const issued = (await token.json()) as { access_token: string; refresh_token: string };
+  return { access_token: issued.access_token, refresh_token: issued.refresh_token, client_id };
 }
