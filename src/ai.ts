@@ -25,7 +25,7 @@ ${accessLine}
 - 単位: 質量（weight / fat_mass / fat_free_mass）はkg、fat_ratioのみ%
 - fat_mass（脂肪量）は weight - fat_free_mass から導出した値
 - 日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours} のローカル日付
-- 期間指定は days=N（今日を末尾とする直近N日、当日含む）か from/to=YYYY-MM-DD。併用不可、最大${LIMITS.API_MAX_RANGE_DAYS}日
+- 期間指定は days=N（今日を末尾とする直近N日、当日含む）か from/to=YYYY-MM-DD。併用不可、最大${LIMITS.API_MAX_RANGE_DAYS}日。to は今日以前（食事記録 /api/meals と /api/meals/daily だけ未来日も可）
 - 日次PFC合計（protein_g/fat_g/carbs_g）は栄養素が入力済みの記録のみの合計（未入力の記録は含まれない）。caloriesは全記録の合計
 - PFCはグラム数。比率を出すときは P×4 / F×9 / C×4 kcal に換算し、3者の合計を100%として正規化する。登録カロリーで割らないこと（食物繊維等の差で換算合計と登録kcalは一致せず、100%を超えうる）
 
@@ -36,8 +36,8 @@ ${accessLine}
 - GET ${root}/api/raw?days=30 — 計測1回ごとの明細（新しい順、最大2000件。id と source: withings|manual 付き）
 - GET ${root}/api/status — データ同期状態（最終同期・最新計測日時）
 - GET ${root}/api/menus?q= — 食事メニュー（マスタ）一覧・検索（利用頻度順）
-- GET ${root}/api/meals?days=7 — 食事記録（メニュー名・倍率・実効kcal/PFC付き）
-- GET ${root}/api/meals/daily?days=30 — 日次の摂取カロリー・PFC合計
+- GET ${root}/api/meals?days=7 — 食事記録（メニュー名・倍率・実効kcal/PFC付き）。食べる予定の食事は未来日時で先に記録されていることがあり、from/to の to に未来日を指定すると含まれる（days は今日まで）
+- GET ${root}/api/meals/daily?days=30 — 日次の摂取カロリー・PFC合計（to に未来日を指定可。予定分の日次合計）
 - GET ${root}/api/exercise/menus?q=&category= — 運動種目（マスタ）一覧・検索（利用頻度順）。category=cardio|strengthで絞れる
 - GET ${root}/api/exercise/logs?days=30 — 運動記録（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き。サーキットは親+子ログにgroup_idで束なる）
 - GET ${root}/api/exercise/daily?days=30 — 日次の基礎代謝（Katch-McArdle推定）・運動消費kcal（筋トレ含む）・総ボリューム（実荷重/自重換算の内訳付き）。期間内の全日を返す
@@ -97,6 +97,12 @@ export function openapiSpec(
       schema: { type: 'string', format: 'date' },
     },
   ];
+  // 食事記録は予定（未来日時）を先に記録できるため、期間の終端に未来日を許す
+  const mealsRangeParams = rangeParams.map((p) =>
+    p.name === 'to'
+      ? { ...p, description: '終了日 YYYY-MM-DD（ローカル日付。未来日も可: 先に記録した予定の食事を含めるとき）' }
+      : p,
+  );
   const errorResponse = {
     description: 'バリデーションエラー',
     content: {
@@ -298,8 +304,8 @@ export function openapiSpec(
       '/api/meals': {
         get: {
           operationId: 'getMealLogs',
-          summary: '食事記録（メニュー名・倍率・実効kcal/PFC付き、新しい順、最大2000件）',
-          parameters: rangeParams,
+          summary: '食事記録（メニュー名・倍率・実効kcal/PFC付き、新しい順、最大2000件。予定の食事が未来日時で先に記録されていることがある）',
+          parameters: mealsRangeParams,
           responses: {
             '200': {
               description: '食事記録一覧',
@@ -322,7 +328,7 @@ export function openapiSpec(
         get: {
           operationId: 'getDailyIntake',
           summary: '日次の摂取カロリー・PFC合計',
-          parameters: rangeParams,
+          parameters: mealsRangeParams,
           responses: {
             '200': {
               description: '日次摂取量の時系列',

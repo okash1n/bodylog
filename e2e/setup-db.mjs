@@ -21,6 +21,7 @@ wranglerD1('migrations', 'apply', ...COMMON);
 const d0 = jstYmd(0);
 const d1 = jstYmd(1);
 const d2 = jstYmd(2);
+const dNext = jstYmd(-1); // 明日（先に記録した予定の食事用）
 // 固定時刻（JST正午 = T03:00:00Z）で seed する（AGENTS.md の日付境界規約と同じ）
 const sql = [
   // 冪等にするため毎回リセットする
@@ -31,11 +32,12 @@ const sql = [
     ` (9001, 9001, '${d2}T03:00:00Z', 83.0, 21.5, 65.1, '{}'),` +
     ` (9002, 9002, '${d1}T03:00:00Z', 82.8, 21.2, 65.2, '{}'),` +
     ` (9003, 9003, '${d0}T03:00:00Z', 82.5, 21.0, 65.3, '{}')`,
-  // 食事（メニュー + 今日の記録）
+  // 食事（メニュー + 今日の記録 + 明日の予定。予定は履歴の先頭に「予定」付きで出る）
   `INSERT INTO menus (id, name, calories, protein_g, fat_g, carbs_g, note, archived, created_at, updated_at)` +
     ` VALUES ('e2e-menu-1', 'E2E定食', 650, 32, 18, 80, NULL, 0, '${d2}T03:00:00Z', '${d2}T03:00:00Z')`,
   `INSERT INTO meal_logs (id, menu_id, eaten_at, meal_type, multiplier, menu_name, calories, protein_g, fat_g, carbs_g, created_at)` +
-    ` VALUES ('e2e-meal-1', 'e2e-menu-1', '${d0}T03:10:00Z', 'lunch', 1.0, 'E2E定食', 650, 32, 18, 80, '${d0}T03:10:00Z')`,
+    ` VALUES ('e2e-meal-1', 'e2e-menu-1', '${d0}T03:10:00Z', 'lunch', 1.0, 'E2E定食', 650, 32, 18, 80, '${d0}T03:10:00Z'),` +
+    ` ('e2e-meal-2', 'e2e-menu-1', '${dNext}T03:00:00Z', 'dinner', 1.0, 'E2E定食', 650, 32, 18, 80, '${d0}T03:10:00Z')`,
   // 運動（strength 種目 + 今日の記録 1件2セット）
   `INSERT INTO exercise_menus (id, name, category, mets, muscle_group, is_bodyweight, bodyweight_factor, circuit_json, note, archived, created_at, updated_at)` +
     ` VALUES ('e2e-ex-menu-1', 'E2Eベンチプレス', 'strength', NULL, '胸', 0, 1, NULL, NULL, 0, '${d2}T03:00:00Z', '${d2}T03:00:00Z')`,

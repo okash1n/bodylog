@@ -8,7 +8,7 @@ Fork/clone して設定値を差し替えるだけで動く（コード変更不
 - エネルギー収支: 消費 = 基礎代謝（BMR。Katch-McArdle: 370 + 21.6 × 実測除脂肪体重。その日以前で最新の実測FFMを carry-forward し、実測が一度も無い期間は算出しない。**基礎代謝を体重や年齢・性別ではなく実測の除脂肪体重から算定する**ため、同じ体重でも体組成の違いがそのまま反映され、一般式（Harris-Benedict 等）より個人差を反映した推定になる。ただし推定値であり、精度は除脂肪体重の実測値の精度に左右される） + 運動消費（METs×体重×時間×1.05。有酸素は常に算出し、筋トレ・サーキットも種目に METs を設定して時間を記録した場合は同式で算出する。筋トレは総ボリュームでも追跡し、ダッシュボードで除脂肪体重の推移と重ねて見られる）。カロリー収支 = 摂取 − 総消費（日常活動・食事誘発性熱産生は含まない推定値）
 - 通知: Slack Incoming Webhook（複数送信先対応）。最新計測値・7日間平均（前ターム比）・基準日からの変化に加え、**直近30日のグラフ画像を通知に直接埋め込む**
 - ダッシュボード: PWA 対応・noindex。実測⇔7日平均のワンクリック切替、期間プリセット（1M/3M/1Y/カスタム）、日次集計⇔計測明細の表、ライト/ダークテーマ、OGP 画像を Worker 内で生成。食事・運動タブから記録の閲覧・入力、体重タブから体重の手動記録もでき、体重グラフには摂取/消費（基礎代謝＋運動）/カロリー収支を重ねられる
-- 食事記録: 登録済みメニュー（マスタ）からのみ記録する方式（自由入力ではない）。PFC比率はP×4/F×9/C×4kcal換算による3者内正規化で算出する（登録kcalでは割らない）。閲覧は既定（`READ_ACCESS=public`）では認証不要、記録・メニュー登録はオーナーの Google アカウントによる OAuth 2.1 認可が必要
+- 食事記録: 登録済みメニュー（マスタ）からのみ記録する方式（自由入力ではない）。食べる予定が決まっている食事は未来日時で先に記録できる（記録後は実績と同じ扱いで予定フラグは無く、当日分は時刻が来ていなくても `intake_today`・日次ダイジェスト・日次集計に摂取として数える。食べなかった分は削除する。上限は 1 年先。運動・体重は未来日時不可）。PFC比率はP×4/F×9/C×4kcal換算による3者内正規化で算出する（登録kcalでは割らない）。閲覧は既定（`READ_ACCESS=public`）では認証不要、記録・メニュー登録はオーナーの Google アカウントによる OAuth 2.1 認可が必要
 - インフラ: Cloudflare Workers + D1 + KV（KV は食事・運動記録の書き込みAPI、および MCP の書き込みツール用 OAuth の認可フロー・トークン保存にのみ使用。Queues / Durable Objects は不使用）。外部依存は Hono / Chart.js / `@cloudflare/workers-oauth-provider` / `@modelcontextprotocol/sdk` / `@hono/mcp` / zod
 - 動作確認済みバージョン: Node.js 22+ / wrangler 4.122（大きく異なるバージョンでは手順が変わることがある）
 
@@ -289,8 +289,8 @@ npx wrangler d1 execute bodylog --remote \
 | `GET {base}/api/status` | 初期インポート状況・最終同期時刻 |
 | `GET {base}/api/summary` | 要約 JSON（最新計測・直近7日平均・前週比・基準日比・今日の食事摂取量・目標（goal）・最終同期） |
 | `GET {base}/api/menus?q=` | 食事メニュー（マスタ）一覧・検索（利用頻度順: 直近90日の記録回数→最終使用→名前）。認証不要 |
-| `GET {base}/api/meals?from=&to=` または `?days=N` | 食事記録 JSON（メニュー名・倍率・実効kcal/PFC付き）。認証不要 |
-| `GET {base}/api/meals/daily?from=&to=` または `?days=N` | 日次の摂取カロリー・PFC合計 JSON。認証不要 |
+| `GET {base}/api/meals?from=&to=` または `?days=N` | 食事記録 JSON（メニュー名・倍率・実効kcal/PFC付き）。`to` は未来日も可（先に記録した予定の食事を含める。`days` は今日まで）。認証不要 |
+| `GET {base}/api/meals/daily?from=&to=` または `?days=N` | 日次の摂取カロリー・PFC合計 JSON。`to` は未来日も可。認証不要 |
 | `GET {base}/api/exercise/menus?q=&category=` | 運動種目（マスタ）一覧・検索（利用頻度順）。`category=cardio\|strength` で絞り込み。認証不要 |
 | `GET {base}/api/exercise/logs?from=&to=` または `?days=N` | 運動記録 JSON（有酸素は消費kcal、筋トレはセット明細・総ボリューム付き）。認証不要 |
 | `GET {base}/api/exercise/daily?from=&to=` または `?days=N` | 日次の基礎代謝（BMR推定）・運動消費kcal・総ボリューム JSON。期間内の全日を返す（運動が無い日も含む）。認証不要 |
@@ -328,7 +328,7 @@ cron トリガー:
 - **表で見る**: 日次集計（1日1行=日平均、摂取/消費/カロリー収支のカロリー列つき）と計測明細（1計測=1行、時刻付き。カロリー列は日次集計とは粒度が違うため非表示）を切替できる
 - **PWA**: スマホで「ホーム画面に追加」するとスタンドアロンで起動する
 - **テーマ**: OS 設定に追従 + 手動トグル
-- **食事タブ**: メニュー検索・当日の記録一覧・記録入力ができる。記録入力には「ログイン」ボタンから Google アカウントで OAuth 2.1（PKCE）認可する（オーナーのメールが `OWNER_EMAILS` にある場合のみ許可）
+- **食事タブ**: メニュー検索・記録一覧（直近 50 日＋先 30 日。未来日は見出しに「予定」）・記録入力ができる。「記録する日」は過去・未来どちらも選べ（履歴の表示範囲と同じ直近 50 日〜先 30 日。それより先は MCP から）、今日以外はその日の正午（JST）で記録される。記録入力には「ログイン」ボタンから Google アカウントで OAuth 2.1（PKCE）認可する（オーナーのメールが `OWNER_EMAILS` にある場合のみ許可）
 - **目標と実効消費**: MCP の `set_goal` で目標体重・目標脂肪量を設定すると、グラフに目標線（水平破線）、カードに「目標まで」が表示される。摂取記録が直近28日の8割以上あると「実効消費（推定）」カードも表示される（カロリー収支と実際の体重変化から逆算した参考値）
 - **運動タブ**: 種目検索・当日の記録一覧・記録入力ができる（有酸素は時間、筋トレはセット明細 reps×weight。自重種目は記録時の体重を負荷に算入）。筋トレの総ボリュームは除脂肪体重の推移と重ねたグラフで確認できる。記録入力は食事タブと同じ Google アカウントでのログインが必要
 - **体重の手動記録**: 体重タブのフォームから記録できる（ログイン必須。検証と保存先は `POST {base}/api/weight` と同じ）
@@ -343,6 +343,7 @@ ChatGPT・Claude などのAIクライアントから体重推移・食事記録�
 - **ChatGPT カスタムGPT（Actions）**: GPT編集画面の Actions で「URLからインポート」に `https://weight.example.com/openapi.json` を指定する。認証は「なし」（読み取り専用）
 - **MCP クライアント**: `https://weight.example.com/mcp` を OAuth 対応のコネクタとして登録する（MCP はドメイン直下の単一エンドポイントで、`DASHBOARD_SLUG` の設定にかかわらずここに固定。OAuth 認可必須）。ChatGPT はコネクタ作成時に認証方式で「OAuth」を選ぶ。Claude Code は `claude mcp add --transport http bodylog https://weight.example.com/mcp`（接続時にブラウザで Google ログイン画面が開く）
   - **ツール**: 読み取り8つ（体重: `get_weight_summary` / `get_daily_series` / `get_raw_measurements`、食事: `search_menus` / `get_meal_logs`、運動: `search_exercise_menus` / `get_exercise_logs` / `get_exercise_records`）＋書き込み14（記録・登録: `log_meal` 食事記録 / `create_menu` メニュー登録 / `log_exercise` 運動記録 / `create_exercise_menu` 種目登録 / `set_goal` 目標設定 / `log_weight` 体重の手動記録、編集・削除: `update_menu` / `archive_menu`（`archived:false` で復元） / `update_meal_log`（倍率・日時・区分） / `delete_meal_log` / `update_exercise_menu` / `archive_exercise_menu` / `delete_exercise_log` / `delete_weight`（手動記録のみ））
+  - **未来日の食事**: 食べる予定が決まっている食事は `log_meal` の `eaten_at` に未来日時を渡して先に記録できる（`get_meal_logs` の `to` に未来日を指定すると見える。`days` は今日まで）。食べなかった分は `delete_meal_log` で消す。運動・体重は未来日時不可
   - **記録は必ず登録済みのメニュー/種目から行うこと**（無ければ先に `create_menu` / `create_exercise_menu` で登録してから記録する。AI が判断でメニュー・種目を新規作成しないよう、登録前にユーザーへ確認するのが安全）
   - **編集・削除**: AI が誤登録したメニューや記録は、ウェブアプリを開かずに MCP から直せる（編集・削除はユーザーの明示的な依頼があるときだけ使い、実行前に対象を確認するよう instructions で指示している。運動記録の編集は無いので削除→再記録）。**前提**: サーバー側に確認ステップは無く、記録の削除は物理削除（メニュー・種目はアーカイブで復元可）。誤操作やプロンプトインジェクションへの最後の砦は各 AI クライアントのツール実行承認 UI なので、削除系ツール（`destructiveHint` 付き）は自動承認しない設定を推奨する
   - **トークンの寿命**: アクセストークン 1 時間（切れたらクライアントが refresh_token で取り直す）、refresh_token は認可から 1 年、動的登録したクライアント（コネクタ作成時に `/register` で登録される ID）は登録から 2 年。どちらも絶対期限で、refresh や再認可では延びない（`src/oauth.ts` の `OAUTH_LIFETIMES`。設定前に登録済みのクライアント・認可は旧寿命のまま）。refresh_token が切れると `invalid_grant` になり再認可で直る。クライアントが切れると `invalid_client` になり、再認可では直らずコネクタの削除・再作成（再登録）が必要。クライアントによっては refresh 失敗時に再認可の導線が出ず、いずれの場合も作り直しになる。失効させたいとき（端末紛失など）は OAuth 用 KV の `grant:` キー（認可）を `npx wrangler kv key list --binding OAUTH_KV --remote --prefix grant:` で確認して削除する（`client:` キーはクライアント登録。`/register` は無認証なので乱用された登録もここに 2 年残る。キー名にオーナーのメールが入るため出力の扱いに注意）。エラー応答は Workers Logs に `[oauth] error response <status> <code>: <description>` として残る（`/mcp` のアクセストークン期限切れ `401 invalid_token` も同じタグで出るので、コードで絞り込む）

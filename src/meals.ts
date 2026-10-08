@@ -279,6 +279,13 @@ export interface MealFields {
   meal_type?: MealType;
 }
 
+/**
+ * eaten_at に許す未来の上限（日）。食べる予定が決まっている食事（「明日は鶏の日」）を先に記録できるよう
+ * 未来日時を受け付ける（記録後は実績と同じ扱いで、予定フラグは持たない）。年の打ち間違いのような
+ * 明らかな誤入力だけを弾くための緩い上限
+ */
+export const MAX_FUTURE_DAYS = 366;
+
 /** REST（/api/meals）とMCP（log_meal、Task 8）の両方から使う記録フィールドバリデータ */
 export function parseMealFields(b: Record<string, unknown>): { ok: true; value: MealFields } | { ok: false; error: string } {
   const out: MealFields = {};
@@ -292,8 +299,8 @@ export function parseMealFields(b: Record<string, unknown>): { ok: true; value: 
     if (typeof b.eaten_at !== 'string' || Number.isNaN(Date.parse(b.eaten_at))) {
       return { ok: false, error: 'eaten_at must be ISO8601' };
     }
-    if (Date.parse(b.eaten_at) > Date.parse(isoNow()) + 60_000) {
-      return { ok: false, error: 'eaten_at must not be in the future' };
+    if (Date.parse(b.eaten_at) > Date.parse(isoNow()) + MAX_FUTURE_DAYS * 86_400_000) {
+      return { ok: false, error: `eaten_at must be within ${MAX_FUTURE_DAYS} days ahead` };
     }
     out.eaten_at = b.eaten_at;
   }

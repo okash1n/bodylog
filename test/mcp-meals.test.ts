@@ -71,6 +71,35 @@ describe('/mcp 書き込みツール', () => {
     expect(log.effective_calories).toBeCloseTo(500);
   });
 
+  it('log_meal は未来日時（予定の食事）を受け付け、get_meal_logs は to に未来日を渡すと返す', async () => {
+    await createMenu(testEnv, { name: '鶏むね定食', calories: 500 });
+    const today = localYmdDaysAgo(0);
+    const tomorrow = localYmdDaysAgo(-1);
+    const logged = await rwRpc(rootEnv, token, 'tools/call', {
+      name: 'log_meal',
+      arguments: { menu_name: '鶏むね定食', eaten_at: `${tomorrow}T03:00:00Z` },
+    });
+    expect(((await logged.json()) as RpcResponse).result!.isError).toBeUndefined();
+
+    const ranged = await rwRpc(rootEnv, token, 'tools/call', {
+      name: 'get_meal_logs',
+      arguments: { from: today, to: tomorrow },
+    });
+    const data = parseToolJson<{ meals: { menu_name: string }[] }>(((await ranged.json()) as RpcResponse).result!);
+    expect(data.meals.map((m) => m.menu_name)).toEqual(['鶏むね定食']);
+
+    // days 指定は今日までなので予定分は含まれない
+    const byDays = await rwRpc(rootEnv, token, 'tools/call', { name: 'get_meal_logs', arguments: { days: 7 } });
+    expect(parseToolJson<{ meals: unknown[] }>(((await byDays.json()) as RpcResponse).result!).meals).toEqual([]);
+
+    // 未来日の to を許すのは食事だけ（体重の時系列は従来どおりエラー）
+    const series = await rwRpc(rootEnv, token, 'tools/call', {
+      name: 'get_daily_series',
+      arguments: { from: today, to: tomorrow },
+    });
+    expect(((await series.json()) as RpcResponse).result!.isError).toBe(true);
+  });
+
   it('log_meal: メニュー名が曖昧なら候補付きisError、見つからなければisError', async () => {
     await createMenu(testEnv, { name: 'カレーライス', calories: 700 });
     await createMenu(testEnv, { name: 'カレーうどん', calories: 600 });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createMenu, setMenuArchived } from '../src/meals';
-import { apiFetch, obtainAccessToken, resetTables, rootTestEnv as rootEnv, testEnv } from './helpers';
+import { MAX_FUTURE_DAYS, createMenu, setMenuArchived } from '../src/meals';
+import { apiFetch, localYmdDaysAgo, obtainAccessToken, resetTables, rootTestEnv as rootEnv, testEnv } from './helpers';
 
 const rw = (path: string, token: string | null, method: string, body?: unknown): Promise<Response> =>
   apiFetch(rootEnv, path, token, method, body);
@@ -96,9 +96,22 @@ describe('/api/ 書き込みAPI', () => {
     expect((await rw('/api/meals', token, 'POST', { menu_id: menu.id })).status).toBe(400);
   });
 
-  it('未来のeaten_atは400', async () => {
+  it('未来のeaten_atで記録できる（食べる予定が決まっている食事）。上限を超える先は400', async () => {
     const menu = await createMenu(testEnv, { name: 'c', calories: 100 });
-    const future = new Date(Date.now() + 86_400_000).toISOString();
-    expect((await rw('/api/meals', token, 'POST', { menu_id: menu.id, eaten_at: future })).status).toBe(400);
+    const tomorrow = `${localYmdDaysAgo(-1)}T03:00:00Z`;
+    const res = await rw('/api/meals', token, 'POST', { menu_id: menu.id, eaten_at: tomorrow });
+    expect(res.status).toBe(201);
+    const log = (await res.json()) as { id: string; eaten_at: string };
+    expect(log.eaten_at).toBe(tomorrow);
+    // PATCHでも未来日時へ動かせる
+    const nextWeek = `${localYmdDaysAgo(-7)}T03:00:00Z`;
+    expect((await rw(`/api/meals/${log.id}`, token, 'PATCH', { eaten_at: nextWeek })).status).toBe(200);
+
+    // 上限は現在時刻からの相対なので now 基準で境界を作る（上限ちょうど手前は通り、1日超は400）
+    const justInside = new Date(Date.now() + MAX_FUTURE_DAYS * 86_400_000 - 60_000).toISOString();
+    expect((await rw('/api/meals', token, 'POST', { menu_id: menu.id, eaten_at: justInside })).status).toBe(201);
+    const tooFar = new Date(Date.now() + (MAX_FUTURE_DAYS + 1) * 86_400_000).toISOString();
+    expect((await rw('/api/meals', token, 'POST', { menu_id: menu.id, eaten_at: tooFar })).status).toBe(400);
+    expect((await rw(`/api/meals/${log.id}`, token, 'PATCH', { eaten_at: tooFar })).status).toBe(400);
   });
 });

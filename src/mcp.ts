@@ -41,6 +41,7 @@ function instructions(tzOffsetHours: number): string {
     `日付の境界はUTC${tzOffsetHours >= 0 ? '+' : ''}${tzOffsetHours}のローカル日付。`,
     'まず get_weight_summary で全体像を取り、詳細な推移が必要なときだけ get_daily_series / get_raw_measurements を使う。',
     '食事記録はsearch_menus / get_meal_logsで照会できる（記録・メニュー作成は認可済みエンドポイント/mcpのみ）。',
+    '食べる予定が決まっている食事は、log_meal の eaten_at にその日の日時（未来）を渡して先に記録できる（記録後は実績と同じ扱いで予定フラグは無く、当日分は時刻がまだ来ていなくても intake_today や日次集計に摂取として数える。食べなかったら delete_meal_log で消す）。予定分を見るときは get_meal_logs の to に未来日を渡す（days 指定は今日まで）。運動・体重は未来日時では記録できない。',
     'PFC（protein_g/fat_g/carbs_g）はグラム数。比率を出すときはP×4/F×9/C×4kcalに換算し3者の合計を100%として正規化すること。登録カロリーで割ってはいけない（食物繊維等の差で換算合計と登録kcalは一致せず、100%を超えうる）。',
     '運動記録はsearch_exercise_menus / get_exercise_logsで照会できる（有酸素は消費kcal、筋トレはセット明細と総ボリューム。筋トレも時間を記録でき、種目にMETsがあれば消費kcalが自動算出される。記録・種目作成は/mcpのみ）。',
     'サーキット/AMRAP（複数種目を1ラウンドとして繰り返す運動）は circuit 構成付きの種目として登録し、記録は rounds（ラウンド数）だけ渡す。換算ボリューム・種目別レップ・消費kcalはサーバが算出するので、クライアント側で換算値を計算・入力しない。',
@@ -115,17 +116,22 @@ function resolveIdByName(
   return { ok: true, id: candidates[0].id };
 }
 
-const rangeShape = {
-  days: z
-    .number()
-    .int()
-    .min(1)
-    .max(LIMITS.API_MAX_RANGE_DAYS)
-    .optional()
-    .describe('今日を末尾とする直近N日（当日含む）。from/toとは併用不可'),
-  from: z.string().optional().describe('開始日 YYYY-MM-DD（ローカル日付）'),
-  to: z.string().optional().describe('終了日 YYYY-MM-DD（ローカル日付、今日以前）'),
-};
+function makeRangeShape(toDescription: string) {
+  return {
+    days: z
+      .number()
+      .int()
+      .min(1)
+      .max(LIMITS.API_MAX_RANGE_DAYS)
+      .optional()
+      .describe('今日を末尾とする直近N日（当日含む）。from/toとは併用不可'),
+    from: z.string().optional().describe('開始日 YYYY-MM-DD（ローカル日付）'),
+    to: z.string().optional().describe(toDescription),
+  };
+}
+const rangeShape = makeRangeShape('終了日 YYYY-MM-DD（ローカル日付、今日以前）');
+// 食事は予定（未来日）を先に記録できるため、期間の終端に未来日を許す
+const mealsRangeShape = makeRangeShape('終了日 YYYY-MM-DD（ローカル日付。未来日も可: 先に記録した予定の食事を含めるとき）');
 
 function buildServer(env: Env, opts: { write: boolean }): McpServer {
   const server = new McpServer(
@@ -182,12 +188,12 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
   server.registerTool(
     'get_meal_logs',
     {
-      description: '食事記録を返す（メニュー名・倍率・実効kcal/PFC付き）。daysまたはfrom/toで期間指定',
-      inputSchema: rangeShape,
+      description: '食事記録を返す（メニュー名・倍率・実効kcal/PFC付き）。daysまたはfrom/toで期間指定（toは未来日も可。先に記録した予定の食事を見るとき）',
+      inputSchema: mealsRangeShape,
       annotations: { readOnlyHint: true },
     },
     (args) => guarded('get_meal_logs', async () => {
-      const range = resolveRange(args, localToday(env));
+      const range = resolveRange(args, localToday(env), { allowFutureTo: true });
       if (!range.ok) return errorResult(range.error);
       return jsonResult({ meals: await listMealLogs(env, range.from, range.to) });
     }),
@@ -254,7 +260,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
           menu_id: z.string().optional().describe('メニューID（search_menusで取得）'),
           menu_name: z.string().optional().describe('メニュー名（完全一致→一意な部分一致の順で解決）'),
           multiplier: z.number().positive().max(20).optional().describe('倍率（省略時1.0）'),
-          eaten_at: z.string().optional().describe('食べた日時 ISO8601（省略時は現在時刻）'),
+          eaten_at: z.string().optional().describe('食べた日時 ISO8601（省略時は現在時刻。食べる予定が決まっている食事は未来日時で先に記録できる）'),
           meal_type: z.enum(['breakfast', 'lunch', 'dinner', 'snack']).optional(),
         },
       },
@@ -465,7 +471,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
         inputSchema: {
           meal_id: z.string().describe('食事記録ID（get_meal_logsで取得）'),
           multiplier: z.number().positive().max(20).optional().describe('倍率'),
-          eaten_at: z.string().optional().describe('食べた日時 ISO8601'),
+          eaten_at: z.string().optional().describe('食べた日時 ISO8601（未来日時も可）'),
           meal_type: z.enum(['breakfast', 'lunch', 'dinner', 'snack']).optional(),
         },
       },

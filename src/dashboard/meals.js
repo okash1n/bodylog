@@ -5,6 +5,11 @@
 
   // 表示・記録の対象日（空なら今日）
   const selectedDate = () => $('meal-date').value || todayJst();
+  const DAY_MS = 86_400_000;
+  const addDays = (ymd, d) => new Date(Date.parse(ymd + 'T00:00:00Z') + d * DAY_MS).toISOString().slice(0, 10);
+  // 履歴に含める未来日の範囲。食べる予定の食事は先に記録できる（記録後は実績と同じ扱い）ので、
+  // 直近の予定分が履歴の先頭に見えるようにする
+  const FUTURE_DAYS = 30;
   // 小数第1位まで（整数はそのまま）
   const r1 = (n) => (Math.round(n * 10) / 10).toString();
   // P/F/C を「 · P9.3 F6.4 C60」の形に。全て未入力なら空文字（栄養素はnull可）
@@ -70,8 +75,10 @@
     if (!hist.innerHTML) hist.innerHTML = '<p class="meals-empty">読み込み中…</p>';
     try {
       // apiGet: READ_ACCESS=private のサーバーでもログイン済みなら読めるようBearerを付ける
+      // days= は今日までなので、未来日（予定）の記録を含めるため from/to で取る
+      const today = todayJst();
       const [mealsRes, menusRes] = await Promise.all([
-        apiGet(`meals?days=${HISTORY_DAYS}`),
+        apiGet(`meals?from=${addDays(today, -(HISTORY_DAYS - 1))}&to=${addDays(today, FUTURE_DAYS)}`),
         apiGet('menus?archived=1'),
       ]);
       // 失敗を空データ扱いすると「まだ記録がありません」に化けて実データが消えたように見える
@@ -88,14 +95,16 @@
     }
   }
 
-  // 直近50日の食事を日付ごとにグループ化して表示。各日の見出しに合計、各食事にPFC。
-  // mealsはAPIが新しい順(ORDER BY eaten_at DESC)で返すので、その順序でグループ化＝日付降順になる。
+  // 直近50日＋先30日の食事を日付ごとにグループ化して表示。各日の見出しに合計、各食事にPFC。
+  // mealsはAPIが新しい順(ORDER BY eaten_at DESC)で返すので、その順序でグループ化＝日付降順になる
+  // （未来日＝先に記録した予定が先頭に来る。見出しに「予定」と付けて今日以前と見分ける）。
   function renderHistory(meals) {
     if (!meals.length) {
       $('meals-history').innerHTML = '<p class="meals-empty">まだ記録がありません。</p>';
       return;
     }
     const canDel = loggedIn();
+    const today = todayJst();
     const groups = [];
     const byDate = Object.create(null);
     meals.forEach((m) => {
@@ -116,7 +125,7 @@
         const dc = sumEff(g.items, 'effective_carbs_g');
         // 合計行も明細と同じ列に値を揃える（区分+メニューをまたいで日付、倍率は空）
         const head =
-          `<tr class="mh-day"><td colspan="2">${g.d}　合計</td><td></td>` +
+          `<tr class="mh-day"><td colspan="2">${g.d}${g.d > today ? '（予定）' : ''}　合計</td><td></td>` +
           `<td class="mh-num">${Math.round(total)} kcal</td>` +
           `<td class="mh-macro">${pfc(dp, df, dc).replace(/^ · /, '') || '—'}</td>` +
           `<td class="mh-macro">${pfcRatio(dp, df, dc) || '—'}</td>` +
@@ -214,10 +223,10 @@
   $('meal-add-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!selectedMenu) return toast('メニューを選択してください', { tone: 'error' });
-    // 過去日を選択中ならその日のJST正午(03:00Z)で記録（未来時刻回避＋日付境界で当該日に入る）。
+    // 今日以外（過去日・未来日どちらも）を選択中ならその日のJST正午(03:00Z)で記録（日付境界で当該日に入る）。
     // 今日なら eaten_at を省略してサーバーの現在時刻を使う
     const day = selectedDate();
-    const eaten_at = day < todayJst() ? `${day}T03:00:00Z` : undefined;
+    const eaten_at = day !== todayJst() ? `${day}T03:00:00Z` : undefined;
     const res = await rw('meals', 'POST', {
       menu_id: selectedMenu.id,
       multiplier: Number($('meal-multiplier').value) || 1,
@@ -246,12 +255,26 @@
     refresh();
   });
 
-  // 日付セレクタ初期化（初期値=今日・上限=今日）。これは「記録する日」専用（backfill）。
-  // 履歴テーブルは常に直近50日を表示するため、日付変更では再取得しない（未来だけ弾く）
+  // 日付セレクタ初期化（初期値=今日）。これは「記録する日」専用で、過去日の backfill と
+  // 未来日の先行登録（食べる予定が決まっている食事）の両方に使う。
+  // 選べる範囲は履歴テーブルの表示範囲（直近50日＋先30日）に揃える: 表示範囲の外に記録すると
+  // 「記録しました」の後に一覧に出ず削除もできない（書き込みは成功している）ため。
+  // サーバー自体はもっと先（1年）まで受けるので、それより先はMCP経由で記録する。
+  // 履歴テーブルは固定範囲のため、日付変更では再取得しない
+  const dateMin = () => addDays(todayJst(), -(HISTORY_DAYS - 1));
+  const dateMax = () => addDays(todayJst(), FUTURE_DAYS);
   $('meal-date').value = todayJst();
-  $('meal-date').max = todayJst();
+  $('meal-date').min = dateMin();
+  $('meal-date').max = dateMax();
   $('meal-date').addEventListener('change', () => {
-    if (!$('meal-date').value || $('meal-date').value > todayJst()) $('meal-date').value = todayJst();
+    const el = $('meal-date');
+    if (!el.value) {
+      el.value = todayJst();
+    } else if (el.value < dateMin() || el.value > dateMax()) {
+      // 手入力で範囲外（年の打ち間違い等）になった場合。min/max はピッカーの表示を絞るだけで入力自体は通る
+      el.value = el.value < dateMin() ? dateMin() : dateMax();
+      toast(`記録できる日は ${dateMin()} 〜 ${dateMax()} です（履歴に表示される範囲）`, { tone: 'error' });
+    }
   });
 
   // OAuthリダイレクト処理はリスナー登録後に。ログイン完了時はauthchanged（表示中パネルのrefresh）

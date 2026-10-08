@@ -139,11 +139,17 @@ export interface RangeInput {
 
 export type RangeResult = { ok: true; from: string; to: string } | { ok: false; error: string };
 
+export interface RangeOptions {
+  /** to に未来日を許す（食事記録: 先に記録した予定の食事を期間に含めるため）。既定は今日まで */
+  allowFutureTo?: boolean;
+}
+
 /**
  * days（ローカル今日を末尾とする直近N日、当日含む）または from/to を検証して期間に解決する。
  * REST（クエリ文字列）とMCP（ツール引数）の両方から使うため、daysは文字列と数値を受ける。
+ * days は常に今日を末尾とする（allowFutureTo は from/to 指定にのみ効く）。
  */
-export function resolveRange(input: RangeInput, today: string): RangeResult {
+export function resolveRange(input: RangeInput, today: string, opts: RangeOptions = {}): RangeResult {
   const hasDays = input.days !== undefined && input.days !== '';
   const hasFromTo = Boolean(input.from) || Boolean(input.to);
   if (hasDays && hasFromTo) {
@@ -169,7 +175,7 @@ export function resolveRange(input: RangeInput, today: string): RangeResult {
   if (from > to) {
     return { ok: false, error: 'from must be on or before to' };
   }
-  if (to > today) {
+  if (!opts.allowFutureTo && to > today) {
     return { ok: false, error: 'to must not be a future date' };
   }
   if (inclusiveDays(from, to) > LIMITS.API_MAX_RANGE_DAYS) {
@@ -186,10 +192,12 @@ export function resolveRange(input: RangeInput, today: string): RangeResult {
 export function resolveRangeFromQuery(
   c: Context<{ Bindings: Env }>,
   headers: Record<string, string>,
+  opts: RangeOptions = {},
 ): { from: string; to: string } | Response {
   const result = resolveRange(
     { days: c.req.query('days'), from: c.req.query('from'), to: c.req.query('to') },
     localToday(c.env),
+    opts,
   );
   if (!result.ok) return c.json({ error: result.error }, 400, headers);
   return { from: result.from, to: result.to };
@@ -199,9 +207,10 @@ export function resolveRangeFromQuery(
 export function withRange(
   c: Context<{ Bindings: Env }>,
   fn: (from: string, to: string) => Promise<Response>,
+  opts: RangeOptions = {},
 ): Promise<Response> | Response {
   const headers = noindexHeaders({ 'Cache-Control': 'no-store' });
-  const range = resolveRangeFromQuery(c, headers);
+  const range = resolveRangeFromQuery(c, headers, opts);
   if (range instanceof Response) return range;
   return fn(range.from, range.to);
 }

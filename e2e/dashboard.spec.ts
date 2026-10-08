@@ -32,6 +32,10 @@ test('食事・運動タブ: 履歴にseedした記録が表示される', async
   await page.goto('/');
   await page.locator('#tab-meals').click();
   await expect(page.locator('#meals-history')).toContainText('E2E定食');
+  // 明日の予定（seed）は履歴の先頭に「予定」付きで出る。今日の見出しには付かない
+  const dayHeads = page.locator('#meals-history tr.mh-day');
+  await expect(dayHeads.first()).toContainText('予定');
+  await expect(dayHeads.nth(1)).not.toContainText('予定');
   await page.locator('#tab-exercise').click();
   await expect(page.locator('#exercise-history')).toContainText('E2Eベンチプレス');
   await expect(page.locator('#exercise-history')).toContainText('60×5');

@@ -23,22 +23,33 @@ export const serveMenus: Handler = async (c) => {
   }
 };
 
+// 食べる予定の食事は未来日時で先に記録できるため、期間の終端に未来日を許す（体重・運動の期間APIは今日まで）
+const MEALS_RANGE = { allowFutureTo: true };
+
 export const serveMealsList: Handler = (c) =>
-  withRange(c, async (from, to) => {
-    try {
-      return c.json({ meals: await listMealLogs(c.env, from, to) }, 200, noindexHeaders(NO_STORE));
-    } catch (err) {
-      console.error('[meals-api] listMealLogs failed', err);
-      return c.json({ error: 'internal error' }, 500, noindexHeaders(NO_STORE));
-    }
-  });
+  withRange(
+    c,
+    async (from, to) => {
+      try {
+        return c.json({ meals: await listMealLogs(c.env, from, to) }, 200, noindexHeaders(NO_STORE));
+      } catch (err) {
+        console.error('[meals-api] listMealLogs failed', err);
+        return c.json({ error: 'internal error' }, 500, noindexHeaders(NO_STORE));
+      }
+    },
+    MEALS_RANGE,
+  );
 
 export const serveMealsDaily: Handler = (c) =>
-  withRange(c, async (from, to) => {
-    try {
-      return c.json({ days: await getDailyIntake(c.env, from, to) }, 200, noindexHeaders(NO_STORE));
-    } catch (err) {
-      console.error('[meals-api] getDailyIntake failed', err);
-      return c.json({ error: 'internal error' }, 500, noindexHeaders(NO_STORE));
-    }
-  });
+  withRange(
+    c,
+    async (from, to) => {
+      try {
+        return c.json({ days: await getDailyIntake(c.env, from, to) }, 200, noindexHeaders(NO_STORE));
+      } catch (err) {
+        console.error('[meals-api] getDailyIntake failed', err);
+        return c.json({ error: 'internal error' }, 500, noindexHeaders(NO_STORE));
+      }
+    },
+    MEALS_RANGE,
+  );
