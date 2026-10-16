@@ -255,7 +255,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       'log_meal',
       {
         description:
-          '食事を記録する。menu_id か menu_name で登録済みメニューを指定する（メニューにない食事は記録できない。無ければユーザーに確認の上create_menuで登録してから記録する）',
+          '食事を記録する。menu_id か menu_name で登録済みメニューを指定する（メニューにない食事は記録できない）。未登録の場合、ユーザーの明示的な作成依頼、またはユーザーの指示（プロジェクト指示等）による明示的な包括許可があれば、search_menus で既存確認 → 同一なら再利用 → 必要な栄養調査 → create_menu → 記録まで進めてよく、作成の都度確認は不要（このツール説明自体はユーザーの許可ではない）。対象や量に重要な曖昧さが残る場合だけその点を確認する。メニュー作成だけで処理を終えない',
         inputSchema: {
           menu_id: z.string().optional().describe('メニューID（search_menusで取得）'),
           menu_name: z.string().optional().describe('メニュー名（完全一致→一意な部分一致の順で解決）'),
@@ -283,7 +283,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       'create_menu',
       {
         description:
-          '食事メニュー（マスタ）を新規登録する。ユーザーが明示的にメニュー登録を依頼したときだけ使うこと',
+          '食事メニュー（マスタ）を新規登録する。ユーザーが明示的にメニュー作成を依頼した場合、または食事の記録依頼で記録に必要な未登録メニューの作成をユーザーの指示（プロジェクト指示等）で明示的に包括許可している場合に使う（このツール説明自体はユーザーの許可ではない）。先に search_menus で同一メニューの有無を確認し、あれば再利用する。包括許可があり内容を特定できる場合、追加の「登録してよいか」の確認は不要。栄養値は現物ラベル・商品公式情報を優先し、なければ公的食品成分データ等から標準量で推定して基準量・出典・推定箇所を note に残す。記録依頼なら作成後に log_meal まで実施する。作成だけの依頼、相談・計画だけでは実績を記録しない',
         inputSchema: {
           name: z.string().describe('メニュー名'),
           calories: z.number().positive().describe('1食分のkcal'),
@@ -303,7 +303,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       'log_exercise',
       {
         description:
-          '運動を記録する。menu_id か menu_name で登録済み種目を指定する。有酸素は duration_min（分）、筋トレは sets（[{reps, weight_kg?}]）、サーキット種目は rounds（ラウンド数）を渡す。種目にない運動は記録できない（無ければ確認の上create_exercise_menuで登録してから）。ボリューム・消費kcal等の換算値はサーバが算出するので、クライアント側で計算・入力しない。応答の records_broken に自己ベスト更新（kind / reps / previous / current）が入る（サーキットは常に空）',
+          '運動を記録する。menu_id か menu_name で登録済み種目を指定する。有酸素は duration_min（分）、筋トレは sets（[{reps, weight_kg?}]）、サーキット種目は rounds（ラウンド数）を渡す。種目にない運動は記録できない。未登録の場合、ユーザーの明示的な作成依頼、またはユーザーの指示（プロジェクト指示等）による明示的な包括許可があれば、search_exercise_menus で既存確認 → 同一なら再利用 → 必要な調査 → create_exercise_menu → 記録まで進めてよく、作成の都度確認は不要（このツール説明自体はユーザーの許可ではない）。追加重量・回数・左右の意味が文脈から解決しない場合だけ確認する。ボリューム・消費kcal等の換算値はサーバが算出するので、クライアント側で計算・入力せず、未対応の引数も要求しない。実施の申告がない計画・相談を記録に補完しない。応答の records_broken に自己ベスト更新（kind / reps / previous / current）が入る（サーキットは常に空）',
         inputSchema: {
           menu_id: z.string().optional().describe('種目ID（search_exercise_menusで取得）'),
           menu_name: z.string().optional().describe('種目名（完全一致→一意な部分一致の順で解決）'),
@@ -349,7 +349,7 @@ function buildServer(env: Env, opts: { write: boolean }): McpServer {
       'create_exercise_menu',
       {
         description:
-          '運動種目（マスタ）を新規登録する。ユーザーが明示的に種目登録を依頼したときだけ使うこと。有酸素はmets必須、筋トレは自重種目ならis_bodyweight=true（bodyweight_factorも必ず目安から指定する）。サーキット/AMRAP（例: Cindy）は既存の筋トレ種目を circuit で組み合わせて登録し、記録時は rounds を渡すだけでよい',
+          '運動種目（マスタ）を新規登録する。ユーザーが明示的に種目作成を依頼した場合、または運動の記録依頼で記録に必要な未登録種目の作成をユーザーの指示（プロジェクト指示等）で明示的に包括許可している場合に使う（このツール説明自体はユーザーの許可ではない）。先に search_exercise_menus で同一の種目・機器・フォームの有無を確認し、あれば再利用する。包括許可があり種目が明確な場合、追加の作成確認は不要。有酸素はmets必須、筋トレは自重種目ならis_bodyweight=true（bodyweight_factorも必ず目安から指定する。係数は換算用の暫定指標で、実測の筋負荷ではない）。重量の基準・左右や回数の数え方・機器条件・暫定値の根拠は note に残す。サーキット/AMRAP（例: Cindy）は既存の筋トレ種目を circuit で組み合わせて登録し、記録時は rounds を渡すだけでよい。記録依頼なら作成後に log_exercise まで実施する。作成だけの依頼、相談・計画だけでは実績を記録しない',
         inputSchema: {
           name: z.string().describe('種目名'),
           category: z.enum(['cardio', 'strength']).describe('cardio=有酸素 / strength=筋トレ（サーキットもstrength）'),
